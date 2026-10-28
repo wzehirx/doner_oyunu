@@ -54,7 +54,7 @@ public class UiFlowTest {
     }
 
     @Test public void menuNewGameBriefingShopDay() {
-        UiHarness h = new UiHarness();
+        UiHarness h = new UiHarness(false);
         assertTrue(h.screen() instanceof MenuScreen);
         assertNull("Kayıt yokken Devam et olmamalı", h.findLabel("Devam et"));
         h.click("Yeni oyun");
@@ -75,7 +75,7 @@ public class UiFlowTest {
     }
 
     @Test public void fullDayThroughUiReachesSummary() {
-        UiHarness h = new UiHarness();
+        UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
         h.click("Güne başla"); h.settle();
         assertTrue(h.screen() instanceof GameScreen);
@@ -95,7 +95,7 @@ public class UiFlowTest {
     }
 
     @Test public void tutorialRunsOnDayOneAndFinishes() {
-        UiHarness h = new UiHarness();
+        UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
         h.click("Güne başla"); h.settle();
         GameScreen gs = (GameScreen) h.screen();
@@ -109,7 +109,7 @@ public class UiFlowTest {
     }
 
     @Test public void wrongStationCostsStarsAndDoesNotCrash() {
-        UiHarness h = new UiHarness();
+        UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
         h.click("Güne başla"); h.settle();
         GameEngine e = h.engine();
@@ -133,7 +133,7 @@ public class UiFlowTest {
     }
 
     @Test public void tapWithoutOrderOrBeforeStartGivesFeedbackNoCrash() {
-        UiHarness h = new UiHarness();
+        UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
         h.click("Güne başla"); h.settle();
         // startDelay içinde (1.6 sn) ve siparişsizken her şeye dokun
@@ -144,7 +144,7 @@ public class UiFlowTest {
     }
 
     @Test public void pauseResumeStopsClock() {
-        UiHarness h = new UiHarness();
+        UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
         h.click("Güne başla"); h.settle();
         h.run(4000);
@@ -167,7 +167,7 @@ public class UiFlowTest {
     }
 
     @Test public void backgroundingAutoPausesAndBackKeyTogglesPause() {
-        UiHarness h = new UiHarness();
+        UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
         h.click("Güne başla"); h.settle();
         h.run(3000);
@@ -199,7 +199,7 @@ public class UiFlowTest {
     }
 
     @Test public void rotationAndStopStartDoNotCrash() {
-        UiHarness h = new UiHarness();
+        UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
         h.click("Güne başla"); h.settle();
         h.run(2500);
@@ -215,7 +215,7 @@ public class UiFlowTest {
     }
 
     @Test public void saveAndContinueAcrossRecreate() {
-        UiHarness h = new UiHarness();
+        UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
         h.click("Güne başla"); h.settle();
         playDay(h, 400_000);
@@ -225,7 +225,7 @@ public class UiFlowTest {
         double stars = h.act.save.stars;
         h.controller.pause().stop().destroy();
         // süreç ölümü benzetimi: yeni Activity, aynı SharedPreferences
-        UiHarness h2 = new UiHarness();
+        UiHarness h2 = new UiHarness(false);
         assertTrue(h2.screen() instanceof MenuScreen);
         assertNotNull("Kayıt varken Devam et görünmeli", h2.findLabel("Devam et"));
         assertEquals(2, h2.act.save.day);
@@ -246,7 +246,7 @@ public class UiFlowTest {
         android.content.Context c = org.robolectric.RuntimeEnvironment.getApplication();
         SharedPreferences p = c.getSharedPreferences("doner_oyunu", android.content.Context.MODE_PRIVATE);
         p.edit().putString("save", "day=abc\nmoney=-5\n\u0000garbage\nstars=NaN\nstock.et=999999999999\n=\n").putBoolean("game_started", true).commit();
-        UiHarness h = new UiHarness();
+        UiHarness h = new UiHarness(false);
         assertTrue(h.screen() instanceof MenuScreen);
         h.click("Devam et"); h.settle();
         assertTrue(h.screen() instanceof BriefingScreen);

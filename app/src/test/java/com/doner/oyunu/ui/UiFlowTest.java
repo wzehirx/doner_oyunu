@@ -91,7 +91,7 @@ public class UiFlowTest {
         h.click("Geri"); h.settle();
         assertTrue(h.screen() instanceof BriefingScreen);
         assertEquals(2, h.act.save.day);
-        assertNotNull(h.findText("Yeni ürün: İçecek"));
+        assertNotNull(h.findText("Yeni ürün: Ayran"));
     }
 
     @Test public void tutorialRunsOnDayOneAndFinishes() {

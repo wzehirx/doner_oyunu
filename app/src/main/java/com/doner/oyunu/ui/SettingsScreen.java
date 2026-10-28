@@ -1,0 +1,178 @@
+package com.doner.oyunu.ui;
+
+import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.Button;
+import android.widget.CompoundButton;
+import android.widget.LinearLayout;
+import android.widget.Switch;
+import android.widget.TextView;
+import android.content.res.ColorStateList;
+
+import com.doner.oyunu.MainActivity;
+import com.doner.oyunu.engine.Narrator;
+import com.doner.oyunu.engine.SaveData;
+
+/** Ayarlar: eksi/artı düğmeleriyle (sürükleme gerektirmez) ve anahtarlarla. */
+public final class SettingsScreen extends Screen {
+    private abstract class Value {
+        final String name; final double min, max, step;
+        Value(String name, double min, double max, double step) { this.name = name; this.min = min; this.max = max; this.step = step; }
+        abstract double get();
+        abstract void set(double v);
+        abstract String shown(double v);
+        abstract String spoken(double v);
+    }
+
+    public SettingsScreen(MainActivity a) { super(a); }
+
+    @Override public String title() { return "Ayarlar"; }
+
+    @Override public View create() {
+        LinearLayout root = rootColumn();
+        root.addView(makeTitle("Ayarlar"));
+        LinearLayout body = scrollBody(root);
+        final SaveData s = a.save;
+
+        addStepper(body, new Value("Müzik sesi", 0, 1, 0.1) {
+            double get() { return s.musicVolume; }
+            void set(double v) { s.musicVolume = v; }
+            String shown(double v) { return Texts.volumeText(v); }
+            String spoken(double v) { return Texts.volumeSpoken(v); }
+        });
+        addStepper(body, new Value("Efekt sesi", 0, 1, 0.1) {
+            double get() { return s.sfxVolume; }
+            void set(double v) { s.sfxVolume = v; }
+            String shown(double v) { return Texts.volumeText(v); }
+            String spoken(double v) { return Texts.volumeSpoken(v); }
+        });
+
+        addSwitch(body, "Sesli anlatım", s.speechOn, new CompoundButton.OnCheckedChangeListener() {
+            @Override public void onCheckedChanged(CompoundButton b, boolean on) {
+                boolean tb = a.speaker.isTalkBackOn();
+                s.speechOn = on;
+                a.applySettings();
+                a.saveNow();
+                a.sound.play("sfx_tap");
+                if (!tb) {
+                    // kapanırken de son bir onay söyle
+                    a.speaker.setEnabled(true);
+                    a.speaker.force(on ? "Sesli anlatım açık" : "Sesli anlatım kapalı");
+                    a.speaker.setEnabled(on);
+                }
+            }
+        });
+
+        addStepper(body, new Value("Anlatım hızı", 0.5, 2.0, 0.1) {
+            double get() { return s.speechRate; }
+            void set(double v) { s.speechRate = v; }
+            String shown(double v) { return Texts.times(v); }
+            String spoken(double v) { return Texts.times(v); }
+        });
+
+        body.addView(button("Sesli anlatımı dene", Ui.SECONDARY, new Runnable() {
+            @Override public void run() {
+                a.speaker.force("Merhaba! Ben Döner Dükkanı anlatıcısıyım. Hızı ve sesi buradan ayarlayabilirsin.");
+            }
+        }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 6, 0, 6));
+
+        addStepper(body, new Value("Oyun temposu", 0.6, 1.6, 0.1) {
+            double get() { return s.tempo; }
+            void set(double v) { s.setTempo(v); }
+            String shown(double v) { return Texts.times(v); }
+            String spoken(double v) { return Texts.times(v) + (v > 1.05 ? ", daha rahat" : (v < 0.95 ? ", daha hızlı" : ", normal")); }
+        });
+        TextView note = Ui.label(ctx, "Tempo yükseldikçe işlemler yavaşlar ve müşteriler daha sabırlı olur. Düşük tempo daha hızlı ve zor bir oyun demektir.", 15, Theme.MUTED, false);
+        note.setFocusable(true);
+        body.addView(note, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 4, 0, 4, 8));
+
+        addSwitch(body, "Titreşim", s.vibration, new CompoundButton.OnCheckedChangeListener() {
+            @Override public void onCheckedChanged(CompoundButton b, boolean on) {
+                s.vibration = on;
+                a.applySettings();
+                a.saveNow();
+                a.sound.play("sfx_tap");
+                a.haptics.deliver();
+            }
+        });
+
+        root.addView(button("Geri", Ui.PRIMARY, new Runnable() {
+            @Override public void run() { a.saveNow(); a.show(new MenuScreen(a)); }
+        }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 8, 0, 0));
+        return root;
+    }
+
+    private void addSwitch(LinearLayout body, String label, boolean checked, CompoundButton.OnCheckedChangeListener l) {
+        Switch sw = new Switch(ctx);
+        sw.setText(label);
+        sw.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        sw.setTextColor(Theme.CREAM);
+        sw.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        sw.setChecked(checked);
+        sw.setMinHeight(dp(64));
+        sw.setPadding(dp(14), dp(10), dp(14), dp(10));
+        sw.setBackground(Ui.round(ctx, Theme.CARD, Theme.STROKE, 1.5f, 16));
+        sw.setShowText(true);
+        sw.setTextOn("Açık");
+        sw.setTextOff("Kapalı");
+        sw.setThumbTintList(new ColorStateList(new int[][]{{android.R.attr.state_checked}, {}},
+                new int[]{Theme.GOLD, Theme.MUTED}));
+        sw.setTrackTintList(new ColorStateList(new int[][]{{android.R.attr.state_checked}, {}},
+                new int[]{Theme.ORANGE_DEEP, 0xFF6B4A33}));
+        sw.setOnCheckedChangeListener(l);
+        body.addView(sw, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 6, 0, 6));
+    }
+
+    private void addStepper(LinearLayout body, final Value v) {
+        LinearLayout card = card();
+        final TextView info = Ui.label(ctx, "", 19, Theme.CREAM, true);
+        info.setFocusable(true);
+        card.addView(info);
+
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER);
+        final Button minus = Ui.button(ctx, "−  Azalt", Ui.SECONDARY);
+        final Button plus = Ui.button(ctx, "+  Artır", Ui.SECONDARY);
+        minus.setContentDescription(v.name + " azalt");
+        plus.setContentDescription(v.name + " artır");
+        row.addView(minus, Ui.lp(ctx, 0, Ui.WRAP, 1f, 0, 8, 6, 0));
+        row.addView(plus, Ui.lp(ctx, 0, Ui.WRAP, 1f, 6, 8, 0, 0));
+        card.addView(row);
+        body.addView(card, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 6, 0, 6));
+
+        refresh(info, v);
+        tap(minus, new Runnable() { @Override public void run() { change(info, v, -1); } });
+        tap(plus, new Runnable() { @Override public void run() { change(info, v, +1); } });
+    }
+
+    private void refresh(TextView info, Value v) {
+        double cur = v.get();
+        info.setText(v.name + ": " + v.shown(cur));
+        info.setContentDescription(v.name + ": " + v.spoken(cur));
+    }
+
+    private void change(TextView info, Value v, int dir) {
+        double cur = v.get();
+        double next = Math.round((cur + dir * v.step) * 100) / 100.0;
+        next = Math.max(v.min, Math.min(v.max, next));
+        if (Math.abs(next - cur) < 1e-9) {
+            a.sound.play("sfx_error");
+            a.haptics.error();
+            a.speaker.announce(dir < 0 ? "En düşük değer. " + v.spoken(cur) : "En yüksek değer. " + v.spoken(cur), true);
+            return;
+        }
+        v.set(next);
+        a.applySettings();
+        a.saveNow();
+        refresh(info, v);
+        a.sound.play("sfx_tap");
+        if (a.speaker.isTalkBackOn() || a.save.speechOn) {
+            if (v.name.equals("Anlatım hızı")) a.speaker.force(v.name + " " + v.spoken(next));
+            else a.speaker.announce(v.name + " " + v.spoken(next), true);
+        }
+    }
+
+    @Override public boolean onBack() { a.saveNow(); a.show(new MenuScreen(a)); return true; }
+}

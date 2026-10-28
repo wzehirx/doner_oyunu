@@ -236,7 +236,7 @@ public final class ShopScreen extends Screen {
                     infoBox.setContentDescription(Texts.upgradeInfo(u, s) + " " + st + ".");
                     buy.setText(Texts.upgradeButton(u, s));
                     buy.setContentDescription(lv >= u.maxLevel() ? u.name + " en üst seviyede."
-                            : u.name + " satın al, " + u.priceForNext(lv) + " lira. " + st + ".");
+                            : "Satın al: " + u.name + ", " + u.priceForNext(lv) + " lira. " + st + ".");
                     buy.setBackground(Ui.buttonBg(ctx, can ? Ui.PRIMARY : Ui.SECONDARY));
                     buy.setTextColor(can ? Theme.DARK : Theme.CREAM);
                     Ui.dim(buy, !can);

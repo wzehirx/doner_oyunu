@@ -135,7 +135,9 @@ public class TextsTest {
         assertTrue(t, t.contains("Net kazanç=850 lira"));
         assertTrue(t, t.contains("3,4"));
         d.revenue = 0; d.tips = 0; d.emergencySpend = 0;
-        assertTrue(Texts.summaryRows(d).toString().contains("eksi 330 lira"));
+        StringBuilder neg = new StringBuilder();
+        for (String[] r : Texts.summaryRows(d)) neg.append(r[1]).append(';');
+        assertTrue(neg.toString(), neg.toString().contains("eksi 330 lira"));
     }
 
     @Test public void helpIsComplete() {

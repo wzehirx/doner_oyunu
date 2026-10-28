@@ -26,7 +26,10 @@ public final class SoundManager {
     };
 
     private final Context ctx;
+    /** Müzik geçişleri (iptal edilmez). */
     private final Handler handler = new Handler(Looper.getMainLooper());
+    /** Gecikmeli efektler (ekran değişince/duraklatınca iptal edilir). */
+    private final Handler sfxHandler = new Handler(Looper.getMainLooper());
     private final Map<String, Integer> ids = new HashMap<>();
     private final Set<Integer> loaded = new HashSet<>();
     private SoundPool pool;
@@ -90,12 +93,12 @@ public final class SoundManager {
 
     /** Gecikmeli çalma (art arda efektler için). */
     public void playLater(final String name, final float pan, long delayMs) {
-        handler.postDelayed(new Runnable() {
+        sfxHandler.postDelayed(new Runnable() {
             @Override public void run() { if (!paused) play(name, pan); }
         }, delayMs);
     }
 
-    public void cancelScheduled() { handler.removeCallbacksAndMessages(null); }
+    public void cancelScheduled() { sfxHandler.removeCallbacksAndMessages(null); }
 
     // ------------------------------------------------------------------ müzik
     public void playMusic(String name) {
@@ -176,7 +179,7 @@ public final class SoundManager {
     // ------------------------------------------------------------------ yaşam döngüsü
     public void pause() {
         paused = true;
-        handler.removeCallbacksAndMessages(null);
+        sfxHandler.removeCallbacksAndMessages(null);
         if (music != null) try { music.pause(); } catch (Exception ignored) { }
         if (pool != null) try { pool.autoPause(); } catch (Exception ignored) { }
     }
@@ -192,6 +195,7 @@ public final class SoundManager {
 
     public void release() {
         handler.removeCallbacksAndMessages(null);
+        sfxHandler.removeCallbacksAndMessages(null);
         fadeToken++;
         if (music != null) {
             try { music.stop(); } catch (Exception ignored) { }

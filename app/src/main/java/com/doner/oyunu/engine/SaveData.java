@@ -26,6 +26,11 @@ public final class SaveData {
     /** Çırak duyuruları (ayar). */
     public boolean apprenticeAnnounce = true;
 
+    /** Oyun akışı (v0.7): Rahat / Dengeli / Gerçekçi. Eski kayıtlarda yoksa varsayılan (Dengeli). */
+    public FlowMode flowMode = FlowMode.DEFAULT;
+    /** Oyuncu oyun akışını bilerek seçti/onayladı mı (brifing ilk seferde sorar). */
+    public boolean flowChosen = false;
+
     /** Hazır (doldurulmuş) içecek stoğu; gün sonunda atılmaz, ertesi güne kalır. */
     public int readyDrinks = 0;
 
@@ -50,7 +55,7 @@ public final class SaveData {
 
     public String serialize() {
         StringBuilder sb = new StringBuilder();
-        sb.append("v=3\n"); // v=1 (v0.4) ve v=2 (v0.5) kayıtları da yüklenir
+        sb.append("v=4\n"); // v=1 (v0.4), v=2 (v0.5) ve v=3 (v0.6) kayıtları da yüklenir
         sb.append("day=").append(day).append('\n');
         sb.append("bestDay=").append(bestDay).append('\n');
         sb.append("money=").append(money).append('\n');
@@ -70,6 +75,8 @@ public final class SaveData {
         sb.append("tutorial=").append(tutorialDone ? 1 : 0).append('\n');
         sb.append("apprenticeAnnounce=").append(apprenticeAnnounce ? 1 : 0).append('\n');
         sb.append("readyDrinks=").append(readyDrinks).append('\n');
+        sb.append("flow=").append(flowMode.id).append('\n');
+        sb.append("flowChosen=").append(flowChosen ? 1 : 0).append('\n');
         return sb.toString();
     }
 
@@ -110,6 +117,8 @@ public final class SaveData {
                 else if (k.equals("sfx")) s.sfxVolume = Math.max(0, Math.min(1, num(v)));
                 else if (k.equals("tutorial")) s.tutorialDone = v.equals("1");
                 else if (k.equals("apprenticeAnnounce")) s.apprenticeAnnounce = v.equals("1");
+                else if (k.equals("flow")) { FlowMode m = FlowMode.byId(v); if (m != null) s.flowMode = m; }
+                else if (k.equals("flowChosen")) s.flowChosen = v.equals("1");
                 else if (k.equals("readyDrinks")) s.readyDrinks = Math.max(0, Math.min(40, Integer.parseInt(v)));
             } catch (NumberFormatException ignored) {
                 // bozuk satır atlanır

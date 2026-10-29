@@ -66,9 +66,18 @@ public final class GameEngine {
     private int selectedItem = -1;
     private int nameCursor;
     private boolean spawning = true;
+    /** v0.6 dengesi (ölçüm/karşılaştırma için): Gerçekçi akışın v0.7 yumuşatmaları ve bahşiş ödülü kapalı. */
+    private final boolean v06Balance;
 
-    /** save: motor bu nesneyi (para, stok, yıldız, gün) doğrudan günceller. */
-    public GameEngine(long seed, SaveData save) {
+    /** save: motor bu nesneyi (para, stok, yıldız, gün, oyun akışı) doğrudan günceller. */
+    public GameEngine(long seed, SaveData save) { this(seed, save, false); }
+
+    /**
+     * v06Balance = true: v0.6 denge kuralları (Gerçekçi akışta ek sabır ve bahşiş ödülü yok). Yalnızca denge ölçümü ve
+     * v0.6 ile karşılaştırma testleri içindir; oyun her zaman {@link #GameEngine(long, SaveData)} kullanır.
+     */
+    public GameEngine(long seed, SaveData save, boolean v06Balance) {
+        this.v06Balance = v06Balance;
         this.save = save;
         this.snapshot = save.copy();
         this.upgrades = new Upgrades(save);
@@ -113,6 +122,20 @@ public final class GameEngine {
     public int getSelectedOrderId() { return selectedId; }
     /** Seçili sipariş içinde seçili kalem (-1 = otomatik). */
     public int getSelectedItem() { return selectedItem; }
+    /** Oyun akışı (Rahat / Dengeli / Gerçekçi); kayıttan okunur, oyun ortasında {@link #setFlowMode} ile değişir. */
+    public FlowMode getFlowMode() { return save.flowMode == null ? FlowMode.DEFAULT : save.flowMode; }
+
+    /**
+     * Oyun akışını değiştirir (oyun ortasında da). Seçenek menüleri hemen yeni akışa göre kurulur; süren işler ve
+     * gelmiş müşterilerin sabrı değişmez. Kayda yazılır ({@link SaveData#flowMode}); {@code onFlowModeChanged} verilir.
+     */
+    public void setFlowMode(FlowMode mode) {
+        if (mode == null) return;
+        save.flowMode = mode;
+        save.flowChosen = true;
+        for (GameListener l : snap()) l.onFlowModeChanged(mode);
+    }
+
     /** Çırak seviyesi (0..3) = otomatik işçi sayısı. */
     public int getApprenticeLevel() { return upgrades.apprenticeLevel(); }
 
@@ -203,8 +226,18 @@ public final class GameEngine {
         }
         int[] r = o.suggest(orderId == selectedId ? selectedItem : -1);
         if (r == null || r[0] < 0) return null;
-        Step s = o.getLine(r[0]).step(r[1]);
-        return s.isTopping() ? null : new int[]{r[0], r[1], -1};
+        OrderLine line = o.getLine(r[0]);
+        Step s = line.step(r[1]);
+        if (s.isTopping()) return autoAvailable(line) ? new int[]{r[0], r[1], -1} : null;
+        return new int[]{r[0], r[1], -1};
+    }
+
+    /** Eksik malzeme hesabının baktığı adımın stok ihtiyacı (topping adımında: otomatik eklemenin ihtiyacı). */
+    private Map<String, Integer> refNeeds(Order o, int[] ref) {
+        OrderLine line = o.getLine(ref[0]);
+        Step s = line.step(ref[1]);
+        if (s.isTopping()) return autoNeeds(line);
+        return effectiveNeeds(s, refSize(o, ref));
     }
 
     private PortionSize refSize(Order o, int[] ref) {
@@ -224,8 +257,7 @@ public final class GameEngine {
         int[] ref = missingRef(orderId);
         if (ref == null) return out;
         Order o = getOrder(orderId);
-        Step s = o.getLine(ref[0]).step(ref[1]);
-        for (Map.Entry<String, Integer> e : effectiveNeeds(s, refSize(o, ref)).entrySet()) {
+        for (Map.Entry<String, Integer> e : refNeeds(o, ref).entrySet()) {
             if (!save.inventory.has(e.getKey(), e.getValue())) {
                 Ingredient ing = Catalog.ingredient(e.getKey());
                 if (ing != null) out.add(ing);
@@ -245,7 +277,7 @@ public final class GameEngine {
         int[] ref = missingRef(orderId);
         if (ref == null) return 0;
         Order o = getOrder(orderId);
-        Map<String, Integer> needs = effectiveNeeds(o.getLine(ref[0]).step(ref[1]), refSize(o, ref));
+        Map<String, Integer> needs = refNeeds(o, ref);
         int total = 0;
         for (Ingredient ing : missingIngredients(orderId)) {
             total += ing.emergencyPrice() * Ingredient.EMERGENCY_BATCH * emergencyBatches(needs, ing);
@@ -263,7 +295,7 @@ public final class GameEngine {
         List<Ingredient> missing = missingIngredients(orderId);
         if (ref == null || missing.isEmpty()) return false;
         Order o = getOrder(orderId);
-        Map<String, Integer> needs = effectiveNeeds(o.getLine(ref[0]).step(ref[1]), refSize(o, ref));
+        Map<String, Integer> needs = refNeeds(o, ref);
         int total = emergencyCostForMissing(orderId);
         if (save.money < total) {
             for (GameListener l : snap()) l.onNotEnoughMoney(total);
@@ -720,6 +752,164 @@ public final class GameEngine {
         return new LinkedHashMap<>(o.getLine(itemIndex).getAddedCounts());
     }
 
+    /**
+     * Eklenmiş bir malzemenin TÜM eklemelerini (bol dahil) çıkarır ve stoğa/tepsiye iade eder ("Soğan çıkar"; v0.7
+     * Dengeli akışta istek farkı için, her akışta API olarak geçerli). Malzeme adımı bitmemiş ve ekleme sürmüyor olmalı.
+     * Sonuçlar: STARTED, NOTHING_TO_UNDO (eklenmemiş), ORDER_BUSY, INVALID, NO_ORDER, ORDER_READY, NOT_RUNNING.
+     */
+    public StartResult removeTopping(int orderId, int itemIndex, String ingredientId) {
+        if (state == State.FINISHED || state == State.FAILED) return StartResult.NOT_RUNNING;
+        Order o = getOrder(orderId);
+        if (o == null) return StartResult.NO_ORDER;
+        if (o.ready) return StartResult.ORDER_READY;
+        int li = itemIndex;
+        if (li < 0) {
+            li = resolveToppingItem(o, -1);
+            for (int i = 0; i < o.lineCount(); i++) {
+                OrderLine l = o.getLine(i);
+                int t = l.product.toppingStepIndex();
+                if (t >= 0 && !l.isStepDone(t) && l.addedCount(ingredientId) > 0) { li = i; break; }
+            }
+        }
+        if (li < 0 || li >= o.lineCount()) return StartResult.INVALID;
+        OrderLine line = o.getLine(li);
+        int ti = line.product.toppingStepIndex();
+        Ingredient ing = ingredientId == null ? null : Catalog.ingredient(ingredientId);
+        if (ti < 0 || ing == null) return rejectOption(o, "remove:" + ingredientId, StartResult.INVALID);
+        if (line.isStepDone(ti) || line.addedCount(ingredientId) == 0) return rejectOption(o, "remove:" + ingredientId, StartResult.NOTHING_TO_UNDO);
+        if (line.isStepRunning(ti)) return rejectOption(o, "remove:" + ingredientId, StartResult.ORDER_BUSY);
+        refund(ingredientId, line.removeAll(ingredientId));
+        for (GameListener l : snap()) l.onToppingRemoved(o, li, ing, 0);
+        return StartResult.STARTED;
+    }
+
+    private void refund(String id, List<Boolean> trays) {
+        for (boolean t : trays) {
+            if (t) trayUses.put(id, getTrayUses(id) + 1);
+            else save.inventory.add(id, 1);
+        }
+    }
+
+    // ---------------------------------------------------------------- otomatik malzeme (v0.7 Rahat / Dengeli)
+    /** Kalemde otomatik malzeme ("auto") sunulur mu: akış + adım bitmemiş (Dengeli'de yalnızca bir kez). Kilit/yuva bakılmaz. */
+    private boolean autoAvailable(OrderLine line) {
+        FlowMode m = getFlowMode();
+        if (!m.autoToppings()) return false;
+        int ti = line.product.toppingStepIndex();
+        if (ti < 0 || line.isStepDone(ti)) return false;
+        return m == FlowMode.RAHAT || !line.isAutoDone();
+    }
+
+    /** Otomatik işin istediği küme: Rahat = hedef (istekler dahil), Dengeli = günün varsayılanı. */
+    private Set<String> autoWanted(OrderLine line) {
+        return getFlowMode().autoRequests() ? line.getTarget() : line.getDefaults();
+    }
+
+    /** Otomatik işin ekleyeceği malzemeler (havuz sırasında, henüz eklenmemiş olanlar). */
+    private List<String> autoAddList(OrderLine line) {
+        Set<String> want = autoWanted(line);
+        List<String> out = new ArrayList<>();
+        for (String id : line.getPool()) if (want.contains(id) && line.addedCount(id) == 0) out.add(id);
+        return out;
+    }
+
+    /** Rahat: eklenmiş ama hedefte olmayan malzemeler (otomatik iş çıkarır ve stoğa iade eder). Dengeli'de boş. */
+    private List<String> autoRemoveList(OrderLine line) {
+        List<String> out = new ArrayList<>();
+        if (!getFlowMode().autoRequests()) return out;
+        for (String id : line.getAddedSet()) if (!line.getTarget().contains(id)) out.add(id);
+        return out;
+    }
+
+    /** Otomatik işin stoktan isteyeceği malzemeler (tepside olanlar hariç): id -> 1. Sunulmuyorsa boş. */
+    private Map<String, Integer> autoNeeds(OrderLine line) {
+        Map<String, Integer> m = new LinkedHashMap<>();
+        if (!autoAvailable(line)) return m;
+        for (String id : autoAddList(line)) if (getTrayUses(id) <= 0) m.put(id, 1);
+        return m;
+    }
+
+    /** Otomatik işin süresi: tek tek eklemelerin süreleri toplamı (tepsiden yarısı) — Gerçekçi ile aynı iş süresi, yalnızca dokunuş yok. */
+    private float autoPreviewSeconds(List<String> ids) {
+        double d = 0;
+        for (String id : ids) d += addSeconds(Catalog.ingredient(id), getTrayUses(id) > 0);
+        return (float) Math.max(MIN_ADD_SECONDS, d);
+    }
+
+    /**
+     * v0.7 "Malzemeleri ekle" (Rahat) / "Varsayılan malzemeleri ekle" (Dengeli): tek dokunuşla malzemeleri ekleyen ZAMANLI
+     * iş (oyuncu yuvası kullanır). Süre = eklenecek her malzemenin tek tek ekleme süresi toplamı (tepsiden yarısı; istasyon
+     * hızı ve tempo dahil). Stok başta tüketilir (önce tepsi). Bir malzeme bile yoksa hiçbir şey tüketilmez,
+     * OUT_OF_STOCK + {@code onOutOfStock} (eksikler {@link #missingIngredients}/{@link #emergencyBuyMissing} ile acil alınır).
+     * Rahat: hedef kümeyi kurar (eksikleri ekler, fazlaları çıkarıp iade eder) ve iş bitince malzeme adımı da biter.
+     * Dengeli: günün varsayılan kümesini ekler; hedef varsayılanla aynıysa (istek farkı yok) adım biter, değilse açık kalır
+     * ve oyuncu farkı (remove:/add:) yapıp "Malzemeleri bitir" der. Dengeli'de kalem başına bir kez.
+     * Gerçekçi akışta INVALID (+ onOptionRejected). Sonuçlar: STARTED, OUT_OF_STOCK, NO_SLOT, STEP_LOCKED, ORDER_BUSY,
+     * INVALID, NO_ORDER, ORDER_READY, NOT_RUNNING.
+     */
+    public StartResult autoToppings(int orderId, int itemIndex) {
+        if (state == State.FINISHED || state == State.FAILED) return StartResult.NOT_RUNNING;
+        ensureStarted();
+        Order o = getOrder(orderId);
+        if (o == null) return StartResult.NO_ORDER;
+        if (o.ready) return StartResult.ORDER_READY;
+        int li = resolveToppingItem(o, itemIndex);
+        if (li < 0) return rejectOption(o, "auto", StartResult.INVALID);
+        OrderLine line = o.getLine(li);
+        int ti = line.product.toppingStepIndex();
+        if (ti < 0 || line.isStepDone(ti) || !autoAvailable(line)) return rejectOption(o, "auto", StartResult.INVALID);
+        if (line.isStepRunning(ti)) return rejectOption(o, "auto", StartResult.ORDER_BUSY);
+        Step step = line.step(ti);
+        if (!line.isStepUnlocked(ti)) {
+            for (GameListener l : snap()) l.onStepLocked(o, step);
+            return StartResult.STEP_LOCKED;
+        }
+        if (playerActiveCount() >= upgrades.slots()) {
+            for (GameListener l : snap()) l.onNoFreeSlot(o);
+            return StartResult.NO_SLOT;
+        }
+        List<String> add = autoAddList(line);
+        for (String id : add) {
+            if (getTrayUses(id) <= 0 && !save.inventory.has(id, 1)) {
+                blocked.put(o.id, new int[]{li, ti, -1});
+                Ingredient missing = Catalog.ingredient(id);
+                for (GameListener l : snap()) l.onOutOfStock(o, missing);
+                return StartResult.OUT_OF_STOCK;
+            }
+        }
+        FlowMode mode = getFlowMode();
+        List<String> removed = autoRemoveList(line);
+        for (String id : removed) refund(id, line.removeAll(id));
+        double d = 0;
+        for (String id : add) {
+            boolean tray = getTrayUses(id) > 0;
+            d += addSeconds(Catalog.ingredient(id), tray);
+            if (tray) trayUses.put(id, getTrayUses(id) - 1);
+            else save.inventory.add(id, -1);
+            line.recordAdd(id, tray);
+        }
+        float dur = (float) Math.max(MIN_ADD_SECONDS, d);
+        if (mode == FlowMode.DENGELI) line.setAutoDone();
+        line.setRunning(ti, true);
+        blocked.remove(o.id);
+        Step syn = new Step(mode == FlowMode.RAHAT ? "Malzemeleri ekle" : "Varsayılan malzemeleri ekle", Station.SOS, dur,
+                Collections.<String, Integer>emptyMap());
+        ActiveStep a = new ActiveStep(o, li, ti, syn, dur, freeSlot(), 0, null, null, false);
+        a.autoAdded = add;
+        a.autoRemoved = removed;
+        a.autoMode = mode;
+        active.add(a);
+        List<Ingredient> ings = ingredients(add);
+        for (GameListener l : snap()) l.onAutoToppingsStarted(o, li, ings, dur);
+        return StartResult.STARTED;
+    }
+
+    private static List<Ingredient> ingredients(List<String> ids) {
+        List<Ingredient> out = new ArrayList<>();
+        for (String id : ids) { Ingredient i = Catalog.ingredient(id); if (i != null) out.add(i); }
+        return out;
+    }
+
     // ---------------------------------------------------------------- malzeme seçimi (eski panel API'si)
     /** Eski malzeme paneli seçenekleri (havuz sırasında; günün açık malzemeleri). Kalem topping istemiyorsa boş liste. */
     public List<ToppingOption> getToppingOptions(int orderId, int itemIndex) {
@@ -840,7 +1030,10 @@ public final class GameEngine {
         }
         if (normal < 0) normal = normalFirstUndone;
         if (normal >= 0) out.add(stepOption(o, line, normal, who));
-        if (sized >= 0) sizeOptions(out, o, line, sized, who);
+        if (sized >= 0) {
+            if (getFlowMode().autoSize(line.getSize())) out.add(stepOption(o, line, sized, who));
+            else sizeOptions(out, o, line, sized, who);
+        }
         if (top >= 0) toppingOptions(out, o, line, top, who);
     }
 
@@ -855,8 +1048,11 @@ public final class GameEngine {
         Map<String, Integer> need = effectiveNeeds(s, sz);
         boolean out = !save.inventory.hasAll(need);
         float sec = previewSeconds(line, si, sz);
-        String desc = who + s.name + (s.isBreadStep() && sz != PortionSize.FULL ? ", " + sz.spoken() : "") + ", " + Narrator.fmtSeconds(sec)
-                + (out ? ", malzeme yok" : "");
+        String sizeText = "";
+        if (s.isBreadStep() && sz != PortionSize.FULL) sizeText = ", " + sz.spoken();
+        else if (s.isSized() && line.hasSize() && PortionSize.HALF.isOpen(day)) sizeText = ", " + sz.spoken() + ", boy otomatik";
+        String desc = who + s.name + sizeText + ", " + Narrator.fmtSeconds(sec)
+                + (s.isSized() && usesReadyMeat(s, sz) ? ", hazır dilimden" : "") + (out ? ", malzeme yok" : "");
         return new StationOption("step", StationOption.Group.STEP, who + s.name, desc, ok, reason, null, out);
     }
 
@@ -887,6 +1083,7 @@ public final class GameEngine {
     }
 
     private void toppingOptions(List<StationOption> out, Order o, OrderLine line, int ti, String who) {
+        if (getFlowMode().autoToppings()) { autoToppingOptions(out, o, line, ti, who); return; }
         boolean locked = !line.isStepUnlocked(ti);
         boolean running = line.isStepRunning(ti);
         boolean slot = slotFree();
@@ -915,6 +1112,63 @@ public final class GameEngine {
                 !locked && !running, locked ? lockedReason : "Ekleme sürüyor", null, false));
         out.add(new StationOption("read:added", StationOption.Group.READ, "Eklenenleri oku", "Eklenenleri oku",
                 true, null, null, false));
+        out.add(new StationOption("read:target", StationOption.Group.READ, "Hedefi oku", "Hedefi oku, müşterinin istediği malzemeler",
+                true, null, null, false));
+    }
+
+    /**
+     * Rahat/Dengeli malzeme menüsü: "auto" (tek dokunuş: Rahat'ta hedef, Dengeli'de varsayılan küme). Dengeli'de
+     * otomatik eklemeden sonra istek farkı için eklenmişlere "X çıkar" (remove:x), eklenmemişlere "X ekle" (add:x),
+     * "Malzemeleri bitir" ve okuma seçenekleri.
+     */
+    private void autoToppingOptions(List<StationOption> out, Order o, OrderLine line, int ti, String who) {
+        FlowMode m = getFlowMode();
+        boolean locked = !line.isStepUnlocked(ti);
+        boolean running = line.isStepRunning(ti);
+        boolean slot = slotFree();
+        String lockedReason = "Önce kalemin diğer adımları bitmeli";
+        if (autoAvailable(line)) {
+            List<String> add = autoAddList(line);
+            List<String> rem = autoRemoveList(line);
+            boolean oos = !save.inventory.hasAll(autoNeeds(line));
+            String name = m == FlowMode.RAHAT ? "Malzemeleri ekle" : "Varsayılan malzemeleri ekle";
+            StringBuilder d = new StringBuilder(who).append(name).append(", otomatik");
+            if (!add.isEmpty()) d.append(": ").append(Narrator.joinNames(add));
+            else if (rem.isEmpty()) d.append(", eklenecek malzeme yok");
+            if (!rem.isEmpty()) d.append(", çıkarılacak: ").append(Narrator.joinNames(rem));
+            d.append(", ").append(Narrator.fmtSeconds(autoPreviewSeconds(add)));
+            if (oos) d.append(", malzeme yok");
+            String reason = locked ? lockedReason : running ? "Ekleme sürüyor" : LOCK_SLOT;
+            out.add(new StationOption("auto", StationOption.Group.STEP, who + name, d.toString(),
+                    !locked && !running && slot, reason, null, oos));
+        }
+        if (m == FlowMode.DENGELI && (line.isAutoDone() || line.addedTotal() > 0)) {
+            String busy = running ? "Ekleme sürüyor" : null;
+            for (String id : line.getPool()) {
+                if (line.addedCount(id) <= 0) continue;
+                Ingredient ing = Catalog.ingredient(id);
+                String name = ing.name + " çıkar";
+                out.add(new StationOption("remove:" + id, StationOption.Group.REMOVE, who + name,
+                        who + name + ", eklendi, stoğa döner", busy == null && !locked, locked ? lockedReason : busy, id, false));
+            }
+            for (String id : line.getPool()) {
+                if (line.addedCount(id) > 0) continue;
+                Ingredient ing = Catalog.ingredient(id);
+                int stock = save.inventory.get(id);
+                int tray = getTrayUses(id);
+                boolean oos = stock <= 0 && tray <= 0;
+                String state = oos ? ", stokta yok" : tray > 0 ? ", hazır tepside " + tray : ", stokta " + stock;
+                String name = ing.name + " ekle";
+                boolean ok = !locked && !running && slot;
+                String reason = locked ? lockedReason : running ? "Ekleme sürüyor" : LOCK_SLOT;
+                out.add(new StationOption("add:" + id, StationOption.Group.ADD, who + name, who + name + state, ok, reason, id, oos));
+            }
+            out.add(new StationOption("finish", StationOption.Group.CONTROL, "Malzemeleri bitir",
+                    who + "Malzemeleri bitir, " + line.addedTotal() + " ekleme",
+                    !locked && !running, locked ? lockedReason : "Ekleme sürüyor", null, false));
+            out.add(new StationOption("read:added", StationOption.Group.READ, "Eklenenleri oku", "Eklenenleri oku",
+                    true, null, null, false));
+        }
         out.add(new StationOption("read:target", StationOption.Group.READ, "Hedefi oku", "Hedefi oku, müşterinin istediği malzemeler",
                 true, null, null, false));
     }
@@ -1018,6 +1272,14 @@ public final class GameEngine {
         if (optionId.startsWith("add:")) {
             if (st != Station.SOS) return rejectOption(o, optionId, StartResult.UNKNOWN_OPTION);
             return addTopping(orderId, itemIndex, optionId.substring(4));
+        }
+        if (optionId.equals("auto")) {
+            if (st != Station.SOS) return rejectOption(o, optionId, StartResult.UNKNOWN_OPTION);
+            return autoToppings(orderId, itemIndex);
+        }
+        if (optionId.startsWith("remove:")) {
+            if (st != Station.SOS) return rejectOption(o, optionId, StartResult.UNKNOWN_OPTION);
+            return removeTopping(orderId, itemIndex, optionId.substring(7));
         }
         if (optionId.equals("undo")) return removeLastTopping(orderId, itemIndex);
         if (optionId.equals("finish")) return finishToppings(orderId, itemIndex);
@@ -1204,7 +1466,8 @@ public final class GameEngine {
         int price = o.price();
         double tipRate = fast ? 0.20 : (happy ? 0.08 : 0.0);
         if (mistakes > 0) tipRate *= 0.5;
-        int tip = (int) Math.round(price * tipRate * o.customer.type.tipMult * upgrades.tipMult());
+        double flowTip = v06Balance ? 1.0 : getFlowMode().tipMult;
+        int tip = (int) Math.round(price * tipRate * o.customer.type.tipMult * upgrades.tipMult() * flowTip);
         save.money += price + tip;
         summary.revenue += price;
         summary.tips += tip;
@@ -1304,7 +1567,8 @@ public final class GameEngine {
             if (spawnTimer <= 0f) {
                 if (orders.size() < maxQueue()) {
                     spawnCustomer();
-                    double mult = DayConfig.starMultiplier(save.stars) * upgrades.arrivalMult();
+                    double mult = DayConfig.starMultiplier(save.stars) * upgrades.arrivalMult()
+                            * (v06Balance ? 1.0 : getFlowMode().arrivalMult);
                     spawnTimer = (float) (cfg.arrivalInterval * (0.75 + 0.5 * rng.nextDouble()) / mult);
                 } else {
                     spawnTimer = 0.5f;
@@ -1438,6 +1702,21 @@ public final class GameEngine {
             return;
         }
         OrderLine line = o.getLine(a.itemIndex);
+        if (a.autoAdded != null) { // otomatik malzeme işi bitti
+            line.setRunning(a.stepIndex, false);
+            boolean finish = a.autoMode == FlowMode.RAHAT || line.getAddedSet().equals(line.getTarget());
+            List<Ingredient> added = ingredients(a.autoAdded), removed = ingredients(a.autoRemoved);
+            for (GameListener l : snap()) l.onToppingsAutoAdded(o, a.itemIndex, added, removed, finish);
+            if (finish) {
+                Step ts = line.step(a.stepIndex);
+                line.finishChosen();
+                line.setDone(a.stepIndex);
+                blocked.remove(o.id);
+                for (GameListener l : snap()) l.onToppingsFinished(o, a.itemIndex, line.getChosen());
+                afterLineStep(o, line, ts, 0, a.total);
+            }
+            return;
+        }
         if (a.addId != null) { // tek malzeme eklendi: malzeme adımı BİTMEZ, yeni ekleme için açılır
             line.setRunning(a.stepIndex, false);
             Ingredient ing = Catalog.ingredient(a.addId);
@@ -1639,8 +1918,10 @@ public final class GameEngine {
     }
 
     private Order addOrder(String name, CustomerType type, List<Product> items, List<Request> reqs, List<PortionSize> sizes) {
-        double pat = (type.patienceSeconds * cfg.patienceFactor + Order.estimateWork(items, sizes) * cfg.workPatience)
-                * upgrades.patienceMult() * save.tempo;
+        double work = Order.estimateWork(items, sizes);
+        if (!v06Balance) work += Order.interactionWork(items, sizes, reqs, day, getFlowMode());
+        double pat = (type.patienceSeconds * cfg.patienceFactor + work * cfg.workPatience)
+                * upgrades.patienceMult() * save.tempo * (v06Balance ? 1.0 : getFlowMode().patienceMult);
         Customer c = new Customer(name, type, (float) pat);
         Order o = new Order(nextOrderId++, c, items, reqs, day, sizes);
         int pos = 1;

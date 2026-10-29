@@ -80,4 +80,16 @@ public interface GameListener {
     void onStationInfo(Order order, int itemIndex, String optionId);
     /** applyStationOption reddedildi (kilitli, azami, geri alınacak yok, geçersiz). order null olabilir. */
     void onOptionRejected(Order order, String optionId, StartResult reason);
+
+    // ---- v0.7: oyun akışı (Rahat / Dengeli / Gerçekçi) ve otomatik malzeme
+    /** Otomatik malzeme işi başladı ("auto": Rahat'ta hedef küme, Dengeli'de varsayılan küme). adding: eklenecekler (havuz sırasında). */
+    void onAutoToppingsStarted(Order order, int itemIndex, java.util.List<Ingredient> adding, float seconds);
+    /**
+     * Otomatik malzeme işi bitti. added: eklenenler, removed: (Rahat) hedefte olmadığı için çıkarılıp stoğa dönenler.
+     * finished: malzeme adımı da bitti mi (Rahat her zaman; Dengeli yalnızca istek farkı yoksa). finished ise ardından
+     * onToppingsFinished + onStepFinished gelir; değilse oyuncu farkı (çıkar/ekle) yapıp "Malzemeleri bitir" der.
+     */
+    void onToppingsAutoAdded(Order order, int itemIndex, java.util.List<Ingredient> added, java.util.List<Ingredient> removed, boolean finished);
+    /** Oyun akışı değişti (oyun ortasında da olabilir). */
+    void onFlowModeChanged(FlowMode mode);
 }

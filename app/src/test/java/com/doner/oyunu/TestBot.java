@@ -11,6 +11,7 @@ import com.doner.oyunu.engine.Station;
 import com.doner.oyunu.engine.Product;
 import com.doner.oyunu.engine.Step;
 import com.doner.oyunu.engine.StartResult;
+import com.doner.oyunu.engine.StationOption;
 import com.doner.oyunu.engine.Catalog;
 
 import java.util.ArrayList;
@@ -38,6 +39,26 @@ public final class TestBot {
     private float delay;
     public int emergencyBuys;
     public int prepActions;
+    /**
+     * Oyuncu dokunuş sayısı (v0.7 ölçütü): her istasyon seçeneği, sipariş seçimi, teslim, acil alım bir dokunuş;
+     * seçenek paneli gerektiren (tek dokunuşla uygulanmayan) istasyonda paneli açmak da bir dokunuş (panel art arda
+     * eklemelerde açık kalır). Hazırlık hariç (sipariş başına ölçüt için).
+     */
+    public int taps;
+    /** Teslim edilen sipariş sayısı (bot sayar). */
+    public int delivered;
+    /** Aynı siparişler v0.4 akışıyla (her adım tek dokunuş, kalem başına paketleme) kaç dokunuş tutardı. */
+    public int v04Taps;
+    /** İnsan benzeri: panel açmak da bir tepki süresi alır, tepki ±%20 oynar, ardışık ekleme indirimi 0,7. */
+    private boolean humanLike;
+    private java.util.Random jitter;
+    private String panelKey;
+
+    /** İnsan benzeri bot (gerçekçi akış ölçümü için): panel açmak ayrı bir tepki, tepki süresi ±%20. */
+    public TestBot humanLike(long seed) { this.humanLike = true; this.jitter = new java.util.Random(seed); return this; }
+
+    /** Bot ölçütü: teslim başına dokunuş. */
+    public double tapsPerOrder() { return delivered == 0 ? 0 : taps / (double) delivered; }
 
     /** Eski davranışa en yakın: hazırlık yapmayan, isteklere dikkat eden bot. */
     public TestBot(float reactionSeconds) { this(reactionSeconds, false, true); }
@@ -68,7 +89,11 @@ public final class TestBot {
         }
         guard = 0;
         while (e.isRunning() && guard < 1000f) {
-            if (cooldown <= 0f && act(e)) { cooldown = delay; delay = reaction; }
+            if (cooldown <= 0f && act(e)) {
+                cooldown = delay;
+                if (humanLike) cooldown *= 0.8f + 0.4f * jitter.nextFloat();
+                delay = reaction;
+            }
             e.tick(0.1f);
             cooldown -= 0.1f;
             guard += 0.1f;
@@ -83,18 +108,22 @@ public final class TestBot {
             }
         });
         for (Order o : list) {
-            if (o.isReady()) { e.deliver(o.id); return true; }
+            if (o.isReady()) {
+                int v04 = 2; // v0.4 eşdeğeri: seç + teslim + kalem başına (her adım bir dokunuş + kalem paketi)
+                for (OrderLine l : o.getLines()) v04 += l.stepCount() + 1;
+                e.deliver(o.id); taps++; delivered++; v04Taps += v04; panelKey = null; return true;
+            }
         }
         if (e.getFreeSlots() > 0) {
             for (Order o : list) {
                 if (o.isReady()) continue;
                 Step s = o.nextStep();
                 if (s == null) continue;
-                if (e.getSelectedOrderId() != o.id) e.selectOrder(o.id);
+                if (e.getSelectedOrderId() != o.id) { e.selectOrder(o.id); taps++; panelKey = null; }
                 StartResult r = doStep(e, o, s);
-                if (r == StartResult.STARTED) return true;
+                if (r == StartResult.STARTED || r == StartResult.INFO) return true;
                 if (r == StartResult.OUT_OF_STOCK) {
-                    if (e.emergencyBuyMissing(o.id)) { emergencyBuys++; return true; }
+                    if (e.emergencyBuyMissing(o.id)) { emergencyBuys++; taps++; return true; }
                 }
             }
             if (prep && prepStep(e, false)) return true;
@@ -102,18 +131,45 @@ public final class TestBot {
         return false;
     }
 
-    /** Önerilen adımı yeni API ile yapar: boy seçimi, tek tek ekleme, bitir, ya da genel adım. */
+    /**
+     * İstasyon seçeneğini uygular ve dokunuşu sayar: seçenek listesi tek dokunuşla uygulanmıyorsa (panel) panel açma da
+     * bir dokunuştur; insan benzeri botta panel açmak ayrıca bir tepki süresi alır. Panel art arda eklemelerde açık kalır.
+     */
+    private StartResult apply(GameEngine e, Order o, int li, Station st, String optionId) {
+        List<StationOption> ops = e.getStationOptions(o.id, li, st.id);
+        boolean panel = StationOption.direct(ops) == null;
+        String key = o.id + ":" + li + ":" + st.id;
+        if (panel && !key.equals(panelKey)) {
+            taps++;
+            if (humanLike) { panelKey = key; return StartResult.INFO; } // panel açıldı: seçim bir sonraki tepkide
+        }
+        StartResult r = e.applyStationOption(o.id, li, st.id, optionId);
+        taps++;
+        boolean keepOpen = panel && (optionId.startsWith("add:") || optionId.startsWith("remove:") || optionId.equals("undo")
+                || optionId.startsWith("read:") || r != StartResult.STARTED);
+        panelKey = keepOpen ? key : null;
+        return r;
+    }
+
+    private static boolean has(List<StationOption> ops, String id) {
+        for (StationOption op : ops) if (op.id.equals(id)) return true;
+        return false;
+    }
+
+    /** Önerilen adımı seçenek menüsüyle yapar (her akışta): boy seçimi / otomatik boy, malzeme, bitir, ya da genel adım. */
     private StartResult doStep(GameEngine e, Order o, Step s) {
-        if (s == o.getPackStep()) return e.applyStationOption(o.id, -1, Station.PAKET.id, "step");
+        if (s == o.getPackStep()) return apply(e, o, -1, Station.PAKET, "step");
         int li = lineOfOpenStep(o, s);
         if (li < 0) return StartResult.INVALID;
         if (s.isTopping()) return toppings(e, o, li);
         if (s.isSized()) {
             OrderLine line = o.getLine(li);
+            List<StationOption> ops = e.getStationOptions(o.id, li, Station.DONER.id);
             PortionSize pick = careful ? line.getSize() : PortionSize.FULL;
-            return e.applyStationOption(o.id, li, Station.DONER.id, "size:" + pick.id);
+            if (has(ops, "size:" + pick.id)) return apply(e, o, li, Station.DONER, "size:" + pick.id);
+            return apply(e, o, li, Station.DONER, "step"); // akış boyu otomatik seçiyor
         }
-        return e.applyStationOption(o.id, li, s.station.id, "step");
+        return apply(e, o, li, s.station, "step");
     }
 
     private static int lineOfOpenStep(Order o, Step s) {
@@ -123,22 +179,40 @@ public final class TestBot {
         return -1;
     }
 
-    /** Hedef (veya dikkatsizse varsayılan) malzemelerden eksik olanı ekler; hepsi eklenince "Malzemeleri bitir". */
+    /**
+     * Malzeme adımı (her akışta seçenek menüsüyle): "auto" sunuluyorsa önce onu (Rahat/Dengeli); sonra hedef (veya
+     * dikkatsizse varsayılan) kümeye göre fazlaları çıkarır, eksikleri tek tek ekler; hepsi tamamsa "Malzemeleri bitir".
+     */
     private StartResult toppings(GameEngine e, Order o, int li) {
         OrderLine line = o.getLine(li);
-        Set<String> want = new LinkedHashSet<>(careful ? line.getTarget() : line.getDefaults());
-        for (String id : want) {
-            if (line.addedCount(id) > 0) continue;
-            StartResult r = e.applyStationOption(o.id, li, Station.SOS.id, "add:" + id);
-            if (r == StartResult.OUT_OF_STOCK) {
-                if (e.emergencyBuy(id)) { emergencyBuys++; return StartResult.STARTED; }
-                return StartResult.OUT_OF_STOCK;
-            }
-            if (r == StartResult.STARTED) delay = reaction * ADD_REACTION_FACTOR;
+        List<StationOption> ops = e.getStationOptions(o.id, li, Station.SOS.id);
+        if (has(ops, "auto")) {
+            StartResult r = apply(e, o, li, Station.SOS, "auto");
+            if (r == StartResult.OUT_OF_STOCK && e.emergencyBuyMissing(o.id)) { emergencyBuys++; taps++; return StartResult.STARTED; }
             return r;
         }
-        return e.applyStationOption(o.id, li, Station.SOS.id, "finish");
+        Set<String> want = new LinkedHashSet<>(careful ? line.getTarget() : line.getDefaults());
+        for (String id : new ArrayList<>(line.getAddedSet())) {
+            if (!want.contains(id) && has(ops, "remove:" + id)) {
+                StartResult r = apply(e, o, li, Station.SOS, "remove:" + id);
+                if (r == StartResult.STARTED) delay = reaction * addFactor();
+                return r;
+            }
+        }
+        for (String id : want) {
+            if (line.addedCount(id) > 0) continue;
+            StartResult r = apply(e, o, li, Station.SOS, "add:" + id);
+            if (r == StartResult.OUT_OF_STOCK) {
+                if (e.emergencyBuy(id)) { emergencyBuys++; taps++; return StartResult.STARTED; }
+                return StartResult.OUT_OF_STOCK;
+            }
+            if (r == StartResult.STARTED) delay = reaction * addFactor();
+            return r;
+        }
+        return apply(e, o, li, Station.SOS, "finish");
     }
+
+    private float addFactor() { return humanLike ? 0.7f : ADD_REACTION_FACTOR; }
 
     /** Hazırlık sırası: içecek, döner, tepsi. Pre-day: hedef daha yüksek. */
     private boolean prepStep(GameEngine e, boolean preDay) {

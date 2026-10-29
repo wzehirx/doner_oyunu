@@ -25,6 +25,11 @@ public final class ActiveStep {
     /** Tek tek malzeme ekleme işi (SOS istasyonu): eklenen malzeme id'si; değilse null. */
     String addId;
     boolean addFromTray;
+    /** Otomatik malzeme işi (v0.7, "auto"): eklenen ve (Rahat) çıkarılan malzemeler; değilse null. */
+    java.util.List<String> autoAdded;
+    java.util.List<String> autoRemoved;
+    /** Otomatik işi başlatan akış (bitişte adımın kapanıp kapanmayacağı buna göre). */
+    FlowMode autoMode;
     /** Dilimleme/ısıtma adımında kullanılan boy (boy gerektirmeyen işte null). */
     PortionSize size;
 
@@ -50,6 +55,8 @@ public final class ActiveStep {
     public boolean isPack() { return pack; }
     /** Tek tek malzeme ekleme işi mi (kısa süreli, topping adımını tamamlamaz). */
     public boolean isToppingAdd() { return addId != null; }
+    /** Otomatik malzeme işi mi (v0.7 Rahat/Dengeli "Malzemeleri ekle"). */
+    public boolean isAutoToppings() { return autoAdded != null; }
     /** Eklenen malzemenin id'si (ekleme işi değilse null). */
     public String getAddedIngredient() { return addId; }
     /** Bu işin boyu (dilimleme/ekmek ısıtma); yoksa null. */

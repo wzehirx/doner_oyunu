@@ -41,4 +41,7 @@ public class GameListenerAdapter implements GameListener {
     @Override public void onSizeChosen(Order order, int itemIndex, PortionSize ordered, PortionSize chosen) {}
     @Override public void onStationInfo(Order order, int itemIndex, String optionId) {}
     @Override public void onOptionRejected(Order order, String optionId, StartResult reason) {}
+    @Override public void onAutoToppingsStarted(Order order, int itemIndex, java.util.List<Ingredient> adding, float seconds) {}
+    @Override public void onToppingsAutoAdded(Order order, int itemIndex, java.util.List<Ingredient> added, java.util.List<Ingredient> removed, boolean finished) {}
+    @Override public void onFlowModeChanged(FlowMode mode) {}
 }

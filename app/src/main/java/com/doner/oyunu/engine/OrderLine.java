@@ -87,6 +87,30 @@ public final class OrderLine {
         return id;
     }
 
+    /**
+     * Malzemenin TÜM eklemelerini kaldırır (bol dahil). Her kaldırılan ekleme için tepsiden gelip gelmediği listeye yazılır
+     * (iade için). Eklenmemişse boş liste.
+     */
+    List<Boolean> removeAll(String id) {
+        List<Boolean> trays = new ArrayList<>();
+        for (int i = history.size() - 1; i >= 0; i--) {
+            if (history.get(i).equals(id)) {
+                history.remove(i);
+                trays.add(fromTray.remove(i));
+            }
+        }
+        added.remove(id);
+        return trays;
+    }
+
+    /** Dengeli akışta varsayılan malzemeler otomatik eklendi mi (bir kez yapılır). */
+    private boolean autoDone;
+    public boolean isAutoDone() { return autoDone; }
+    void setAutoDone() { autoDone = true; }
+
+    /** Şu ana dek eklenen malzeme kümesi (havuz sırasında; bol sayılmaz). */
+    public Set<String> getAddedSet() { return Collections.unmodifiableSet(orderedKeys()); }
+
     public int stepCount() { return product.steps.size(); }
     public Step step(int i) { return product.steps.get(i); }
     public boolean isStepDone(int i) { return done[i]; }

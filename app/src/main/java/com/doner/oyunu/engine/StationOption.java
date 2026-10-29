@@ -13,6 +13,8 @@ public final class StationOption {
         SIZE,
         /** Tek malzeme ekle. */
         ADD,
+        /** Eklenmiş bir malzemeyi çıkar (v0.7 Dengeli akışta istek farkı: "Soğan çıkar"). */
+        REMOVE,
         /** Son ekleneni geri al / malzemeleri bitir. */
         CONTROL,
         /** Bilgi okuma (eklenenleri oku, hedefi oku): seçilince yalnızca duyuru yapılır. */
@@ -21,7 +23,7 @@ public final class StationOption {
         PREP
     }
 
-    /** Kararlı kimlik: "step", "size:yarim|tam|duble", "add:domates", "undo", "finish", "read:added", "read:target",
+    /** Kararlı kimlik: "step", "auto" (v0.7 otomatik malzeme), "remove:soğan" (v0.7 çıkar), "size:yarim|tam|duble", "add:domates", "undo", "finish", "read:added", "read:target",
      *  "prep:doner:et_doner:4", "prep:doner:et_doner:2", "prep:drink", "prep:tray". */
     public final String id;
     public final Group group;
@@ -56,6 +58,27 @@ public final class StationOption {
     public String label() {
         if (!enabled) return name + ", " + lockReason;
         return description;
+    }
+
+    /**
+     * Tek dokunuşla (panel açmadan) uygulanacak seçenek; yoksa null (panel açılmalı). Kural: hazırlık dışı seçeneklerde
+     * etkin işlem yoksa kilit nedenini duyurmak için ilk işlem seçeneği; okuma seçenekleri ("Hedefi oku") sayılmadan TEK
+     * işlem seçeneği varsa o; yalnızca hazırlık varsa ve tek ise o. TalkBack Eylemleri listesi yine tüm seçenekleri içerir.
+     */
+    public static StationOption direct(java.util.List<StationOption> ops) {
+        java.util.List<StationOption> np = new java.util.ArrayList<>();
+        for (StationOption op : ops) if (op.group != Group.PREP) np.add(op);
+        if (np.isEmpty()) return ops.size() == 1 ? ops.get(0) : null;
+        boolean actionable = false;
+        for (StationOption op : np) if (op.enabled && op.group != Group.READ) actionable = true;
+        if (!actionable) {
+            for (StationOption op : np) if (op.group != Group.READ) return op;
+            return np.get(0);
+        }
+        StationOption only = null;
+        int n = 0;
+        for (StationOption op : np) if (op.group != Group.READ) { only = op; n++; }
+        return n == 1 ? only : null;
     }
 
     @Override public String toString() { return id + (enabled ? "" : "(kilitli: " + lockReason + ")"); }

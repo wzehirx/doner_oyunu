@@ -75,6 +75,38 @@ public final class Order {
         return t;
     }
 
+    /** v0.7: boy seçimi elle yapılan kalem için ek iş yükü (sn): menüyü açmak + boyu seçmek. */
+    static float SIZE_CHOICE_WORK = 2.0f;
+    /** v0.7: malzemesi elle bitirilen kalem için ek iş yükü (sn): menüyü açmak + "Malzemeleri bitir". */
+    static float TOPPING_FINISH_WORK = 2.0f;
+    /** v0.7: elle yapılan her istek farkı (çıkar/ekle) için ek iş yükü (sn). */
+    static float REQUEST_DIFF_WORK = 1.5f;
+
+    /**
+     * v0.7 sabır düzeltmesi: akışın oyuncudan istediği EK dokunuşların tahmini süresi (sn), müşteri sabrına eklenir
+     * (v0.6 tahmini yalnızca makine süresini ve malzeme başına 1,5 sn'yi sayıyordu; menü açma, boy seçme ve bitirme
+     * dokunuşları sayılmıyordu). Gerçekçi: boylu her kalemde boy seçimi, malzemeli her kalemde bitirme + istek farkları.
+     * Dengeli: yalnızca elle yapılanlar (yarım/duble boy; istek farkı olan kalemde bitirme + farklar). Rahat: 0.
+     */
+    static float interactionWork(List<Product> items, List<PortionSize> sizes, List<Request> requests, int day, FlowMode mode) {
+        if (mode == FlowMode.RAHAT) return 0f;
+        float t = 0f;
+        for (int i = 0; i < items.size(); i++) {
+            Product p = items.get(i);
+            PortionSize sz = sizes != null && i < sizes.size() && p.hasMeat() ? sizes.get(i) : PortionSize.FULL;
+            if (p.hasMeat() && !mode.autoSize(sz)) t += SIZE_CHOICE_WORK;
+            if (!p.hasToppings()) continue;
+            Set<String> def = p.defaultToppings(day);
+            Set<String> target = new LinkedHashSet<>(def);
+            for (Request r : requests) r.apply(p.toppingPool(day), target);
+            int diff = 0;
+            for (String id : target) if (!def.contains(id)) diff++;
+            for (String id : def) if (!target.contains(id)) diff++;
+            if (mode == FlowMode.GERCEKCI || diff > 0) t += TOPPING_FINISH_WORK + REQUEST_DIFF_WORK * diff;
+        }
+        return t;
+    }
+
     // ------------------------------------------------------------ kalemler
     public int lineCount() { return lines.size(); }
     public OrderLine getLine(int i) { return lines.get(i); }

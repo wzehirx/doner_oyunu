@@ -2,6 +2,7 @@ package com.doner.oyunu;
 
 import com.doner.oyunu.engine.Catalog;
 import com.doner.oyunu.engine.DaySummary;
+import com.doner.oyunu.engine.FlowMode;
 import com.doner.oyunu.engine.GameEngine;
 import com.doner.oyunu.engine.SaveData;
 import com.doner.oyunu.engine.Shop;
@@ -18,6 +19,20 @@ public final class Campaign {
 
     public final SaveData save = SaveData.newGame();
     public final List<DaySummary> results = new ArrayList<>();
+    /** v0.6 denge kuralları (karşılaştırma ölçümü için; bkz. GameEngine(seed, save, true)). */
+    public boolean v06Balance;
+    /** İnsan benzeri bot (panel açmak ayrı tepki, tepki ±%20). */
+    public boolean humanLike;
+    /** Toplam dokunuş / teslim (TestBot ölçütü), kayıp müşteri ve teslim sayıları (tüm denemeler). */
+    public long taps, delivered, lost, v04Taps;
+
+    /** Varsayılan: Gerçekçi akış (v0.6 davranışı; eski denge testleri bu akışı ölçer). */
+    public Campaign() { this(FlowMode.GERCEKCI); }
+
+    public Campaign(FlowMode flow) {
+        save.flowMode = flow;
+        save.flowChosen = true;
+    }
     public final List<Integer> attemptsPerDay = new ArrayList<>();
     public int firstUnpassedDay = -1;
 
@@ -34,8 +49,14 @@ public final class Campaign {
             while (attempt < maxAttempts && !passed) {
                 if (buyUpgrades) shop();
                 else Shop.buyRecommended(save);
-                GameEngine e = new GameEngine(seed * 1000 + d * 7 + attempt, save);
-                new TestBot(reaction, prep, careful).playDay(e);
+                GameEngine e = new GameEngine(seed * 1000 + d * 7 + attempt, save, v06Balance);
+                TestBot bot = new TestBot(reaction, prep, careful);
+                if (humanLike) bot.humanLike(seed * 31 + d * 7 + attempt);
+                bot.playDay(e);
+                taps += bot.taps;
+                v04Taps += bot.v04Taps;
+                delivered += bot.delivered;
+                lost += e.getSummary().lost;
                 results.add(e.getSummary());
                 passed = !e.getSummary().failed;
                 attempt++;
@@ -48,6 +69,18 @@ public final class Campaign {
         }
         return -1;
     }
+
+    /** Ölçüt: teslim edilen sipariş başına oyuncu dokunuşu. */
+    public double tapsPerOrder() { return delivered == 0 ? 0 : taps / (double) delivered; }
+
+    /** Aynı siparişlerin v0.4 akışındaki dokunuş eşdeğeri / teslim. */
+    public double v04TapsPerOrder() { return delivered == 0 ? 0 : v04Taps / (double) delivered; }
+
+    /** Toplam deneme sayısı (geçilen + başarısız). */
+    public int attempts() { int n = 0; for (int a : attemptsPerDay) n += a; return n; }
+
+    /** Başarısız deneme sayısı. */
+    public int failedAttempts() { int n = 0; for (DaySummary d : results) if (d.failed) n++; return n; }
 
     private void shop() {
         boolean bought = true;

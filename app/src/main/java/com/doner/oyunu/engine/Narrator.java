@@ -112,11 +112,20 @@ public class Narrator implements GameListener {
                 if (a.order == o && a.step == s && a.worker == 0 && a.getSize() != null) {
                     PortionSize sz = a.getSize();
                     if (sz == PortionSize.FULL && (s.isBreadStep() || engine.getDay() < PortionSize.HALF.unlockDay)) return "";
+                    // v0.7: boyu akış seçtiyse kısa duyuru ("boy otomatik: yarım ekmek")
+                    if (s.isSized() && engine.getFlowMode().autoSize(sz) && autoSized(o, a)) return ", boy otomatik: " + sz.spoken();
                     return ", " + sz.spoken();
                 }
             }
         }
         return sizeSuffix(o, s);
+    }
+
+    /** Dilimleme boyu akış tarafından (istenen boy) mı seçildi: kalemin istenen boyu = çalışan işin boyu ve akış o boyu otomatik yapıyor. */
+    private boolean autoSized(Order o, ActiveStep a) {
+        if (a.itemIndex < 0 || a.itemIndex >= o.lineCount()) return false;
+        OrderLine l = o.getLine(a.itemIndex);
+        return l.getSize() == a.getSize() && engine.getFlowMode().autoSize(l.getSize());
     }
 
     /** Boylu adımlarda (dilimleme, ekmek/lavaş ısıtma) ", yarım ekmek" gibi ek; tam ekmekte boş. */
@@ -152,8 +161,9 @@ public class Narrator implements GameListener {
         }
         String ni = newIngredientsText(day);
         if (!ni.isEmpty()) sb.append(' ').append(ni);
-        String ps = newSizesText(day);
+        String ps = engine != null ? newSizesText(day, engine.getFlowMode()) : newSizesText(day);
         if (!ps.isEmpty()) sb.append(' ').append(ps);
+        if (engine != null) sb.append(" Oyun akışı: ").append(engine.getFlowMode().displayName).append('.');
         return sb.toString();
     }
 
@@ -173,6 +183,20 @@ public class Narrator implements GameListener {
             if (sz.unlockDay == day && day > 1) return "Yeni boy: " + sz.spoken() + ". Döner makinesinde boyu sen seçersin.";
         }
         return "";
+    }
+
+    /** Brifing: o gün açılan yeni boy, akışa göre ("Rahat akışta boy otomatik seçilir."). Gerçekçi = {@link #newSizesText(int)}. */
+    public static String newSizesText(int day, FlowMode mode) {
+        String base = newSizesText(day);
+        if (base.isEmpty() || mode == null || mode == FlowMode.GERCEKCI) return base;
+        for (PortionSize sz : PortionSize.values()) {
+            if (sz.unlockDay == day) {
+                return "Yeni boy: " + sz.spoken() + ". " + (mode == FlowMode.RAHAT
+                        ? "Rahat akışta boy otomatik seçilir."
+                        : "Dengeli akışta tam ekmek otomatik; yarım ekmek ya da duble istenince boyu sen seçersin.");
+            }
+        }
+        return base;
     }
 
     public String customerArrived(Order o) {
@@ -316,6 +340,43 @@ public class Narrator implements GameListener {
         if ("read:added".equals(optionId)) return addedText(o, itemIndex);
         return "";
     }
+
+    // ---- v0.7: otomatik malzeme ve oyun akışı
+    /** "Malzemeler ekleniyor, 1,7 saniye." / Dengeli: "Varsayılan malzemeler ekleniyor, 1,7 saniye." */
+    public String autoToppingsStarted(Order o, int itemIndex, List<Ingredient> adding, float seconds) {
+        String who = o.lineCount() > 1 ? o.getLine(itemIndex).product.name + ": " : "";
+        boolean rahat = engine == null || engine.getFlowMode() == FlowMode.RAHAT;
+        return who + (rahat ? "Malzemeler ekleniyor, " : "Varsayılan malzemeler ekleniyor, ") + fmtSeconds(seconds) + ".";
+    }
+
+    private static List<String> ids(List<Ingredient> l) {
+        List<String> out = new java.util.ArrayList<>();
+        for (Ingredient i : l) out.add(i.id);
+        return out;
+    }
+
+    /**
+     * Otomatik ekleme bitti: Rahat "Malzemeler eklendi: domates ve marul. İstek uygulandı: soğansız."; Dengeli
+     * "Varsayılan malzemeler eklendi: domates, marul ve soğan." + istek farkı varsa "İstek: soğansız. Farkı sen yap, sonra Malzemeleri bitir."
+     */
+    public String toppingsAutoAdded(Order o, int itemIndex, List<Ingredient> added, List<Ingredient> removed, boolean finished) {
+        OrderLine l = o.getLine(itemIndex);
+        String who = o.lineCount() > 1 ? l.product.name + ": " : "";
+        StringBuilder sb = new StringBuilder(who);
+        boolean def = engine != null && engine.getFlowMode() == FlowMode.DENGELI;
+        if (added.isEmpty()) sb.append(def ? "Eklenecek varsayılan malzeme yok." : "Eklenecek malzeme yok.");
+        else sb.append(def ? "Varsayılan malzemeler eklendi: " : "Malzemeler eklendi: ").append(joinNames(ids(added))).append('.');
+        if (!removed.isEmpty()) sb.append(" Çıkarıldı: ").append(joinNames(ids(removed))).append('.');
+        if (finished) {
+            if (!def && o.hasRequests() && !l.getTarget().equals(l.getDefaults())) sb.append(" İstek uygulandı: ").append(o.requestsText()).append('.');
+        } else {
+            sb.append(" İstek: ").append(o.hasRequests() ? o.requestsText() : "farklı").append(". Farkı sen yap, sonra Malzemeleri bitir.");
+        }
+        return sb.toString();
+    }
+
+    /** Oyun akışı değişti: "Oyun akışı: Rahat. …" */
+    public String flowModeChanged(FlowMode mode) { return mode.spoken(); }
 
     /** Boy seçimi duyurusu: "Duble dilimleniyor." */
     public String sizeChosen(PortionSize chosen) { return chosen.displayName + " dilimleniyor."; }
@@ -505,6 +566,7 @@ public class Narrator implements GameListener {
         }
         String ready = readyStockText();
         if (!ready.isEmpty()) t += " " + ready;
+        t += " Oyun akışı: " + engine.getFlowMode().displayName + ".";
         return t;
     }
 
@@ -629,4 +691,11 @@ public class Narrator implements GameListener {
     @Override public void onSizeChosen(Order o, int i, PortionSize ordered, PortionSize chosen) {}
     @Override public void onStationInfo(Order o, int i, String optionId) { say(stationInfo(o, i, optionId), true); }
     @Override public void onOptionRejected(Order o, String optionId, StartResult r) { say(optionRejected(o, optionId, r), true); }
+
+    // ---- v0.7
+    @Override public void onAutoToppingsStarted(Order o, int i, List<Ingredient> adding, float sec) { say(autoToppingsStarted(o, i, adding, sec), false); }
+    @Override public void onToppingsAutoAdded(Order o, int i, List<Ingredient> added, List<Ingredient> removed, boolean finished) {
+        say(toppingsAutoAdded(o, i, added, removed, finished), !finished);
+    }
+    @Override public void onFlowModeChanged(FlowMode mode) { say(flowModeChanged(mode), true); }
 }

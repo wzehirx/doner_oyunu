@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  push:
+    branches: [ccr-7f439f66-f4ms8d, main]
+    paths: ['releases/**', '.github/workflows/release.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create a GitHub release for every APK pair that has none yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for rel in releases/doner-v*-release.apk; do
+            tag=$(basename "$rel" | sed -E 's/^doner-(v[0-9.]+)-release\.apk$/\1/')
+            dbg="releases/doner-${tag}-debug.apk"
+            [ "$tag" = "v0.1" ] && continue
+            if gh release view "$tag" >/dev/null 2>&1; then continue; fi
+            gh release create "$tag" "$rel" "$dbg" \
+              --target "$GITHUB_SHA" \
+              --title "Döner Dükkanı $tag" \
+              --notes "Döner Dükkanı $tag. Debug ve release (container anahtarıyla imzalı) APK."
+          done

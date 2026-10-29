@@ -94,6 +94,8 @@ public class UiFlowTest {
         assertEquals("Hazırlık aşaması öğreticisi konuşulmalı", 1, h.field(gs, "tutorialStage"));
         // hazırlık yap: döner dilimle
         h.click("Döner dilimle");
+        assertTrue("hazırlık seçenekleri paneli", UiBot.panelOpen(h));
+        h.click("4 porsiyon");
         h.run(300);
         long t = 0;
         while (e.getReadyDoner() == 0 && t < 20_000) { h.run(100); t += 100; }
@@ -118,7 +120,7 @@ public class UiFlowTest {
             botStep(h); h.run(100); t += 100;
         }
         assertTrue("1. günde ilk teslim yapılabilmeli", e.getSummary().delivered > 0);
-        assertTrue("malzeme seçimi paneli kullanılmalı", panelSeen);
+        assertTrue("istasyon seçenek paneli kullanılmalı", panelSeen);
         assertEquals("Öğretici son aşamaya ulaşmalı", GameScreen.TUTORIAL_END, h.field(gs, "tutorialStage"));
         assertEquals(Boolean.FALSE, h.field(gs, "tutorialActive"));
         assertEquals("Doğru malzemeler: kusursuz sipariş", 1, e.getSummary().perfect);

@@ -120,7 +120,10 @@ public class FixesUiTest {
         assertEquals("Harç ve döner ekle", harc.name);
         assertEquals(Station.DONER, harc.station);
         for (String id : new ArrayList<>(harc.needs.keySet())) e.getSave().inventory.set(id, 0);
-        h.stationTile(Station.DONER).performClick(); h.run(200);
+        h.stationTile(Station.DONER).performClick(); h.run(100);
+        assertTrue("boy seçenekleri paneli", UiBot.panelOpen(h));
+        UiBot.row(h, o.getLine(0).getSize().displayName).performClick(); h.run(200);
+        assertFalse("stok yoksa panel kapanır, acil al düğmesi çıkar", UiBot.panelOpen(h));
         List<Ingredient> missing = e.missingIngredients(o.id);
         assertTrue("birden çok eksik", missing.size() >= 2);
         View b = h.findLabel("Acil al");
@@ -134,7 +137,8 @@ public class FixesUiTest {
         assertEquals("tek dokunuşla hepsi alınmalı", money - cost, e.getMoney());
         assertTrue(e.missingIngredients(o.id).isEmpty());
         assertNull("eksik kalmayınca düğme kapanır", h.findLabel("Acil al"));
-        h.stationTile(Station.DONER).performClick(); h.run(200);
+        h.stationTile(Station.DONER).performClick(); h.run(100);
+        UiBot.row(h, o.getLine(0).getSize().displayName).performClick(); h.run(200);
         assertTrue("adım başlamalı", o.isRunning());
     }
 

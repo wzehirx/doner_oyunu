@@ -76,6 +76,15 @@ public final class SummaryScreen extends Screen {
             body.addView(c, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 8, 0, 4));
         }
 
+        if (!summary.failed && summary.newIngredientsNext != null && !summary.newIngredientsNext.isEmpty()) {
+            LinearLayout c = card();
+            c.setBackground(Ui.round(ctx, Theme.CARD_HI, Theme.GOLD, 3, 16));
+            TextView tv = Ui.label(ctx, "Yarın yeni malzeme: " + summary.newIngredientsNext, 19, Theme.GOLD, true);
+            tv.setFocusable(true);
+            c.addView(tv);
+            body.addView(c, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 8, 0, 4));
+        }
+
         LinearLayout bar = column();
         if (summary.failed) {
             bar.addView(button("Aynı günü tekrar dene", Ui.PRIMARY, new Runnable() {

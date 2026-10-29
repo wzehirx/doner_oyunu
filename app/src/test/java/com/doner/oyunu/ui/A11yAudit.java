@@ -19,6 +19,8 @@ final class A11yAudit {
     final List<String> errors = new ArrayList<>();
     final List<String> warnings = new ArrayList<>();
     int checkedInteractive;
+    /** Denetlenen TalkBack özel eylemi sayısı (istasyon / hazırlık düğmeleri). */
+    int checkedActions;
 
     static A11yAudit run(UiHarness h, String where) {
         A11yAudit a = new A11yAudit();
@@ -49,6 +51,7 @@ final class A11yAudit {
             String lab = UiHarness.label(v).trim();
             String id = where + ": " + v.getClass().getSimpleName() + " '" + shorten(lab) + "'";
             if (v.isAccessibilityHeading()) anyHeading = true;
+            if (important && v.isClickable()) checkActions(v, id, a);
 
             // dekoratif View'lar
             if (isDecorative(v)) {
@@ -95,6 +98,32 @@ final class A11yAudit {
             for (int j = i + 1; j < labels.size(); j++)
                 if (labels.get(i).equals(labels.get(j))) a.warnings.add(where + ": aynı etiket iki kez: '" + shorten(labels.get(i)) + "'");
         return a;
+    }
+
+    /** Düğmenin TalkBack özel eylemleri (ActionMenu kimlik aralığı): etiketler boş değil, Türkçe, tekrarsız. */
+    static List<String> customActionLabels(View v) {
+        List<String> out = new ArrayList<>();
+        for (android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction act : v.createAccessibilityNodeInfo().getActionList()) {
+            int id = act.getId();
+            if (id >= ActionMenu.ACTION_BASE && id < ActionMenu.ACTION_BASE + 4096) {
+                CharSequence l = act.getLabel();
+                out.add(l == null ? "" : l.toString());
+            }
+        }
+        return out;
+    }
+
+    private static void checkActions(View v, String id, A11yAudit a) {
+        List<String> labels = customActionLabels(v);
+        for (int i = 0; i < labels.size(); i++) {
+            String l = labels.get(i).trim();
+            a.checkedActions++;
+            if (l.isEmpty()) a.errors.add(id + " özel eylem " + i + " etiketsiz");
+            else if (ENGLISH.matcher(l).find()) a.errors.add(id + " özel eylem İngilizce olabilir: '" + shorten(l) + "'");
+            for (int j = i + 1; j < labels.size(); j++) {
+                if (labels.get(j).trim().equals(l)) a.errors.add(id + " aynı etiketli iki özel eylem: '" + shorten(l) + "'");
+            }
+        }
     }
 
     private static boolean isDecorative(View v) {

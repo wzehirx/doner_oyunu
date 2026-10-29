@@ -22,7 +22,10 @@ import com.doner.oyunu.engine.DayConfig;
 import com.doner.oyunu.engine.DaySummary;
 import com.doner.oyunu.engine.GameEngine;
 import com.doner.oyunu.engine.GameListenerAdapter;
+import com.doner.oyunu.engine.Catalog;
 import com.doner.oyunu.engine.Ingredient;
+import com.doner.oyunu.engine.PortionSize;
+import com.doner.oyunu.engine.StationOption;
 import com.doner.oyunu.engine.Narrator;
 import com.doner.oyunu.engine.Order;
 import com.doner.oyunu.engine.OrderLine;
@@ -38,13 +41,16 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Random;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 /**
  * Oyun ekranı: önce HAZIRLIK aşaması (müşteri yok, süre akmaz), sonra gün. Canlı durum çubuğu, çalışanlar şeridi,
- * kalem bazlı sipariş kartları, istasyon ızgarası, hazırlık bölümü, malzeme seçimi paneli, eylem düğmeleri, duraklatma paneli.
+ * kalem bazlı sipariş kartları, istasyon ızgarası, hazırlık bölümü, istasyon eylem menüleri (TalkBack Eylemleri + seçenek paneli),
+ * eylem düğmeleri, duraklatma paneli.
  */
 public final class GameScreen extends Screen implements Choreographer.FrameCallback {
 
@@ -80,8 +86,14 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     /** Hazırlık düzeni (gün başlamadı) mı gösteriliyor. */
     private boolean prepUi = true;
     private boolean prepBegun;
-    /** Açık malzeme seçimi / tepsi paneli (yoksa null). */
-    private SelectionPanel panel;
+    /** Açık istasyon seçenek paneli (yoksa null). */
+    private MenuPanel panel;
+    /** Panel kapanınca odağın döneceği düğme. */
+    private View panelOrigin;
+    /** Stokta olmadığı için eklenemeyen malzemeler (acil al düğmesi bunları da sunar). */
+    private final Set<String> wantEmergency = new LinkedHashSet<>();
+    private boolean tutSizeShown;
+    private final Random fx = new Random();
 
     // ------------------------------------------------------------------ görünümler
     private FrameLayout host;
@@ -148,7 +160,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         // Acil al: kaydırılan listenin DIŞINDA, durum çubuğunun hemen altında sabit; kartların altına düşmez.
         emergencyBtn = Ui.button(ctx, "", Ui.DANGER);
         emergencyBtn.setVisibility(View.GONE);
-        tap(emergencyBtn, new Runnable() { @Override public void run() { onEmergency(); } });
+        tap(emergencyBtn, new Runnable() { @Override public void run() { doEmergency(); } });
         content.addView(emergencyBtn, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 0, 0, 4));
 
         ScrollView sv = new ScrollView(ctx);
@@ -357,9 +369,6 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         Choreographer.getInstance().postFrameCallback(this);
     }
 
-    /** Malzeme seçimi paneli açıkken gün saati durur (karar için baskısız süre). */
-    private boolean timeFrozen() { return panel != null && panel.mode() == SelectionPanel.Mode.TOPPING; }
-
     @Override public void doFrame(long nanos) {
         frameQueued = false;
         if (exited || paused) return;
@@ -369,7 +378,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
         if (!finishing) {
             GameEngine.State st = engine.getState();
-            if ((st == GameEngine.State.PREP || st == GameEngine.State.RUNNING) && !timeFrozen()) engine.tick(dt);
+            if (st == GameEngine.State.PREP || st == GameEngine.State.RUNNING) engine.tick(dt);
             uiAccum += dt;
             if (dirty || uiAccum >= 0.1f) {
                 refresh(false);
@@ -406,7 +415,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         updateContentHidden();
         dirty = true;
         queueFrame();
-        if (!timeFrozen()) a.sound.resumeLoops();
+        a.sound.resumeLoops();
         a.sound.play("sfx_tap");
         a.speaker.announce("Oyun devam ediyor.", true);
         a.focusOn(panel != null ? panel.titleView : pauseBtn);
@@ -489,88 +498,227 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         a.show(new MenuScreen(a));
     }
 
-    // ================================================================== malzeme seçimi / tepsi paneli
-    private void openPanel(SelectionPanel p) {
+    // ================================================================== istasyon eylem menüsü
+    // İki erişim yolu AYNI motor çağrısını yapar (engine.applyStationOption):
+    //  (1) TalkBack Eylemleri: düğmenin AccessibilityDelegate'i her seçenek için özel eylem sunar (ActionMenu);
+    //  (2) seçenek paneli: düğmeye normal dokunuş (TalkBack açıkken çift dokunuş) büyük düğmeli panel açar (MenuPanel).
+
+    private void openPanel(MenuPanel p, View origin) {
         if (panel != null) return;
         panel = p;
+        panelOrigin = origin;
         host.addView(p.overlay, new FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH));
         updateContentHidden();
-        if (timeFrozen()) a.sound.pauseLoops();
         a.focusOn(p.titleView);
-        if (p.mode() == SelectionPanel.Mode.TRAY) {
-            a.speaker.announce("Salata ve sos tepsisi. Malzemeleri seç, sonra Hazırla.", true);
-        }
         dirty = true;
+        updateEmergency(engine.getSelectedOrder());
     }
 
     private void closePanel(boolean focusBack) {
-        SelectionPanel p = panel;
+        MenuPanel p = panel;
         if (p == null) return;
-        boolean wasTopping = p.mode() == SelectionPanel.Mode.TOPPING;
         host.removeView(p.overlay);
         panel = null;
         updateContentHidden();
-        if (wasTopping && !paused) a.sound.resumeLoops();
         dirty = true;
-        if (focusBack && !paused) a.focusOn(wasTopping ? tiles.get(Station.SOS) : prepBox.trayBtn);
+        View back = panelOrigin;
+        panelOrigin = null;
+        if (focusBack && !paused && back != null) a.focusOn(back);
     }
 
-    private void cancelPanel(SelectionPanel p) {
-        boolean topping = p.mode() == SelectionPanel.Mode.TOPPING;
+    private void cancelPanel(MenuPanel p) {
         closePanel(true);
-        a.speaker.announce(topping ? "Malzeme seçimi kapatıldı. Adım başlamadı; sos tezgahına dokunarak yeniden aç."
-                : "Tepsi hazırlığı kapatıldı.", true);
+        a.speaker.announce("Seçenekler kapatıldı.", true);
     }
 
-    private final SelectionPanel.Host panelHost = new SelectionPanel.Host() {
-        @Override public void onConfirm(SelectionPanel p, Set<String> ids) {
-            if (p != panel || paused) return;
-            if (p.mode() == SelectionPanel.Mode.TRAY) {
-                if (ids.isEmpty()) {
-                    error("Önce en az bir malzeme seç.");
-                    return;
-                }
-                PrepResult r = engine.startPrepTray(ids);
-                if (r == PrepResult.STARTED) closePanel(true);
-                else { a.speaker.announce("Tepsi hazırlanamadı.", false); p.refresh(); }
-                return;
-            }
-            StartResult r = engine.confirmToppings(p.orderId(), p.itemIndex(), ids);
-            switch (r) {
-                case STARTED:
-                    closePanel(true);
-                    break;
-                case OUT_OF_STOCK:
-                    p.refresh(); // Feedback.onToppingsRejected acil alım listesini doldurdu
-                    break;
-                case NO_ORDER:
-                case ORDER_READY:
-                case NOT_RUNNING:
-                case ORDER_BUSY:
-                case STEP_LOCKED:
-                    closePanel(true);
-                    break;
-                default:
-                    p.refresh();
-                    break;
-            }
-            dirty = true;
+    /** Bir seçenek seçilince panel kapansın mı? (Malzeme eklerken ve okurken açık kalır: art arda kullanım.) */
+    private static boolean shouldClose(StationOption op, StartResult r) {
+        if (r == StartResult.NO_ORDER || r == StartResult.ORDER_READY || r == StartResult.NOT_RUNNING) return true;
+        switch (op.group) {
+            case READ:
+            case ADD:
+                return false;
+            case CONTROL:
+                return op.id.equals("finish") && r == StartResult.STARTED;
+            default:
+                return r == StartResult.STARTED || r == StartResult.OUT_OF_STOCK;
+        }
+    }
+
+    private final MenuPanel.Host panelHost = new MenuPanel.Host() {
+        @Override public void onPick(MenuPanel p, StationOption op) {
+            if (p != panel || paused || finishing) return;
+            Station st = Station.byId(p.stationId);
+            Order o = p.orderId >= 0 ? engine.getOrder(p.orderId) : null;
+            StartResult r = applyOption(o, st, op.id);
+            if (p != panel) return; // eylem günü bitirmiş olabilir
+            if (shouldClose(op, r)) closePanel(true);
+            else { p.refresh(); updateEmergency(engine.getSelectedOrder()); }
         }
 
-        @Override public void onCancel(SelectionPanel p) {
+        @Override public void onClose(MenuPanel p) {
             if (p == panel && !paused) cancelPanel(p);
+        }
+
+        @Override public void onEmergency(MenuPanel p) {
+            if (p == panel && !paused) doEmergency();
         }
     };
 
-    private void openToppings(int orderId, int itemIndex) {
-        if (itemIndex < 0) itemIndex = engine.openToppingItem(orderId);
-        if (itemIndex < 0) return;
-        openPanel(new SelectionPanel(a, engine, narrator, SelectionPanel.Mode.TOPPING, orderId, itemIndex, panelHost));
+    /** Bir istasyonun (ve isteğe bağlı sipariş / et filtresinin) seçenek kaynağı; panel ve TalkBack eylemleri kullanır. */
+    private final class StationSource implements MenuPanel.Source, ActionMenu.Source {
+        final Station st;
+        /** -2: her seferinde en uygun siparişi seç (düğme eylemleri); -1: yalnızca hazırlık; >=0: sabit sipariş. */
+        final int fixedOrder;
+        final String meatFilter;
+
+        StationSource(Station st, int fixedOrder, String meatFilter) {
+            this.st = st;
+            this.fixedOrder = fixedOrder;
+            this.meatFilter = meatFilter;
+        }
+
+        Order order() {
+            if (fixedOrder == -1) return null;
+            if (fixedOrder >= 0) return engine.getOrder(fixedOrder);
+            return pickOrderFor(st);
+        }
+
+        @Override public List<StationOption> options() {
+            if (finishing || exited) return new ArrayList<>();
+            Order o = engine.getState() == GameEngine.State.RUNNING ? order() : null;
+            List<StationOption> all = engine.getStationOptions(o == null ? -1 : o.id, -1, st.id);
+            if (meatFilter == null) return all;
+            List<StationOption> out = new ArrayList<>();
+            for (StationOption op : all) {
+                if (op.id.startsWith("prep:doner:") && meatFilter.equals(op.ingredientId)) out.add(op);
+            }
+            return out;
+        }
+
+        @Override public String info() { return Texts.menuInfo(order()); }
+
+        @Override public String status() {
+            Order o = order();
+            if (o == null || st != Station.SOS) return "";
+            int li = engine.resolveStationItem(o.id, -1, st.id);
+            return li < 0 ? "" : Texts.addedStatus(o.getLine(li));
+        }
     }
 
-    private void openTray() {
+    /** Eylem listesi izlenen düğmeler ve son eylem parmak izleri. */
+    private final Map<View, StationSource> actionSrc = new HashMap<>();
+    private final Map<View, String> actionSig = new HashMap<>();
+
+    /** Düğmeye TalkBack özel eylemlerini bağlar (tile: istasyon düğmesi, değilse hazırlık düğmesi). */
+    private void attachMenu(View v, StationSource src, final Station st, final boolean tile) {
+        actionSrc.put(v, src);
+        ActionMenu.attach(v, src, new ActionMenu.Handler() {
+            @Override public void onAction(String optionId) {
+                if (tile) onStationAction(st, optionId); else onPrepAction(st, optionId);
+            }
+        });
+    }
+
+    private boolean a11yOn() {
+        try {
+            android.view.accessibility.AccessibilityManager am =
+                    (android.view.accessibility.AccessibilityManager) ctx.getSystemService(android.content.Context.ACCESSIBILITY_SERVICE);
+            return am != null && am.isEnabled();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /** Durum değişip eylem listesi (etiketler dahil) farklılaştıysa düğmenin erişilebilirlik düğümünü tazeletir. */
+    private void refreshActions(View v) {
+        StationSource src = actionSrc.get(v);
+        if (src == null || !a11yOn()) return;
+        String sig = ActionMenu.signature(src.options());
+        if (!sig.equals(actionSig.get(v))) {
+            actionSig.put(v, sig);
+            ActionMenu.invalidate(v);
+        }
+    }
+
+    /** TalkBack özel eylemi seçildi (panel açmadan uygular). */
+    private void onStationAction(Station st, String optionId) {
         if (paused || finishing || panel != null) return;
-        openPanel(new SelectionPanel(a, engine, narrator, SelectionPanel.Mode.TRAY, -1, -1, panelHost));
+        if (engine.getState() != GameEngine.State.RUNNING) { a.speaker.say("Önce dükkânı aç.", true); return; }
+        a.sound.play("sfx_tap");
+        applyOption(pickOrderFor(st), st, optionId);
+    }
+
+    private void onPrepAction(Station st, String optionId) {
+        if (paused || finishing || panel != null) return;
+        if (!prepBegun) beginPrepNow();
+        a.sound.play("sfx_tap");
+        applyOption(null, st, optionId);
+    }
+
+    private void ensureSelected(Order t) {
+        Order sel = engine.getSelectedOrder();
+        if (sel == null || sel.id != t.id) engine.selectOrder(t.id);
+    }
+
+    /**
+     * Seçeneği motora uygular (TEK yol: düğme dokunuşu, TalkBack eylemi ve panel hep buradan geçer). Sonucun
+     * duyurusunu motor olaylarıyla Narrator yapar; olay vermeyen sonuçlar burada sesle bildirilir.
+     */
+    private StartResult applyOption(Order t, Station st, String optionId) {
+        if (t != null) ensureSelected(t);
+        StartResult r = engine.applyStationOption(t == null ? -1 : t.id, -1, st.id, optionId);
+        switch (r) {
+            case OUT_OF_STOCK:
+                if (optionId.startsWith("add:")) wantEmergency.add(optionId.substring(4));
+                break;
+            case STEP_LOCKED:
+                a.sound.play("sfx_error", 0f, 0.7f);
+                a.haptics.warning();
+                break;
+            case NO_ORDER:
+            case ORDER_BUSY:
+            case ORDER_READY:
+            case NOT_RUNNING:
+            case INVALID:
+                if (optionId.equals("step") || optionId.startsWith("size:")) error(narrator.startResultText(r));
+                break;
+            default:
+                break;
+        }
+        dirty = true;
+        return r;
+    }
+
+    /**
+     * Tek dokunuşla uygulanacak seçenek (panel açmadan), yoksa null. Kural: işlem seçenekleri (hazırlık hariç)
+     * içinde etkin bir işlem yoksa kilit nedenini duyurmak için ilki uygulanır; tek işlem varsa o; yalnızca
+     * hazırlık varsa ve tek ise o.
+     */
+    static StationOption directOption(List<StationOption> ops) {
+        List<StationOption> np = new ArrayList<>();
+        for (StationOption op : ops) if (op.group != StationOption.Group.PREP) np.add(op);
+        if (np.isEmpty()) return ops.size() == 1 ? ops.get(0) : null;
+        boolean actionable = false;
+        for (StationOption op : np) if (op.enabled && op.group != StationOption.Group.READ) actionable = true;
+        if (!actionable) {
+            for (StationOption op : np) if (op.group != StationOption.Group.READ) return op;
+            return np.get(0);
+        }
+        return np.size() == 1 ? np.get(0) : null;
+    }
+
+    private void openMenu(String title, Station st, Order target, View origin, String meatFilter) {
+        int oid = target == null ? -1 : target.id;
+        final StationSource src = new StationSource(st, oid, meatFilter);
+        MenuPanel p = new MenuPanel(a, title, st.id, oid, src, panelHost);
+        boolean hasSize = false;
+        for (StationOption op : src.options()) if (op.group == StationOption.Group.SIZE) hasSize = true;
+        openPanel(p, origin);
+        if (tutorialActive && hasSize && !tutSizeShown) {
+            tutSizeShown = true;
+            a.speaker.say("Öğretici. " + Texts.TUT_SIZE, false);
+        }
     }
 
     // ================================================================== eylemler
@@ -607,6 +755,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         return sel;
     }
 
+    /** İstasyon düğmesine dokunuldu (TalkBack kapalıyken tek, açıkken varsayılan çift dokunuş). */
     private void onStation(Station st) {
         if (paused || finishing || panel != null) return;
         if (engine.getState() != GameEngine.State.RUNNING) {
@@ -614,40 +763,20 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             return;
         }
         Order target = pickOrderFor(st);
-        if (target == null) {
-            error(engine.getOrders().isEmpty() ? "Henüz sipariş yok." : "Önce bir sipariş seç.");
+        List<StationOption> ops = engine.getStationOptions(target == null ? -1 : target.id, -1, st.id);
+        if (ops.isEmpty()) {
+            if (target == null) {
+                error(engine.getOrders().isEmpty() ? "Henüz sipariş yok." : "Önce bir sipariş seç.");
+                return;
+            }
+            applyOption(target, st, "step"); // istasyonda iş yok: motor yanlış istasyonu bildirir
             return;
         }
-        startAt(target, st);
+        StationOption direct = directOption(ops);
+        if (direct != null) { applyOption(target, st, direct.id); return; }
+        if (target != null) ensureSelected(target);
+        openMenu(st.displayName + ": seçenekler", st, target, tiles.get(st), null);
     }
-
-    private void startAt(Order target, Station st) {
-        Order sel = engine.getSelectedOrder();
-        if (sel == null || sel.id != target.id) engine.selectOrder(target.id);
-        toppingEventItem = -1;
-        StartResult r = engine.startStep(target.id, -1, st.id);
-        switch (r) {
-            case NEEDS_TOPPINGS:
-                openToppings(target.id, toppingEventItem);
-                break;
-            case STEP_LOCKED:
-                a.sound.play("sfx_error", 0f, 0.7f);
-                a.haptics.warning();
-                break;
-            case NO_ORDER:
-            case ORDER_BUSY:
-            case ORDER_READY:
-            case NOT_RUNNING:
-            case INVALID:
-                error(narrator.startResultText(r));
-                break;
-            default:
-                break; // diğerlerini motor olay olarak bildirir
-        }
-        dirty = true;
-    }
-
-    private int toppingEventItem = -1;
 
     private void onSelectItem(int orderId, int itemIndex) {
         if (paused || finishing || panel != null) return;
@@ -667,7 +796,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             a.speaker.say("Sipariş paketlendi. Teslim et düğmesine dokun.", true);
             return;
         }
-        startAt(o, Station.PAKET);
+        applyOption(o, Station.PAKET, "step");
     }
 
     private void onDeliver() {
@@ -679,6 +808,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         }
         if (target == null) { error("Teslime hazır sipariş yok."); return; }
         engine.deliver(target.id);
+        wantEmergency.clear();
         dirty = true;
     }
 
@@ -688,10 +818,16 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         dirty = true;
     }
 
-    private void onEmergency() {
-        if (paused || finishing || panel != null || missingOrderId < 0) return;
-        if (engine.emergencyBuyMissing(missingOrderId)) missingOrderId = -1;
+    /** Acil al: eksik adım malzemelerinin hepsi + eklenemeyen malzemeler (panelin ve ana ekranın düğmesi). */
+    private void doEmergency() {
+        if (paused || finishing) return;
+        if (missingOrderId >= 0 && engine.emergencyBuyMissing(missingOrderId)) missingOrderId = -1;
+        for (String id : new ArrayList<>(wantEmergency)) {
+            if (engine.emergencyBuy(id)) wantEmergency.remove(id);
+            else break; // para yetmedi: motor onNotEnoughMoney bildirdi
+        }
         dirty = true;
+        if (panel != null) panel.refresh();
     }
 
     private void onOpenShop() {
@@ -704,13 +840,14 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         a.focusOn(emptyTv);
     }
 
-    private void onPrep(PrepKind kind, Ingredient meat) {
+    /** Hazırlık düğmesine dokunuldu: tek seçenek doğrudan uygulanır, birden çoksa panel açılır. */
+    private void onPrep(Station st, String meatFilter, View origin, String title) {
         if (paused || finishing || panel != null) return;
-        if (kind == PrepKind.TRAY) { openTray(); return; }
         if (!prepBegun) beginPrepNow();
-        PrepResult r = kind == PrepKind.DONER ? engine.startPrepDoner(meat.id) : engine.startPrepDrink();
-        if (r != PrepResult.STARTED) a.haptics.error();
-        dirty = true;
+        List<StationOption> ops = new StationSource(st, -1, meatFilter).options();
+        if (ops.isEmpty()) { error("Bu hazırlık şu an yapılamaz."); return; }
+        if (ops.size() == 1) { applyOption(null, st, ops.get(0).id); return; }
+        openMenu(title, st, null, origin, meatFilter);
     }
 
     /** Seçim yoksa kısa süre sonra kendiliğinden bir sipariş seçer; son 5 sn geri sayım tıkı. */
@@ -772,6 +909,17 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         // acil alım
         updateEmergency(selected);
 
+        // açık seçenek paneli: listeyi tazele (malzeme eklerken durum değişir); sipariş gittiyse kapat
+        if (panel != null) {
+            if (panel.orderId >= 0 && engine.getOrder(panel.orderId) == null) {
+                closePanel(true);
+                a.speaker.announce("Sipariş artık yok, seçenekler kapandı.", true);
+            } else {
+                panel.refresh();
+                if (panel.optionCount() == 0) closePanel(true);
+            }
+        }
+
         // çalışanlar şeridi + hazırlık bölümü
         workersBox.update();
         prepBox.update();
@@ -796,28 +944,40 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     /** Acil al düğmesini eksik TÜM malzemeler için günceller; yeni belirince duyurur ve odağı ona taşır. */
     private void updateEmergency(Order selected) {
         List<Ingredient> missing = new ArrayList<>();
+        int cost = 0;
         if (missingOrderId >= 0) {
             boolean still = selected != null && selected.id == missingOrderId && !selected.isReady();
             if (still) missing = engine.missingIngredients(missingOrderId);
             if (!still || missing.isEmpty()) { missingOrderId = -1; missing = new ArrayList<>(); }
+            else cost = engine.emergencyCostForMissing(missingOrderId);
+        }
+        // tek tek eklemede stokta olmayan malzemeler
+        for (Iterator<String> it = wantEmergency.iterator(); it.hasNext(); ) {
+            String id = it.next();
+            Ingredient ing = Catalog.ingredient(id);
+            if (ing == null || engine.getSave().inventory.get(id) > 0 || engine.getTrayUses(id) > 0) { it.remove(); continue; }
+            boolean dup = false;
+            for (Ingredient m : missing) if (m.id.equals(id)) dup = true;
+            if (!dup) { missing.add(ing); cost += ing.emergencyPrice() * Ingredient.EMERGENCY_BATCH; }
         }
         if (missing.isEmpty()) {
             emergencyBtn.setVisibility(View.GONE);
             emergencyKey = "";
+            if (panel != null) panel.setEmergency(null, null);
             return;
         }
-        int cost = engine.emergencyCostForMissing(missingOrderId);
         String label = Texts.emergencyLabel(missing, cost);
         String desc = Texts.emergencyDescription(missing, cost);
         emergencyBtn.setVisibility(View.VISIBLE);
         emergencyBtn.setText(label);
         Ui.setDesc(emergencyBtn, desc);
+        if (panel != null) panel.setEmergency(label, desc);
         StringBuilder key = new StringBuilder().append(missingOrderId);
         for (Ingredient ing : missing) key.append('|').append(ing.id);
         if (!key.toString().equals(emergencyKey)) {
             emergencyKey = key.toString();
-            // Belirdi (ya da eksik küme değişti): duyuru Narrator.onOutOfStock'ta yapıldı (acil, kesici);
-            // TalkBack erişilebilirlik odağı da doğrudan düğmeye taşınır.
+            // Belirdi (ya da eksik küme değişti): duyuru Narrator'da yapıldı (acil, kesici);
+            // TalkBack erişilebilirlik odağı da doğrudan düğmeye taşınır (panel açıksa panelde kalır).
             if (panel == null && !paused) a.focusOn(emergencyBtn);
         }
     }
@@ -828,7 +988,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         int bucket = engine.isOvertime() ? -1 : (int) (left / 10f);
         String key = engine.getMoney() + "|" + Narrator.fmtStars(engine.getStars()) + "|" + pending + "|"
                 + (selected == null ? -1 : selected.id) + "|" + (selected == null ? 0 : selected.getNextStepIndex()) + "|" + bucket
-                + "|" + prepUi + "|" + engine.getReadyDoner() + "|" + engine.getReadyDrinks() + "|" + engine.getTrayTotal();
+                + "|" + prepUi + "|" + engine.getReadyDonerHalves() + "|" + engine.getReadyDrinks() + "|" + engine.getTrayTotal();
         if (key.equals(statusKey)) return;
         statusKey = key;
         // Canlı duyuru yalnızca süre eşiklerinde: 60, 30, 10 sn kala ve mesai başında.
@@ -854,6 +1014,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     /** Son önemli olayı ekranda gösterir (okunabilir, canlı bölge değil: konuşmayı Narrator yapar). */
     private void notice(String text) {
         if (text == null || text.isEmpty() || noticeTv == null) return;
+        if (panel != null) panel.setMessage(text);
         noticeTv.setText(text);
         noticeTv.setContentDescription(text);
         noticeTv.setVisibility(View.VISIBLE);
@@ -979,7 +1140,10 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             dirty = true;
         }
 
-        @Override public void onNextStepHint(Order o, Step s) { dirty = true; }
+        @Override public void onNextStepHint(Order o, Step s) {
+            if (s != null && s.isTopping()) tutorial(7, Texts.TUT_TOPPING);
+            dirty = true;
+        }
 
         @Override public void onStepStarted(Order o, Step step, int slot, float seconds) {
             a.sound.startLoop(playerKey(o, step), sfxForStation(step.station), panForStation(step.station), 1f, seconds);
@@ -1027,18 +1191,65 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             a.haptics.error();
         }
 
-        @Override public void onToppingSelectionNeeded(Order o, int itemIndex) {
-            toppingEventItem = itemIndex;
-            a.sound.play("sfx_sauce", 0f, 0.7f);
-            a.haptics.stepStart();
-            tutorial(7, Texts.TUT_TOPPING);
-        }
-
         @Override public void onToppingsRejected(Order o, int itemIndex, StartResult reason, Ingredient ingredient) {
             a.sound.play("sfx_error");
             a.haptics.error();
             notice(narrator.toppingsRejected(o, itemIndex, reason, ingredient));
-            if (panel != null) panel.onRejected(ingredient);
+            dirty = true;
+        }
+
+        // ---- tek tek malzeme ekleme (kısa işler: onStepStarted/ses döngüsü YOK, tek atış ses)
+        @Override public void onToppingAddStarted(Order o, int itemIndex, Ingredient ing, int count, float seconds) {
+            boolean salad = ing.category == Ingredient.Category.SALATA;
+            String sfx = salad ? "sfx_slice" : "sfx_sauce";
+            // salata: tok, yüksek dilim; sos: alçak, yumuşak; her eklemede hafif rastgele perde
+            float rate = (salad ? 1.2f : 0.9f) + (fx.nextFloat() - 0.5f) * 0.1f;
+            float pan = panForStation(Station.SOS);
+            a.sound.play(sfx, pan, 0.9f, rate);
+            if (count >= 2) a.sound.playLater(sfx, pan, 150); // bol: çift vuruş
+            a.haptics.tap();
+            dirty = true;
+        }
+
+        @Override public void onToppingAdded(Order o, int itemIndex, Ingredient ing, int count) {
+            a.sound.play("sfx_tap", panForStation(Station.SOS), 0.5f, 1.4f);
+            notice(narrator.toppingAdded(ing, count));
+            dirty = true;
+        }
+
+        @Override public void onToppingRemoved(Order o, int itemIndex, Ingredient ing, int remaining) {
+            a.sound.play("sfx_tap", panForStation(Station.SOS), 0.8f, 0.75f);
+            a.haptics.tap();
+            notice(narrator.toppingRemoved(ing, remaining));
+            dirty = true;
+        }
+
+        @Override public void onToppingsFinished(Order o, int itemIndex, Set<String> chosen) {
+            wantEmergency.clear();
+            notice(narrator.toppingsFinished(o, itemIndex, chosen));
+            dirty = true;
+        }
+
+        @Override public void onSizeChosen(Order o, int itemIndex, PortionSize ordered, PortionSize chosen) {
+            a.haptics.tap();
+            notice(narrator.sizeChosen(chosen));
+            dirty = true;
+        }
+
+        @Override public void onStationInfo(Order o, int itemIndex, String optionId) {
+            String t = narrator.stationInfo(o, itemIndex, optionId);
+            a.sound.play("sfx_tap", 0f, 0.6f);
+            notice(t);
+            // Narrator "Sesli anlatım" kapalıyken susar; okuma istendiği için TalkBack/TTS yine de duyurulur.
+            if (!a.save.speechOn) a.speaker.announce(t, true);
+            dirty = true;
+        }
+
+        @Override public void onOptionRejected(Order o, String optionId, StartResult reason) {
+            a.sound.play("sfx_error", 0f, 0.8f);
+            if (reason == StartResult.LOCKED || reason == StartResult.NOTHING_TO_UNDO) a.haptics.warning(); else a.haptics.error();
+            notice(narrator.optionRejected(o, optionId, reason));
+            dirty = true;
         }
 
         @Override public void onOrderMistake(Order o, ToppingCheck check, double penalty) {
@@ -1121,6 +1332,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         }
 
         @Override public void onCustomerLeft(Order o) {
+            wantEmergency.clear();
             a.sound.play("sfx_customer_angry", 0.7f);
             a.haptics.warning();
             dirty = true;
@@ -1256,7 +1468,9 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
                     Button b = Ui.button(ctx, "", Ui.SECONDARY);
                     b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
                     final Ingredient meat = m;
-                    tap(b, new Runnable() { @Override public void run() { onPrep(PrepKind.DONER, meat); } });
+                    final Button btn = b;
+                    tap(b, new Runnable() { @Override public void run() { onPrep(Station.DONER, meat.id, btn, "Döner dilimle: " + meat.name); } });
+                    attachMenu(b, new StationSource(Station.DONER, -1, meat.id), Station.DONER, false);
                     doners.add(b);
                     meats.add(m);
                     addView(b, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 3, 0, 3));
@@ -1265,12 +1479,14 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             if (engine.menuHasDrinkPrep()) {
                 drinkBtn = Ui.button(ctx, "", Ui.SECONDARY);
                 drinkBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-                tap(drinkBtn, new Runnable() { @Override public void run() { onPrep(PrepKind.DRINK, null); } });
+                tap(drinkBtn, new Runnable() { @Override public void run() { onPrep(Station.ICECEK, null, drinkBtn, "Ayran doldur"); } });
+                attachMenu(drinkBtn, new StationSource(Station.ICECEK, -1, null), Station.ICECEK, false);
                 addView(drinkBtn, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 3, 0, 3));
             }
             trayBtn = Ui.button(ctx, "", Ui.SECONDARY);
             trayBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-            tap(trayBtn, new Runnable() { @Override public void run() { onPrep(PrepKind.TRAY, null); } });
+            tap(trayBtn, new Runnable() { @Override public void run() { onPrep(Station.SOS, null, trayBtn, "Salata ve sos tepsisi"); } });
+            attachMenu(trayBtn, new StationSource(Station.SOS, -1, null), Station.SOS, false);
             addView(trayBtn, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 3, 0, 3));
 
             readStockBtn = Ui.button(ctx, "Hazır stoğu oku", Ui.SECONDARY);
@@ -1286,7 +1502,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         }
 
         void update() {
-            cells[0].setText("Hazır döner\n" + engine.getReadyDoner());
+            cells[0].setText("Hazır döner\n" + PortionSize.halvesText(engine.getReadyDonerHalves()));
             Ui.setDesc(cells[0], Texts.stockCellDescription(engine, PrepKind.DONER));
             if (engine.menuHasDrinkPrep()) {
                 cells[1].setVisibility(View.VISIBLE);
@@ -1302,13 +1518,16 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
                 Button b = doners.get(i);
                 b.setText(Texts.prepButtonLabel(engine, PrepKind.DONER, m));
                 Ui.setDesc(b, Texts.prepButtonDescription(engine, PrepKind.DONER, m));
+                refreshActions(b);
             }
             if (drinkBtn != null) {
                 drinkBtn.setText(Texts.prepButtonLabel(engine, PrepKind.DRINK, null));
                 Ui.setDesc(drinkBtn, Texts.prepButtonDescription(engine, PrepKind.DRINK, null));
+                refreshActions(drinkBtn);
             }
             trayBtn.setText(Texts.prepButtonLabel(engine, PrepKind.TRAY, null));
             Ui.setDesc(trayBtn, Texts.prepButtonDescription(engine, PrepKind.TRAY, null));
+            refreshActions(trayBtn);
         }
     }
 
@@ -1336,7 +1555,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         }
 
         void update(final Order o, OrderLine l, boolean selItem) {
-            title.setText((selItem ? "▶ " : "") + (index + 1) + ". " + l.product.name + (l.isDone() ? "  ✓ hazır" : ""));
+            title.setText((selItem ? "▶ " : "") + (index + 1) + ". " + l.displayName() + "  ·  " + l.price() + " TL" + (l.isDone() ? "  ✓ hazır" : ""));
             steps.setText(Texts.lineSteps(engine, o, l));
             float prog = l.isDone() ? 1f : 0f;
             if (!l.isDone()) {
@@ -1502,6 +1721,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             Ui.groupAsButton(this);
             final Station s = st;
             tap(this, new Runnable() { @Override public void run() { onStation(s); } });
+            attachMenu(this, new StationSource(st, -2, null), st, true);
         }
 
         void update() {
@@ -1527,6 +1747,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             boolean used = inUse.contains(st);
             Ui.dim(this, !used);
             Ui.setDesc(this, Texts.stationDescription(narrator, engine, st, used));
+            refreshActions(this);
         }
     }
 }

@@ -170,7 +170,7 @@ public class TextsTest {
         StringBuilder sb = new StringBuilder();
         for (String[] s : Texts.helpSections()) sb.append(s[0]).append(' ').append(s[1]).append(' ');
         String all = sb.toString();
-        for (String k : new String[]{"hazırlık aşamasına", "Dükkânı aç", "Hazırlık yapmadan aç", "Hedefi oku", "Tamam", "israf", "kalem",
+        for (String k : new String[]{"hazırlık aşamasına", "Dükkânı aç", "Hazırlık yapmadan aç", "Hedefi oku", "Malzemeleri bitir", "TalkBack Eylemleri", "Eylemler menüsü", "yarım ekmek", "Boy seç", "israf", "kalem",
                 "Siparişi paketle", "Çırak", "Seviye 1", "Seviye 3", "çırak duyurularını"}) {
             assertTrue("yardımda geçmeli: " + k, all.contains(k));
         }
@@ -231,5 +231,85 @@ public class TextsTest {
         assertTrue(player);
         for (int i = 0; i < 20 && !helper; i++) e.tick(0.5f);
         for (ActiveStep a : e.getActiveSteps()) if (a.isApprentice()) { helper = true; assertTrue(Texts.jobLabel(e, a), Texts.jobLabel(e, a).startsWith("Çırak: ")); }
+    }
+
+    // ------------------------------------------------------------------ v0.6 metinleri
+    @Test public void summaryShowsSizeMistakeRow() {
+        DaySummary d = new DaySummary();
+        d.day = 4; d.delivered = 3; d.rent = 100; d.moneyAfter = 900; d.startStars = 3; d.endStars = 3.1;
+        d.mistakes = 2; d.sizeMistakes = 1;
+        StringBuilder sb = new StringBuilder();
+        for (String[] r : Texts.summaryRows(d)) sb.append(r[0]).append('=').append(r[1]).append(';');
+        assertTrue(sb.toString(), sb.toString().contains("Yanlış boyda dilimlenen sipariş=1"));
+        d.sizeMistakes = 0;
+        for (String[] r : Texts.summaryRows(d)) assertFalse(r[0].contains("boy"));
+    }
+
+    @Test public void briefingAnnouncesNewIngredientsSizesAndMenus() {
+        SaveData s = SaveData.newGame();
+        s.day = 2;
+        assertTrue(Texts.briefingLines(s).toString(), Texts.briefingLines(s).toString().contains("Yeni boy: yarım ekmek"));
+        s.day = 3;
+        assertTrue(Texts.briefingLines(s).toString(), Texts.briefingLines(s).toString().contains("Yeni malzemeler: ketçap ve mayonez"));
+        s.day = 4;
+        assertTrue(Texts.briefingLines(s).toString(), Texts.briefingLines(s).toString().contains("Yeni boy: duble"));
+        s.day = 5;
+        assertTrue(Texts.briefingLines(s).toString(), Texts.briefingLines(s).toString().contains("Yeni malzeme: acı sos"));
+        String all = Texts.briefingLines(s).toString();
+        assertTrue(all, all.contains("TalkBack Eylemleri"));
+    }
+
+    @Test public void tutorialAndHelpTeachSizeOneByOneToppingsAndTalkBackActions() {
+        assertTrue(Texts.TUT_SIZE.contains("boyunu sen seçersin"));
+        assertTrue(Texts.TUT_TOPPING.contains("tek tek"));
+        assertTrue(Texts.TUT_TOPPING.contains("Malzemeleri bitir"));
+        assertTrue(Texts.TUT_SELECTED.contains("Eylemler menüsünden"));
+        assertTrue(Texts.quickHelp().contains("Eylemler menüsünden"));
+        boolean actions = false, size = false, adding = false;
+        for (String[] sec : Texts.helpSections()) {
+            if (sec[0].contains("TalkBack Eylemleri") && sec[1].contains("Eylemler menüsünü")) actions = true;
+            if (sec[0].equals("Döner boyu") && sec[1].contains("duble") && sec[1].contains("hatalı")) size = true;
+            if (sec[0].equals("Malzeme ekleme") && sec[1].contains("bol") && sec[1].contains("Son ekleneni geri al")) adding = true;
+        }
+        assertTrue(actions); assertTrue(size); assertTrue(adding);
+    }
+
+    @Test public void lineTextsShowSizePriceAndAddedToppings() {
+        SaveData s = SaveData.newGame();
+        GameEngine e = new GameEngine(5, s);
+        e.setSpawning(false);
+        e.startDay();
+        Order o = e.spawnOrder(java.util.Arrays.asList("ekmek_arasi"), java.util.Arrays.asList("soğansız"),
+                java.util.Arrays.asList(com.doner.oyunu.engine.PortionSize.HALF));
+        OrderLine l = o.getLine(0);
+        String d = Texts.lineDescription(e, o, l, false);
+        assertTrue(d, d.contains("Ekmek arası döner (yarım ekmek), " + l.price() + " lira"));
+        assertEquals("", Texts.addedLine(l));
+        assertEquals("Henüz malzeme eklenmedi.", Texts.addedStatus(l));
+        // adımları bitir, tek tek ekle
+        e.startStep(o.id, 0, Station.EKMEK.id);
+        for (int i = 0; i < 60; i++) e.tick(0.1f);
+        e.applyStationOption(o.id, 0, Station.DONER.id, "size:yarim");
+        for (int i = 0; i < 80; i++) e.tick(0.1f);
+        assertEquals(StartResult.STARTED, e.applyStationOption(o.id, 0, Station.SOS.id, "add:domates"));
+        for (int i = 0; i < 10; i++) e.tick(0.1f);
+        assertEquals(StartResult.STARTED, e.applyStationOption(o.id, 0, Station.SOS.id, "add:domates"));
+        for (int i = 0; i < 10; i++) e.tick(0.1f);
+        assertEquals("Eklenen: domates bol", Texts.addedLine(l));
+        assertEquals("Eklenenler: domates bol.", Texts.addedStatus(l));
+        assertTrue(Texts.lineSteps(e, o, l).contains("Eklenen: domates bol"));
+        assertTrue(Texts.lineDescription(e, o, l, false).contains("Eklenenler: domates bol."));
+        assertTrue(Texts.menuInfo(o).contains("Müşteri isteği: soğansız"));
+        assertEquals("Hazırlık seçenekleri.", Texts.menuInfo(null));
+    }
+
+    @Test public void readyDonerIsShownInHalfPortions() {
+        SaveData s = SaveData.newGame();
+        GameEngine e = new GameEngine(5, s);
+        e.beginPrep();
+        assertEquals(PrepResult.STARTED, e.startPrepDoner("et_doner", 2));
+        for (int i = 0; i < 60; i++) e.tick(0.1f);
+        assertTrue(Texts.stockCellDescription(e, com.doner.oyunu.engine.PrepKind.DONER).contains("Hazır döner: 2 porsiyon"));
+        assertTrue(Texts.prepButtonLabel(e, com.doner.oyunu.engine.PrepKind.DONER, Catalog.ingredient("et_doner")).contains("hazır 2 /"));
     }
 }

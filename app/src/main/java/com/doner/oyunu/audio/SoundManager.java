@@ -153,9 +153,12 @@ public final class SoundManager {
     public void play(String name, float pan) { play(name, pan, 1f); }
 
     /** volume: 0..1 ek çarpan (ör. çırak sesleri için 0,6). */
-    public void play(String name, float pan, float volume) {
+    public void play(String name, float pan, float volume) { play(name, pan, volume, 1f); }
+
+    /** rate: çalma hızı/perde çarpanı (0,5-2); kısa tek atış malzeme sesleri varyasyon için kullanır. */
+    public void play(String name, float pan, float volume, float rate) {
         if (pool == null || sfxVolume <= 0f) return;
-        sink.start(name, left(pan, volume), right(pan, volume), 1f, 0);
+        sink.start(name, left(pan, volume), right(pan, volume), Math.max(0.5f, Math.min(2f, rate)), 0);
     }
 
     private float left(float pan, float volume) {

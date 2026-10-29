@@ -46,7 +46,7 @@ public final class BriefingScreen extends Screen {
             LinearLayout c = card();
             TextView tv = Ui.label(ctx, l, 18, Theme.CREAM, false);
             tv.setFocusable(true);
-            if (l.startsWith("Yeni ürün")) {
+            if (l.startsWith("Yeni ürün") || l.startsWith("Yeni malzeme") || l.startsWith("Yeni boy")) {
                 c.setBackground(Ui.round(ctx, Theme.CARD_HI, Theme.GOLD, 3, 16));
                 tv.setTextColor(Theme.GOLD);
                 tv.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);

@@ -12,6 +12,7 @@ import android.widget.TextView;
 import com.doner.oyunu.engine.ActiveStep;
 import com.doner.oyunu.engine.GameEngine;
 import com.doner.oyunu.engine.Order;
+import com.doner.oyunu.engine.OrderLine;
 import com.doner.oyunu.engine.SaveData;
 import com.doner.oyunu.engine.Station;
 
@@ -56,12 +57,32 @@ public class PrepToppingUiTest {
 
     private static List<String> list(String... s) { return new ArrayList<>(Arrays.asList(s)); }
 
-    /** Seçili siparişin kalem/istasyon akışıyla topping adımının paneline kadar gelir. */
+    /** Hazırlık düğmesine dokunur, açılan panelden "4 porsiyon" der. */
+    private void prepDoner4(UiHarness h) {
+        h.click("Döner dilimle"); h.run(100);
+        assertTrue("döner hazırlık paneli açılmalı", UiBot.panelOpen(h));
+        h.click("4 porsiyon"); h.run(100);
+        assertFalse("seçenek uygulanınca panel kapanmalı", UiBot.panelOpen(h));
+    }
+
+    private static boolean sosPanelOpen(UiHarness h) {
+        return UiBot.panelOpen(h) && UiBot.panelOf(h).stationId == Station.SOS.id;
+    }
+
+    /** Seçili siparişin kalem/istasyon akışıyla topping adımının (SOS) seçenek paneline kadar gelir. */
     private void toPanel(UiHarness h, Order o) {
         h.orderCard(o).performClick(); h.run(100);
         long t = 0;
-        while (!UiBot.panelOpen(h) && t < 60_000) { UiBot.step(h); h.run(100); t += 100; }
-        assertTrue("malzeme paneli açılmalı", UiBot.panelOpen(h));
+        while (!sosPanelOpen(h) && t < 60_000) { UiBot.step(h); h.run(100); t += 100; }
+        assertTrue("sos seçenek paneli açılmalı", sosPanelOpen(h));
+    }
+
+    /** Panelde seçeneği (etiketi bu metinle başlayan) uygular ve eklemenin bitmesini bekler. */
+    private void pick(UiHarness h, String labelStart) {
+        View v = UiBot.row(h, labelStart);
+        assertNotNull("panelde seçenek yok: " + labelStart + " mevcut=" + h.clickables(), v);
+        v.performClick();
+        h.run(900);
     }
 
     // ------------------------------------------------------------------ hazırlık
@@ -71,7 +92,7 @@ public class PrepToppingUiTest {
         assertEquals(0, e.getReadyDoner());
         View cell = h.findText("Hazır döner: 0 porsiyon");
         assertNotNull("hazır döner göstergesi (sesli açıklamalı)", cell);
-        h.click("Döner dilimle");
+        prepDoner4(h);
         h.run(300);
         assertEquals(1, activePrepCount(e));
         assertEquals("oyuncu yuvası dolu", 0, e.getFreeSlots());
@@ -105,7 +126,7 @@ public class PrepToppingUiTest {
         assertNotNull(h.stationTile(Station.DONER));
         e.setSpawning(false);
         // gün içinde de hazırlık yapılabilir
-        h.click("Döner dilimle"); h.run(200);
+        prepDoner4(h); h.run(200);
         assertEquals(1, activePrepCount(e));
         h.run(7000);
         assertEquals(4, e.getReadyDoner());
@@ -119,34 +140,18 @@ public class PrepToppingUiTest {
         assertEquals(0, h.engine().getReadyDoner());
     }
 
-    @Test public void trayPanelPreparesSelectedIngredients() {
+    @Test public void trayButtonPreparesSuggestedTrayDirectly() {
         UiHarness h = prep();
         GameEngine e = h.engine();
-        h.click("Salata ve sos tepsisi hazırla"); h.run(100);
-        assertTrue(UiBot.panelOpen(h));
-        // hiçbiri seçili değilken Hazırla: başlamaz
-        h.click("Hazırla"); h.run(100);
-        assertTrue(UiBot.panelOpen(h));
-        assertEquals(0, activePrepCount(e));
-        View dom = UiBot.row(h, "Domates");
-        assertTrue(UiHarness.label(dom), UiHarness.label(dom).startsWith("Domates, eklenmedi"));
-        dom.performClick(); h.run(50);
-        assertTrue(UiHarness.label(UiBot.row(h, "Domates")).startsWith("Domates, eklendi"));
-        UiBot.row(h, "Marul").performClick(); h.run(50);
-        assertNotNull(h.findText("Seçili: domates ve marul"));
         int dStock = e.getSave().inventory.get("domates");
-        h.click("Hazırla"); h.run(100);
-        assertFalse("panel kapanmalı", UiBot.panelOpen(h));
+        // tek seçenek: panel açılmadan doğrudan uygulanır
+        h.click("Salata ve sos tepsisi hazırla"); h.run(100);
+        assertFalse("tek eylemli hazırlık panel açmaz", UiBot.panelOpen(h));
         assertEquals(1, activePrepCount(e));
         assertEquals("malzeme başlarken düşer", dStock - 6, e.getSave().inventory.get("domates"));
         h.run(6000);
-        assertEquals(12, e.getTrayTotal());
-        assertNotNull(h.findText("Hazır salata ve sos tepsisi: 12 kullanım"));
-        // vazgeç: panel kapanır, bir şey başlamaz
-        h.click("Salata ve sos tepsisi hazırla"); h.run(100);
-        h.click("Vazgeç"); h.run(100);
-        assertFalse(UiBot.panelOpen(h));
-        assertEquals(0, activePrepCount(e));
+        assertEquals("1. günde ketçap yok: domates, marul, soğan", 18, e.getTrayTotal());
+        assertNotNull(h.findText("Hazır salata ve sos tepsisi: 18 kullanım"));
     }
 
     @Test public void apprenticeWorkIsLabelledAndAnnouncedWhenSettingOn() { apprenticeCase(true); }
@@ -214,7 +219,10 @@ public class PrepToppingUiTest {
         assertTrue(UiHarness.label(itemRow(h, 2)).contains("Kalem hazır"));
         // serbest sıra: şimdi döner kalemini yap
         itemRow(h, 1).performClick(); h.run(100);
-        h.stationTile(Station.DONER).performClick(); h.run(200);
+        h.stationTile(Station.DONER).performClick(); h.run(100);
+        assertTrue("döner makinesi boy seçenekleri paneli", UiBot.panelOpen(h));
+        h.click("Tam ekmek"); h.run(200);
+        assertFalse(UiBot.panelOpen(h));
         assertTrue(o.getLine(0).isStepRunning(1));
         h.run(5000);
         // paketleme hâlâ kilitli: yıldız cezası yok
@@ -247,37 +255,64 @@ public class PrepToppingUiTest {
         assertTrue(notice.getText().toString(), notice.getText().toString().contains("Malzeme eklemeden önce"));
     }
 
-    // ------------------------------------------------------------------ malzeme paneli
-    @Test public void toppingPanelFlowPerfectAndFrozenClock() {
+    // ------------------------------------------------------------------ malzeme ekleme (seçenek paneli)
+    @Test public void toppingMenuAddsOneByOneBolUndoReadFinishPerfect() {
         UiHarness h = day();
         GameEngine e = h.engine();
         Order o = spawn(h, list("ekmek_arasi"), list("soğansız"));
         toPanel(h, o);
+        MenuPanel p = UiBot.panelOf(h);
         float el = e.getElapsed();
-        h.run(4000);
-        assertEquals("panel açıkken saat durur", el, e.getElapsed(), 1e-4f);
-        // müşteri isteği panelde ve kartta görünür
+        h.run(1000);
+        assertTrue("seçenek paneli açıkken gün saati akar (eklemeler zamanlı iştir)", e.getElapsed() > el + 0.5f);
+        // müşteri isteği panelde; başlık ve gruplar
         assertNotNull(h.findText("Müşteri isteği: soğansız"));
-        // 1. gün: varsayılan malzemeler hazır seçili
-        assertTrue(UiHarness.label(UiBot.row(h, "Soğan")).startsWith("Soğan, eklendi"));
-        UiBot.row(h, "Soğan").performClick(); h.run(50);
-        assertTrue(UiHarness.label(UiBot.row(h, "Soğan")).startsWith("Soğan, eklenmedi"));
-        // hedefi oku
+        assertTrue(p.titleView.isAccessibilityHeading());
+        assertNotNull("Malzeme ekle grubu başlığı", h.findText("Malzeme ekle"));
+        assertNotNull("Oku grubu başlığı", h.findText("Oku"));
+        assertNotNull(h.findText("Henüz malzeme eklenmedi."));
+        OrderLine line = o.getLine(0);
+        // ilk ekleme: domates
+        pick(h, "Domates ekle");
+        assertEquals(1, line.addedCount("domates"));
+        assertNotNull("durum satırı eklenen malzemeyi söyler", h.findText("Eklenenler: domates."));
+        assertTrue("panel açık kalır (art arda ekleme)", sosPanelOpen(h));
+        assertNull("eklenen malzemenin seçeneği artık 'bol' der", UiBot.row(h, "Domates ekle"));
+        assertNotNull(UiBot.row(h, "Domates bol ekle"));
+        // bol
+        pick(h, "Domates bol ekle");
+        assertEquals(2, line.addedCount("domates"));
+        assertNotNull(h.findText("Eklenenler: domates bol."));
+        // üçüncü: azami (kilitli) -> reddedilir, sayı artmaz
+        View third = UiBot.row(h, "Domates");
+        assertTrue(UiHarness.label(third), UiHarness.label(third).contains("En fazla bol"));
+        third.performClick(); h.run(100);
+        assertEquals(2, line.addedCount("domates"));
+        // geri al
+        pick(h, "Son ekleneni geri al");
+        assertEquals(1, line.addedCount("domates"));
+        // okuma seçenekleri: durum değişmez, sonuç panelde görünür
         h.click("Hedefi oku"); h.run(50);
         View target = h.findText("Hedef, Ekmek arası döner");
-        assertNotNull(target);
+        assertNotNull("hedef panelde yazılı", target);
         assertTrue(UiHarness.label(target).contains("Müşteri isteği: soğansız"));
         assertFalse(UiHarness.label(target).contains("Soğan"));
-        h.click("Seçimi oku");
-        h.click("Tamam"); h.run(200);
-        assertFalse(UiBot.panelOpen(h));
-        assertTrue(o.getLine(0).isStepRunning(2));
-        assertTrue("saat yeniden akar", e.getElapsed() > el);
-        UiBot.playDay(h, 1);
+        h.click("Eklenenleri oku"); h.run(50);
+        assertNotNull(h.findText("Eklenenler: domates."));
+        assertEquals(1, line.addedCount("domates"));
+        // hedefin kalanı: marul, sonra bitir
+        pick(h, "Marul ekle");
+        assertTrue(sosPanelOpen(h));
+        h.click("Malzemeleri bitir"); h.run(200);
+        assertFalse("bitirince panel kapanır", UiBot.panelOpen(h));
+        assertTrue(line.isStepDone(line.product.toppingStepIndex()));
+        assertTrue(line.isDone());
+        // kalem kartı eklenenleri gösterir
+        assertNotNull(h.findText("Eklenen: domates ve marul"));
         long t = 0;
         while (e.getSummary().delivered == 0 && t < 60_000) { UiBot.step(h); h.run(100); t += 100; }
         assertEquals(1, e.getSummary().delivered);
-        assertEquals("doğru seçim: kusursuz", 1, e.getSummary().perfect);
+        assertEquals("doğru malzemeler: kusursuz", 1, e.getSummary().perfect);
         assertEquals(0, e.getSummary().mistakes);
         TextView notice = (TextView) h.field(h.screen(), "noticeTv");
         assertTrue(notice.getText().toString(), notice.getText().toString().contains("Malzemeler tam"));
@@ -288,9 +323,11 @@ public class PrepToppingUiTest {
         GameEngine e = h.engine();
         Order o = spawn(h, list("ekmek_arasi"), list("soğansız"));
         toPanel(h, o);
-        // soğansız istendi ama soğan seçili bırakılır
-        assertTrue(UiHarness.label(UiBot.row(h, "Soğan")).startsWith("Soğan, eklendi"));
-        h.click("Tamam"); h.run(200);
+        // soğansız istendi ama soğan da eklenir
+        pick(h, "Domates ekle");
+        pick(h, "Marul ekle");
+        pick(h, "Soğan ekle");
+        h.click("Malzemeleri bitir"); h.run(200);
         double stars = 0;
         long t = 0;
         while (e.getSummary().delivered == 0 && t < 60_000) {
@@ -312,31 +349,90 @@ public class PrepToppingUiTest {
         e.getSave().inventory.set("domates", 0);
         Order o = spawn(h, list("ekmek_arasi"), list());
         toPanel(h, o);
-        View dom = UiBot.row(h, "Domates");
-        assertTrue(UiHarness.label(dom), UiHarness.label(dom).startsWith("Domates, stokta yok"));
-        assertNotNull("stokta yok uyarısı", h.findText("Stokta yok: Domates"));
-        assertNull(h.findLabel("Acil al"));
-        dom.performClick(); h.run(50);
+        View dom = UiBot.row(h, "Domates ekle");
+        assertTrue(UiHarness.label(dom), UiHarness.label(dom).contains("stokta yok"));
+        assertNull("henüz denenmedi: acil al yok", h.findLabel("Acil al"));
+        dom.performClick(); h.run(100);
+        assertEquals("stok yoksa eklenmez", 0, o.getLine(0).addedCount("domates"));
         View em = h.findLabel("Acil al: Domates");
-        assertNotNull("acil al seçeneği çıkmalı", em);
+        assertNotNull("panelde acil al seçeneği çıkmalı", em);
         int money = e.getMoney();
         em.performClick(); h.run(100);
         assertTrue(e.getMoney() < money);
-        assertTrue(UiHarness.label(UiBot.row(h, "Domates")).startsWith("Domates, eklenmedi"));
         assertNull(h.findLabel("Acil al"));
-        UiBot.row(h, "Domates").performClick(); h.run(50);
-        assertTrue(UiHarness.label(UiBot.row(h, "Domates")).startsWith("Domates, eklendi"));
+        View dom2 = UiBot.row(h, "Domates ekle");
+        assertFalse(UiHarness.label(dom2), UiHarness.label(dom2).contains("stokta yok"));
+        pick(h, "Domates ekle");
+        assertEquals(1, o.getLine(0).addedCount("domates"));
     }
 
-    @Test public void cancelPanelKeepsStepPendingAndReopens() {
+    /** TalkBack açıkken de düğmenin varsayılan (çift) dokunuşu paneli açar; eylemler ek yoldur. */
+    @Test public void talkBackOnDefaultActivationOpensPanelAndActionsStillWork() {
+        AccessibilityManager am = (AccessibilityManager) RuntimeEnvironment.getApplication().getSystemService(Context.ACCESSIBILITY_SERVICE);
+        shadowOf(am).setEnabled(true);
+        shadowOf(am).setTouchExplorationEnabled(true);
+        UiHarness h = day();
+        h.act.save.tutorialDone = true;
+        Order o = spawn(h, list("ekmek_arasi"), list());
+        toPanel(h, o);
+        assertTrue(UiBot.panelOf(h).titleView.isAccessibilityHeading());
+        h.click("Kapat"); h.run(100);
+        assertFalse(UiBot.panelOpen(h));
+        View sos = h.stationTile(Station.SOS);
+        int id = UiBot.actionIdByLabel(sos, "Domates ekle");
+        assertTrue(id >= 0);
+        assertTrue(sos.performAccessibilityAction(id, null));
+        h.run(900);
+        assertEquals(1, o.getLine(0).addedCount("domates"));
+        assertFalse("eylem panel açmaz", UiBot.panelOpen(h));
+        sos.performClick(); h.run(100);
+        assertTrue("çift dokunuş paneli açar", sosPanelOpen(h));
+    }
+
+    @Test public void closePanelKeepsStepPendingAndReopens() {
         UiHarness h = day();
         Order o = spawn(h, list("ekmek_arasi"), list());
         toPanel(h, o);
-        h.click("Vazgeç"); h.run(100);
+        h.click("Kapat"); h.run(100);
         assertFalse(UiBot.panelOpen(h));
         assertFalse(o.isRunning());
+        assertEquals(0, o.getLine(0).addedTotal());
         h.stationTile(Station.SOS).performClick(); h.run(100);
+        assertTrue(sosPanelOpen(h));
+        // geri tuşu da kapatır
+        h.act.onBackPressed(); h.run(100);
+        assertFalse(UiBot.panelOpen(h));
+    }
+
+    @Test public void donerMenuChoosesSizeAndWrongSizeIsAMistake() {
+        UiHarness h = day();
+        GameEngine e = h.engine();
+        Order o = e.spawnOrder(list("ekmek_arasi"), list(), Arrays.asList(com.doner.oyunu.engine.PortionSize.HALF));
+        h.run(300);
+        assertNotNull("kartta yarım ekmek yazar", h.findText("Ekmek arası döner (yarım ekmek)"));
+        h.orderCard(o).performClick(); h.run(100);
+        long t = 0;
+        while (!o.getLine(0).isStepDone(0) && t < 30_000) { // ekmek ısıt
+            if (o.getLine(0).isStepOpen(0)) h.stationTile(Station.EKMEK).performClick();
+            h.run(100); t += 100;
+        }
+        h.stationTile(Station.DONER).performClick(); h.run(100);
         assertTrue(UiBot.panelOpen(h));
+        assertNotNull("Boy seç grubu başlığı", h.findText("Boy seç"));
+        assertNotNull(UiBot.row(h, "Yarım ekmek"));
+        assertNotNull(UiBot.row(h, "Tam ekmek"));
+        assertNotNull(UiBot.row(h, "Duble"));
+        // kilitli boy (duble 4. günde açılır): nedeni etikette, seçilirse uygulanmaz
+        String dbl = UiHarness.label(UiBot.row(h, "Duble"));
+        assertTrue(dbl, dbl.contains("4. günde açılır"));
+        UiBot.row(h, "Duble").performClick(); h.run(100);
+        assertTrue("kilitli boy panel kapatmaz", UiBot.panelOpen(h));
+        assertNull(o.getLine(0).getChosenSize());
+        // yanlış boy: tam ekmek (müşteri yarım istedi)
+        UiBot.row(h, "Tam ekmek").performClick(); h.run(200);
+        assertFalse(UiBot.panelOpen(h));
+        assertEquals(com.doner.oyunu.engine.PortionSize.FULL, o.getLine(0).getChosenSize());
+        assertTrue(o.getLine(0).sizeMismatch());
     }
 
     // ------------------------------------------------------------------ ses
@@ -361,7 +457,7 @@ public class PrepToppingUiTest {
         assertFalse(o.isRunning());
         assertEquals(0, snd.activeLoopCount());
         // hazırlık da istasyon sesi kullanır
-        h.click("Döner dilimle"); h.run(200);
+        prepDoner4(h); h.run(200);
         assertEquals(1, snd.activeLoopCount());
         h.controller.pause(); h.idle(200);
         assertEquals("arka planda sesler durur", 0, snd.activeLoopCount());
@@ -372,14 +468,19 @@ public class PrepToppingUiTest {
         assertEquals(0, snd.activeLoopCount());
     }
 
-    @Test public void toppingPanelSilencesStationSoundsUntilClosed() {
+    @Test public void toppingAddIsAShortOneShotNotALoop() {
         UiHarness h = day();
         com.doner.oyunu.audio.SoundManager snd = h.act.sound;
         Order o = spawn(h, list("ekmek_arasi"), list());
         toPanel(h, o);
         assertEquals(0, snd.activeLoopCount());
-        h.click("Tamam"); h.run(200);
-        assertEquals("seçimden sonra malzeme ekleme sesi çalar", 1, snd.activeLoopCount());
+        UiBot.row(h, "Domates ekle").performClick(); h.run(100);
+        assertEquals("ekleme sürerken istasyon döngü sesi kurulmaz (onStepStarted yok)", 0, snd.activeLoopCount());
+        h.run(900);
+        assertEquals(1, o.getLine(0).addedCount("domates"));
+        assertEquals(0, snd.activeLoopCount());
+        h.click("Malzemeleri bitir"); h.run(200);
+        assertEquals(0, snd.activeLoopCount());
     }
 
     @Test public void apprenticeStepsPlayQuietCenteredSound() {
@@ -395,15 +496,13 @@ public class PrepToppingUiTest {
     @Test public void fullDayPrepThenOrdersToppingsAndDeliveries() {
         UiHarness h = prep();
         GameEngine e = h.engine();
-        h.click("Döner dilimle");
+        prepDoner4(h);
         long t = 0;
         while (e.getReadyDoner() == 0 && t < 20_000) { h.run(100); t += 100; }
         h.click("Salata ve sos tepsisi hazırla"); h.run(100);
-        for (String n : new String[]{"Domates", "Marul", "Soğan", "Ketçap"}) UiBot.row(h, n).performClick();
-        h.click("Hazırla"); h.run(100);
         t = 0;
         while (e.getTrayTotal() == 0 && t < 20_000) { h.run(100); t += 100; }
-        assertEquals(24, e.getTrayTotal());
+        assertEquals("1. günde ketçap yok: domates, marul, soğan", 18, e.getTrayTotal());
         h.click("Dükkânı aç"); h.run(200);
         int panels = 0;
         t = 0;
@@ -416,11 +515,78 @@ public class PrepToppingUiTest {
         }
         h.run(20_000);
         assertTrue("özet ekranı", h.screen() instanceof SummaryScreen);
-        assertTrue("malzeme paneli kullanıldı", panels > 0);
+        assertTrue("seçenek paneli kullanıldı (boy seçimi, malzeme ekleme)", panels > 0);
         assertNotNull(h.findText("Hazırlık"));
         assertNotNull(h.findText("Teslim edilen sipariş"));
         assertTrue(h.act.save.day == 2);
     }
+
+    // ------------------------------------------------------------------ tam gün: hazırlık -> boy -> tek tek malzeme -> bitir -> paketle -> teslim
+    /** Bir gün (4. gün: yarım/tam/duble boylar açık, ketçap/mayonez açık) iki yolla oynanır; sonuçlar aynı kalitede olmalı. */
+    private void fullDayWithSizesAndToppings(boolean viaActions) {
+        UiHarness h = new UiHarness(false);
+        h.click("Yeni oyun"); h.settle();
+        h.act.save.day = 4;
+        h.act.save.money = 30_000;
+        h.act.save.tutorialDone = true;
+        com.doner.oyunu.engine.Shop.buyRecommended(h.act.save);
+        h.click("Güne başla"); h.settle();
+        GameEngine e = h.engine();
+        assertEquals(GameEngine.State.PREP, e.getState());
+        // --- hazırlık: döner dilimle (4 porsiyon) ve tepsi
+        if (viaActions) {
+            View d = h.findLabel("Döner dilimle");
+            int id = UiBot.actionIdByLabel(d, "4 porsiyon");
+            assertTrue(id >= 0);
+            assertTrue(d.performAccessibilityAction(id, null));
+        } else {
+            prepDoner4(h);
+        }
+        assertFalse(UiBot.panelOpen(h));
+        long t = 0;
+        while (e.getReadyDoner() == 0 && t < 20_000) { h.run(100); t += 100; }
+        assertEquals(4, e.getReadyDoner());
+        if (viaActions) {
+            View tr = h.findLabel("Salata ve sos tepsisi hazırla");
+            assertTrue(tr.performAccessibilityAction(UiBot.actionIdByLabel(tr, "Salata ve sos tepsisi hazırla"), null));
+        } else {
+            h.click("Salata ve sos tepsisi hazırla");
+        }
+        h.run(100);
+        t = 0;
+        while (e.getTrayTotal() == 0 && t < 20_000) { h.run(100); t += 100; }
+        assertTrue("tepsi hazır", e.getTrayTotal() > 0);
+        h.click("Dükkânı aç"); h.run(200);
+        e.setSpawning(true);
+        // --- gün
+        int panels = 0, adds = 0, sizes = 0;
+        boolean was = false;
+        UiBot.viaActions = viaActions;
+        try {
+            t = 0;
+            while (h.screen() instanceof GameScreen && t < 500_000) {
+                boolean now = UiBot.panelOpen(h);
+                if (now && !was) panels++;
+                was = now;
+                UiBot.step(h); h.run(100); t += 100;
+            }
+        } finally { UiBot.viaActions = false; }
+        h.run(20_000);
+        assertTrue("özet ekranı", h.screen() instanceof SummaryScreen);
+        com.doner.oyunu.engine.DaySummary sum = e.getSummary();
+        assertTrue("sipariş teslim edildi", sum.delivered >= 3);
+        assertEquals("doğru boy ve doğru malzemeler: hatasız", 0, sum.mistakes);
+        assertEquals(0, sum.sizeMistakes);
+        assertTrue("kusursuz siparişler", sum.perfect >= 3);
+        if (viaActions) assertEquals("eylem yolu panel açmaz", 0, panels);
+        else assertTrue("panel yolu panel açar (boy seçimi, malzeme ekleme)", panels > 0);
+        assertNotNull(h.findText("Teslim edilen sipariş"));
+        assertTrue(h.act.save.day >= 5);
+    }
+
+    @Test public void fullDayPrepSizeToppingsFinishPackDeliverViaPanel() { fullDayWithSizesAndToppings(false); }
+
+    @Test public void fullDayPrepSizeToppingsFinishPackDeliverViaTalkBackActions() { fullDayWithSizesAndToppings(true); }
 
     @Test public void settingsHasApprenticeAnnounceSwitchThatPersists() {
         UiHarness h = new UiHarness(false);
@@ -447,6 +613,6 @@ public class PrepToppingUiTest {
         String d = UiHarness.label(info);
         assertTrue(d, d.contains("Seviye 1:") && d.contains("Seviye 2:") && d.contains("Seviye 3:"));
         assertTrue(d, d.contains("paketler") && d.contains("hazırlık") || d.contains("tepsi"));
-        assertTrue(d, d.contains("Malzeme seçimi her zaman sende"));
+        assertTrue(d, d.contains("Boy seçimi ve malzeme ekleme her zaman sende"));
     }
 }

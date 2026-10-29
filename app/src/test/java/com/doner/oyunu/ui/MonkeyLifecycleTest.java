@@ -112,8 +112,12 @@ public class MonkeyLifecycleTest {
     @Test public void gameMonkeyDay6Apprentice3() { gameMonkey(12, false, 6, 3); }
     @Test public void gameMonkeyTalkBackDay3Apprentice1() { gameMonkey(13, true, 3, 1); }
 
-    /** Malzeme paneli açıkken arka plan, döndürme, geri tuşu, yok edilme. */
-    @Test public void toppingPanelSurvivesLifecycleAndBack() {
+    private static boolean sosPanelOpen(UiHarness h) {
+        return UiBot.panelOpen(h) && UiBot.panelOf(h).stationId == com.doner.oyunu.engine.Station.SOS.id;
+    }
+
+    /** Seçenek paneli açıkken arka plan, döndürme, geri tuşu, yok edilme. */
+    @Test public void menuPanelSurvivesLifecycleAndBack() {
         UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
         h.startDay();
@@ -123,32 +127,98 @@ public class MonkeyLifecycleTest {
         h.run(300);
         h.orderCard(o).performClick(); h.run(100);
         long t = 0;
-        while (!UiBot.panelOpen(h) && t < 60_000) { UiBot.step(h); h.run(100); t += 100; }
-        assertTrue(UiBot.panelOpen(h));
+        while (!sosPanelOpen(h) && t < 60_000) { UiBot.step(h); h.run(100); t += 100; }
+        assertTrue(sosPanelOpen(h));
+        // panel açıkken ekleme sürer, saat akar
         float el = e.getElapsed();
-        h.run(3000);
-        assertEquals("Panel açıkken gün saati durmalı", el, e.getElapsed(), 1e-4f);
-        // arka plan: duraklatma paneli panelin üstüne gelir
+        UiBot.row(h, "Domates ekle").performClick(); h.run(1000);
+        assertTrue("panel açıkken saat akar", e.getElapsed() > el);
+        assertEquals(1, o.getLine(0).addedCount("domates"));
+        // arka plan: duraklatma paneli seçenek panelinin üstüne gelir, alttaki gizlenir
         h.controller.pause(); h.idle(300); h.controller.resume(); h.idle(300);
         assertNotNull(h.findLabel("Devam et"));
-        assertNull("duraklatmada alttaki panel gizli olmalı", h.findLabel("Tamam"));
+        assertNull("duraklatmada alttaki panel gizli olmalı", h.findLabel("Malzemeleri bitir"));
+        float paused = e.getElapsed();
+        h.run(3000);
+        assertEquals("duraklatmada saat durur", paused, e.getElapsed(), 1e-4f);
         h.click("Devam et"); h.run(300);
-        assertTrue(UiBot.panelOpen(h));
-        assertNotNull(h.findLabel("Tamam"));
+        assertTrue(sosPanelOpen(h));
+        assertNotNull(h.findLabel("Malzemeleri bitir"));
+        assertNotNull("eklenenler korunur", h.findText("Eklenenler: domates."));
         h.controller.configurationChange(); h.idle(300);
-        assertTrue(UiBot.panelOpen(h));
-        // geri tuşu paneli kapatır (adım başlamaz), ikinci geri duraklatır
+        assertTrue(sosPanelOpen(h));
+        // geri tuşu paneli kapatır (eklenenler kalır), ikinci geri duraklatır
         h.act.onBackPressed(); h.run(100);
         assertFalse(UiBot.panelOpen(h));
+        assertEquals(1, o.getLine(0).addedCount("domates"));
         assertFalse(o.isRunning());
         h.act.onBackPressed(); h.run(100);
         assertNotNull(h.findLabel("Devam et"));
         h.click("Devam et"); h.run(100);
         // yeniden aç ve panel açıkken yok et
         h.stationTile(com.doner.oyunu.engine.Station.SOS).performClick(); h.run(100);
-        assertTrue(UiBot.panelOpen(h));
+        assertTrue(sosPanelOpen(h));
         h.controller.pause().stop().destroy();
         h.idle(2000);
+    }
+
+    /** Panel açıkken sipariş müşteriyle birlikte giderse panel kapanır, çökmez. */
+    @Test public void menuPanelClosesWhenOrderDisappears() {
+        UiHarness h = new UiHarness(false);
+        h.click("Yeni oyun"); h.settle();
+        h.startDay();
+        GameEngine e = h.engine();
+        e.setSpawning(false);
+        com.doner.oyunu.engine.Order o = e.spawnOrder(java.util.Arrays.asList("ekmek_arasi"), new ArrayList<String>());
+        h.run(300);
+        h.orderCard(o).performClick(); h.run(100);
+        long t = 0;
+        while (!sosPanelOpen(h) && t < 60_000) { UiBot.step(h); h.run(100); t += 100; }
+        assertTrue(sosPanelOpen(h));
+        // müşteri sabrı biter
+        t = 0;
+        while (e.getOrder(o.id) != null && t < 400_000) { h.run(500); t += 500; }
+        assertNull(e.getOrder(o.id));
+        h.run(300);
+        assertFalse("sipariş gidince panel kapanır", UiBot.panelOpen(h));
+        assertTrue(h.screen() instanceof GameScreen || h.screen() instanceof SummaryScreen);
+    }
+
+    /** Rastgele TalkBack özel eylemleri (eski/yanlış kimlikler dahil) çökmeden çalışır. */
+    @Test public void customActionMonkeyNoCrash() {
+        AccessibilityManager am = (AccessibilityManager) RuntimeEnvironment.getApplication().getSystemService(Context.ACCESSIBILITY_SERVICE);
+        shadowOf(am).setEnabled(true);
+        shadowOf(am).setTouchExplorationEnabled(true);
+        UiHarness h = new UiHarness(false);
+        h.click("Yeni oyun"); h.settle();
+        h.act.save.day = 6;
+        h.act.save.money = 60_000;
+        com.doner.oyunu.engine.Shop.buyRecommended(h.act.save);
+        h.click("Güne başla"); h.settle();
+        Random rnd = new Random(77);
+        for (int i = 0; i < 600; i++) {
+            if (!(h.screen() instanceof GameScreen)) break;
+            List<View> btns = new ArrayList<>();
+            for (View v : UiHarness.visibleViews(h.root())) if (v.isClickable()) btns.add(v);
+            if (btns.isEmpty()) { h.run(200); continue; }
+            View v = btns.get(rnd.nextInt(btns.size()));
+            int dice = rnd.nextInt(10);
+            if (dice < 5) {
+                java.util.List<String> labels = A11yAudit.customActionLabels(v);
+                if (!labels.isEmpty()) {
+                    v.createAccessibilityNodeInfo();
+                    v.performAccessibilityAction(ActionMenu.ACTION_BASE + rnd.nextInt(labels.size() + 2), null);
+                }
+            } else if (dice < 8) {
+                UiBot.step(h);
+            } else {
+                v.performClick();
+            }
+            if (h.screen() instanceof GameScreen && h.findLabel("Dükkânı aç") != null && rnd.nextBoolean()) h.click("Dükkânı aç");
+            h.run(rnd.nextInt(300));
+        }
+        h.controller.pause().stop().destroy();
+        h.idle(1000);
     }
 
     @Test public void monkeySeed1() { monkey(1, false, false); }

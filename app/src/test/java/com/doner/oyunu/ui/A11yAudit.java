@@ -23,6 +23,10 @@ final class A11yAudit {
     int checkedActions;
     /** Denetlenen seçili-durumlu görünüm sayısı (v0.7 oyun akışı seçenekleri). */
     int checkedSelected;
+    /** Denetlenen aç/kapa durumlu düğme sayısı (v0.8 Süre baskısı). */
+    int checkedToggles;
+    /** v0.8 oyun ekranı denetimi yapıldı mı (gün içinde hazırlık bölümü yok; süresiz günde sabır/süre metni yok). */
+    int checkedGameRules;
 
     static A11yAudit run(UiHarness h, String where) {
         A11yAudit a = new A11yAudit();
@@ -45,6 +49,7 @@ final class A11yAudit {
         if (h.screen().focusTarget() == null) a.errors.add(where + ": focusTarget yok");
 
         List<View> shown = UiHarness.visibleViews(screenRoot);
+        checkGameScreenRules(h, shown, where, a);
         boolean anyHeading = false;
         List<String> labels = new ArrayList<>();
         for (View v : shown) {
@@ -72,6 +77,12 @@ final class A11yAudit {
                     if (!lab.toLowerCase(new java.util.Locale("tr")).contains("seçili")) a.errors.add(id + " seçili ama etiketi 'seçili' demiyor (renge bağımlı durum)");
                 }
                 if (ENGLISH.matcher(lab).find()) a.errors.add(id + " İngilizce etiket olabilir");
+                // v0.8: aç/kapa düğmesi (Süre baskısı) durumunu etikette söylemeli: "açık" ya da "kapalı"
+                if (v.isClickable() && lab.startsWith("Süre baskısı")) {
+                    a.checkedToggles++;
+                    String low = lab.toLowerCase(new java.util.Locale("tr"));
+                    if (!low.contains("açık") && !low.contains("kapalı")) a.errors.add(id + " aç/kapa düğmesi ama etiketi durumunu (açık/kapalı) söylemiyor");
+                }
                 if (v.isClickable()) {
                     float w = v.getWidth() / density, hh = v.getHeight() / density;
                     if (w <= 0 || hh <= 0) a.errors.add(id + " boyutsuz (yerleşmemiş)");
@@ -106,6 +117,28 @@ final class A11yAudit {
             for (int j = i + 1; j < labels.size(); j++)
                 if (labels.get(i).equals(labels.get(j))) a.warnings.add(where + ": aynı etiket iki kez: '" + shorten(labels.get(i)) + "'");
         return a;
+    }
+
+    /**
+     * v0.8 oyun ekranı kuralları: (1) gün içinde (RUNNING) hazırlık bölümü (hazırlık düğmeleri, hazır stok göstergeleri,
+     * stok okuma düğmesi) ekranda olmamalı; (2) süre baskısı kapalıyken sabır / kalan süre metni ve göstergesi olmamalı.
+     */
+    private static void checkGameScreenRules(UiHarness h, List<View> shown, String where, A11yAudit a) {
+        if (!(h.screen() instanceof GameScreen)) return;
+        com.doner.oyunu.engine.GameEngine e = h.engine();
+        a.checkedGameRules++;
+        boolean running = e.getState() == com.doner.oyunu.engine.GameEngine.State.RUNNING;
+        // açık seçenek panelinde hazırlık SEÇENEKLERİ ("Salata ve sos tepsisi hazırla, hazırlık, …") olabilir: bunlar bölüm değil
+        boolean panel = h.field(h.screen(), "panel") != null;
+        for (View v : shown) {
+            String lab = UiHarness.label(v);
+            String low = lab.toLowerCase(new java.util.Locale("tr"));
+            if (running && ((!panel && (lab.startsWith("Döner dilimle: ") || lab.startsWith("Ayran doldur") || lab.startsWith("Salata ve sos tepsisi hazırla")))
+                    || lab.startsWith("Hazır stoğu oku") || lab.startsWith("Hazır döner:") || lab.startsWith("Hazır ayran:") || lab.startsWith("Hazır salata ve sos tepsisi")))
+                a.errors.add(where + ": gün içinde hazırlık bölümü görünmemeli: '" + shorten(lab) + "'");
+            if (running && !e.isTimed() && (low.contains("sabır") || low.contains("saniye kaldı") || low.contains("kalan süre") || low.contains("mesai")))
+                a.errors.add(where + ": süre baskısı kapalıyken sabır/süre metni olmamalı: '" + shorten(lab) + "'");
+        }
     }
 
     /** Düğmenin TalkBack özel eylemleri (ActionMenu kimlik aralığı): etiketler boş değil, Türkçe, tekrarsız. */

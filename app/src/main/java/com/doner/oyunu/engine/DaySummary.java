@@ -4,6 +4,8 @@ package com.doner.oyunu.engine;
 public final class DaySummary {
     public int day;
     public boolean failed;
+    /** Gün bittiğinde süre baskısı açık mıydı (false: süresiz gün; kayıp müşteri olmaz). */
+    public boolean timed = true;
     public int revenue;
     public int tips;
     public int emergencySpend;

@@ -88,6 +88,7 @@ public class MainActivity extends Activity {
         s.apprenticeAnnounce = old.apprenticeAnnounce;
         s.flowMode = old.flowMode; // oyun akışı bir ayardır: yeni oyunda korunur
         s.flowChosen = old.flowChosen;
+        s.timePressure = old.timePressure; // süre baskısı da bir ayardır: yeni oyunda korunur
         save = s;
         prefs.edit().putBoolean(KEY_STARTED, true).apply();
         saveNow();

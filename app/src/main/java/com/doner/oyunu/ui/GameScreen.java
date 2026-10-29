@@ -100,7 +100,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     private FrameLayout host;
     private LinearLayout content;
     private LinearLayout body;
-    private TextView moneyTv, starsTv, timeTv, pendingTv;
+    private TextView moneyTv, starsTv, timeTv, pendingTv, timeCaption;
     private StarsView starsView;
     private LinearLayout statusBar;
     private String statusKey = "";
@@ -196,6 +196,10 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     }
 
     private LinearLayout statCell(Icons.Kind kind, TextView valueOut, String caption, View below) {
+        return statCell(kind, valueOut, caption, below, null);
+    }
+
+    private LinearLayout statCell(Icons.Kind kind, TextView valueOut, String caption, View below, TextView[] captionOut) {
         LinearLayout cell = column();
         cell.setGravity(Gravity.CENTER_HORIZONTAL);
         LinearLayout row = new LinearLayout(ctx);
@@ -209,6 +213,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             TextView cap = Ui.label(ctx, caption, 12, Theme.MUTED, false);
             cap.setGravity(Gravity.CENTER);
             cell.addView(cap);
+            if (captionOut != null) captionOut[0] = cap;
         }
         return cell;
     }
@@ -228,7 +233,9 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         statusBar.addView(statCell(Icons.Kind.COIN, moneyTv, "Para", null), new LinearLayout.LayoutParams(0, Ui.WRAP, 1.15f));
         LinearLayout starsCell = statCell(Icons.Kind.STAR, starsTv, "", starsView);
         statusBar.addView(starsCell, new LinearLayout.LayoutParams(0, Ui.WRAP, 1f));
-        statusBar.addView(statCell(Icons.Kind.CLOCK, timeTv, "Süre", null), new LinearLayout.LayoutParams(0, Ui.WRAP, 0.9f));
+        TextView[] capOut = new TextView[1];
+        statusBar.addView(statCell(Icons.Kind.CLOCK, timeTv, "Süre", null, capOut), new LinearLayout.LayoutParams(0, Ui.WRAP, 0.9f));
+        timeCaption = capOut[0];
         statusBar.addView(statCell(Icons.Kind.BAG, pendingTv, "Bekleyen", null), new LinearLayout.LayoutParams(0, Ui.WRAP, 0.9f));
         Ui.groupAsText(statusBar);
         content.addView(statusBar, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 0, 0, 4));
@@ -317,10 +324,12 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         openBar.setVisibility(prep ? View.VISIBLE : View.GONE);
         deliverBtn.setVisibility(prep ? View.GONE : View.VISIBLE);
         nextBtn.setVisibility(prep ? View.GONE : View.VISIBLE);
-        // hazırlık bölümü: hazırlıkta en üstte (çalışanlar şeridinin altı), günde istasyonların altında
+        // v0.8: hazırlık bölümü (döner dilimle, ayran doldur, tepsi hazırla, hazır stok göstergeleri, stok okuma düğmesi)
+        // YALNIZCA hazırlık aşamasında vardır; gün içinde ekrandan kalkar. Gün içi hazırlık istasyon düğmelerinin
+        // eylem menüsünden/panelinden (prep:* seçenekleri) yapılır; hazır stok "Durumu oku"da ve istasyon etiketindedir.
         body.removeView(prepBox);
         if (prep) body.addView(prepBox, 1, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 2, 0, 2));
-        else body.addView(prepBox, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 2, 0, 2));
+        prepBox.setVisibility(prep ? View.VISIBLE : View.GONE);
         dirty = true;
     }
 
@@ -466,7 +475,21 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         });
         pnl.addView(flowBtn, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 6));
 
-        final TextView help = Ui.label(ctx, Texts.quickHelp(engine.getFlowMode()), 17, Theme.CREAM, false);
+        // v0.8: süre baskısı oyun ortasında da değişir (aç/kapa)
+        final Button timeBtn = Ui.button(ctx, Texts.timePressureButtonLabel(engine.isTimed()), Ui.SECONDARY);
+        timeBtn.setContentDescription(Texts.timePressureButtonDescription(engine.isTimed()));
+        tap(timeBtn, new Runnable() {
+            @Override public void run() {
+                engine.setTimePressure(!engine.isTimed()); // Narrator duyurur, Feedback kaydı günceller
+                a.saveNow();
+                timeBtn.setText(Texts.timePressureButtonLabel(engine.isTimed()));
+                timeBtn.setContentDescription(Texts.timePressureButtonDescription(engine.isTimed()));
+                if (!a.save.speechOn) a.speaker.announce(narrator.timePressureChanged(engine.isTimed()), true);
+            }
+        });
+        pnl.addView(timeBtn, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 6));
+
+        final TextView help = Ui.label(ctx, Texts.quickHelp(engine.getFlowMode(), engine.isTimed()), 17, Theme.CREAM, false);
         help.setFocusable(true);
         help.setVisibility(View.GONE);
         help.setPadding(dp(4), dp(6), dp(4), dp(6));
@@ -475,8 +498,8 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
                 boolean show = help.getVisibility() != View.VISIBLE;
                 help.setVisibility(show ? View.VISIBLE : View.GONE);
                 if (show) {
-                    help.setText(Texts.quickHelp(engine.getFlowMode()));
-                    a.speaker.force(Texts.quickHelp(engine.getFlowMode()));
+                    help.setText(Texts.quickHelp(engine.getFlowMode(), engine.isTimed()));
+                    a.speaker.force(Texts.quickHelp(engine.getFlowMode(), engine.isTimed()));
                 }
             }
         }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 6));
@@ -879,7 +902,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             noSelTimer = 0f;
         }
         float left = engine.getTimeLeft();
-        if (!engine.isOvertime() && left <= 5f) {
+        if (engine.isTimed() && !engine.isOvertime() && left <= 5f) {
             int sec = (int) Math.ceil(left);
             if (sec != lastTickSecond) { lastTickSecond = sec; a.sound.play("sfx_tick"); }
         }
@@ -896,7 +919,11 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         moneyTv.setText(Texts.money(engine.getMoney()));
         starsTv.setText(Narrator.fmtStars(engine.getStars()));
         starsView.setValue(engine.getStars());
-        timeTv.setText(prepUi ? "Hazırlık" : (engine.isOvertime() ? "Mesai" : Texts.clock(engine.getTimeLeft())));
+        readBtn.setContentDescription(engine.isTimed() || prepUi ? "Durumu oku. Para, yıldız, süre, seçili sipariş ve hazır stok."
+                : "Durumu oku. Para, yıldız, kalan müşteri sayısı, seçili sipariş ve hazır stok.");
+        if (prepUi) { timeTv.setText("Hazırlık"); setTimeCaption("Süre"); }
+        else if (!engine.isTimed()) { timeTv.setText(String.valueOf(engine.getRemainingCustomers())); setTimeCaption("Kalan müşteri"); }
+        else { timeTv.setText(engine.isOvertime() ? "Mesai" : Texts.clock(engine.getTimeLeft())); setTimeCaption("Süre"); }
         pendingTv.setText(String.valueOf(orders.size()));
         updateStatusDescription(orders.size(), selected);
 
@@ -994,17 +1021,23 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         }
     }
 
+    private void setTimeCaption(String c) {
+        if (timeCaption != null && !c.contentEquals(timeCaption.getText())) timeCaption.setText(c);
+    }
+
     private void updateStatusDescription(int pending, Order selected) {
         // Düşük sıklıkta güncelle: yalnızca anlamlı değişimde (para/yıldız/bekleyen/seçili/10 sn dilimi/hazır stok).
         float left = engine.getTimeLeft();
-        int bucket = engine.isOvertime() ? -1 : (int) (left / 10f);
+        boolean timedDay = engine.isTimed();
+        int bucket = !timedDay ? 1000 + engine.getRemainingCustomers() : (engine.isOvertime() ? -1 : (int) (left / 10f));
         String key = engine.getMoney() + "|" + Narrator.fmtStars(engine.getStars()) + "|" + pending + "|"
                 + (selected == null ? -1 : selected.id) + "|" + (selected == null ? 0 : selected.getNextStepIndex()) + "|" + bucket
                 + "|" + prepUi + "|" + engine.getReadyDonerHalves() + "|" + engine.getReadyDrinks() + "|" + engine.getTrayTotal();
         if (key.equals(statusKey)) return;
         statusKey = key;
         // Canlı duyuru yalnızca süre eşiklerinde: 60, 30, 10 sn kala ve mesai başında.
-        int threshold = engine.isOvertime() ? -1 : (left <= 10f ? 10 : left <= 30f ? 30 : left <= 60f ? 60 : Integer.MAX_VALUE);
+        // (süresiz günde süre eşiği yoktur: müşteri gelişlerini Narrator zaten duyurur)
+        int threshold = !timedDay ? Integer.MAX_VALUE : (engine.isOvertime() ? -1 : (left <= 10f ? 10 : left <= 30f ? 30 : left <= 60f ? 60 : Integer.MAX_VALUE));
         boolean announce = threshold != lastAnnounceBucket;
         lastAnnounceBucket = threshold;
         if (threshold == Integer.MAX_VALUE || prepUi) announce = false;
@@ -1013,7 +1046,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
     private void updateMusic(int pending) {
         float elapsed = engine.getElapsed();
-        boolean busy = pending >= 5 || engine.getTimeLeft() <= engine.getConfig().duration * 0.25f;
+        boolean busy = pending >= 5 || (engine.isTimed() && engine.getTimeLeft() <= engine.getConfig().duration * 0.25f);
         if (busy) busyHold = elapsed + 12f;
         String want = (busy || elapsed < busyHold) ? "music_day_busy" : "music_day_calm";
         if (!want.equals(a.sound.currentMusic())) a.sound.playMusic(want);
@@ -1268,6 +1301,14 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             dirty = true;
         }
 
+        @Override public void onTimePressureChanged(boolean timed) {
+            a.save.timePressure = timed;
+            notice(narrator.timePressureChanged(timed));
+            lastAnnounceBucket = Integer.MAX_VALUE;
+            statusKey = "";
+            dirty = true;
+        }
+
         @Override public void onFlowModeChanged(FlowMode mode) {
             a.save.flowMode = mode;
             a.save.flowChosen = true;
@@ -1389,7 +1430,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             a.sound.playLater("sfx_coin", 0.3f, 160);
             a.sound.playLater(happy ? "sfx_customer_happy" : "sfx_customer_angry", 0.6f, 480);
             a.haptics.deliver();
-            tutorial(TUTORIAL_END, Texts.TUT_END);
+            tutorial(TUTORIAL_END, Texts.tutEnd(engine.isTimed()));
             if (tutorialActive && tutorialStage >= TUTORIAL_END) {
                 tutorialActive = false;
                 gameSave.tutorialDone = true;
@@ -1717,10 +1758,15 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
                 requests.setVisibility(View.GONE);
             }
             status.setText(Texts.orderStatus(o, act, sel));
-            String w = Texts.patienceWord(f);
-            patLabel.setText(Character.toUpperCase(w.charAt(0)) + w.substring(1) + " · " + Math.max(0, Math.round(o.customer.getPatienceLeft())) + " sn");
-            int col = level == 2 ? Theme.RED : (level == 1 ? Theme.ORANGE : Theme.GOLD);
-            patBar.set(f, col);
+            boolean timedDay = engine.isTimed();
+            patLabel.setVisibility(timedDay ? View.VISIBLE : View.GONE); // süresiz günde sabır göstergesi yok
+            patBar.setVisibility(timedDay ? View.VISIBLE : View.GONE);
+            if (timedDay) {
+                String w = Texts.patienceWord(f);
+                patLabel.setText(Character.toUpperCase(w.charAt(0)) + w.substring(1) + " · " + Math.max(0, Math.round(o.customer.getPatienceLeft())) + " sn");
+                int col = level == 2 ? Theme.RED : (level == 1 ? Theme.ORANGE : Theme.GOLD);
+                patBar.set(f, col);
+            }
             float stepsDone = o.getNextStepIndex();
             for (ActiveStep s : engine.getActiveSteps()) if (s.order == o) stepsDone += s.progress();
             stepBar.set(stepsDone / Math.max(1, o.steps.size()), Theme.CREAM);
@@ -1728,6 +1774,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             int selItem = sel ? engine.getSelectedItem() : -1;
             for (int i = 0; i < rows.size() && i < o.lineCount(); i++) rows.get(i).update(o, o.getLine(i), i == selItem);
             packRow.update(o);
+            if (!timedDay) level = 0;
             int key = (sel ? 1 : 0) | (level << 1) | (o.isReady() ? 8 : 0);
             if (key != bgKey) {
                 bgKey = key;
@@ -1735,7 +1782,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
                 float sw = sel ? 3.5f : (level == 2 || o.isReady() ? 2.5f : 1.5f);
                 setBackground(Ui.round(ctx, sel ? Theme.CARD_HI : Theme.CARD, o.isReady() ? Theme.GREEN : stroke, sw, 16));
             }
-            Ui.setDesc(header, Texts.orderDescription(o, sel, act));
+            Ui.setDesc(header, Texts.orderDescription(o, sel, act, timedDay));
         }
     }
 

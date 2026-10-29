@@ -37,6 +37,7 @@ public final class SettingsScreen extends Screen {
         final SaveData s = a.save;
 
         addFlowChooser(body, s);
+        addTimePressure(body, s);
 
         addStepper(body, new Value("Müzik sesi", 0, 1, 0.1) {
             double get() { return s.musicVolume; }
@@ -138,6 +139,43 @@ public final class SettingsScreen extends Screen {
             body.addView(b, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 4));
         }
         refreshFlow(s);
+    }
+
+    /** v0.8 süre baskısı: tek büyük aç/kapa düğmesi; durum etikette ("Süre baskısı: Açık") ve açıklamada okunur. */
+    private Button timeBtn;
+
+    private void addTimePressure(LinearLayout body, final SaveData s) {
+        TextView h = Ui.label(ctx, "Süre baskısı", 21, Theme.GOLD, true);
+        Ui.heading(h);
+        h.setPadding(dp(4), dp(8), dp(4), dp(2));
+        body.addView(h);
+        TextView note = Ui.label(ctx, Texts.TIME_PRESSURE_NOTE, 15, Theme.MUTED, false);
+        note.setFocusable(true);
+        body.addView(note, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 4, 0, 4, 4));
+        timeBtn = button("", Ui.SECONDARY, new Runnable() {
+            @Override public void run() { toggleTimePressure(s); }
+        });
+        timeBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        timeBtn.setMinHeight(dp(68));
+        timeBtn.setMinimumHeight(dp(68));
+        body.addView(timeBtn, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 6));
+        refreshTimePressure(s);
+    }
+
+    private void toggleTimePressure(SaveData s) {
+        s.timePressure = !s.timePressure;
+        a.saveNow();
+        refreshTimePressure(s);
+        a.sound.play("sfx_tap");
+        a.speaker.announce(s.timePressure ? "Süre baskısı açık. Gün süreli, müşteriler sabırsızlanır."
+                : "Süre baskısı kapalı. Süre sayacı yok, müşteri sabrı azalmaz, kimse gitmez.", true);
+    }
+
+    private void refreshTimePressure(SaveData s) {
+        timeBtn.setText(Texts.timePressureSettingLabel(s.timePressure));
+        timeBtn.setContentDescription(Texts.timePressureSettingDescription(s.timePressure));
+        timeBtn.setBackground(Ui.buttonBg(ctx, s.timePressure ? Ui.SECONDARY : Ui.GOLD));
+        timeBtn.setTextColor(s.timePressure ? Theme.CREAM : Theme.DARK);
     }
 
     private void chooseFlow(SaveData s, FlowMode m) {

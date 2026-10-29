@@ -81,7 +81,7 @@ public class NarratorV05Test {
         assertEquals("İçecek dolabı istasyonu, boş, Ayran Ayranı doldur için gerekli", n.stationLabel(Station.ICECEK));
         assertEquals("Paketleme istasyonu, boş", n.stationLabel(Station.PAKET));
         e.getSave().readyDrinks = 3;
-        assertTrue(n.stationLabel(Station.ICECEK).endsWith("hazır ayran 3"));
+        assertTrue(n.stationLabel(Station.ICECEK).endsWith("hazır 3 bardak ayran"));
         Flow.doItemStation(e, o, 0, Station.EKMEK);
         Flow.doItemStation(e, o, 0, Station.DONER);
         Flow.doItemStation(e, o, 0, Station.SOS);

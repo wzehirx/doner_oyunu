@@ -31,6 +31,12 @@ public final class SaveData {
     /** Oyuncu oyun akışını bilerek seçti/onayladı mı (brifing ilk seferde sorar). */
     public boolean flowChosen = false;
 
+    /**
+     * Süre baskısı (v0.8): true (varsayılan; eski kayıtlar) = süreli gün, müşteri sabrı azalır. false = süresiz gün:
+     * sayaç yok, sabır sabit, müşteri gitmez; kota kadar müşteri gelip tüm siparişler teslim edilince gün biter.
+     */
+    public boolean timePressure = true;
+
     /** Hazır (doldurulmuş) içecek stoğu; gün sonunda atılmaz, ertesi güne kalır. */
     public int readyDrinks = 0;
 
@@ -77,6 +83,7 @@ public final class SaveData {
         sb.append("readyDrinks=").append(readyDrinks).append('\n');
         sb.append("flow=").append(flowMode.id).append('\n');
         sb.append("flowChosen=").append(flowChosen ? 1 : 0).append('\n');
+        sb.append("timer=").append(timePressure ? 1 : 0).append('\n');
         return sb.toString();
     }
 
@@ -119,6 +126,7 @@ public final class SaveData {
                 else if (k.equals("apprenticeAnnounce")) s.apprenticeAnnounce = v.equals("1");
                 else if (k.equals("flow")) { FlowMode m = FlowMode.byId(v); if (m != null) s.flowMode = m; }
                 else if (k.equals("flowChosen")) s.flowChosen = v.equals("1");
+                else if (k.equals("timer")) s.timePressure = !v.equals("0");
                 else if (k.equals("readyDrinks")) s.readyDrinks = Math.max(0, Math.min(40, Integer.parseInt(v)));
             } catch (NumberFormatException ignored) {
                 // bozuk satır atlanır

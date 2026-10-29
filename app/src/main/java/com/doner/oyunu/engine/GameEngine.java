@@ -30,6 +30,14 @@ public final class GameEngine {
     private static final float APPRENTICE_SLOWDOWN = 1.2f;
     private static final double MISTAKE_PENALTY_EACH = 0.05;
     private static final double MISTAKE_PENALTY_MAX = 0.15;
+    /** Süresiz mod (v0.8): hız bonusu yok; bahşiş oranı standart, çarpanla biraz düşük (süreli oyuncu haksız duruma düşmesin). */
+    public static final double UNTIMED_TIP_RATE = 0.10;
+    public static final double UNTIMED_TIP_MULT = 0.8;
+    /** Süresiz modda her teslimde standart memnuniyet yıldızı (süreli "memnun" ile aynı). */
+    public static final double UNTIMED_STAR_GAIN = 0.08;
+    /** Süresiz modda geliş aralığı çarpanı (sıra boşaldıkça biraz daha canlı) ve boş sırada en çok bekleme (sn). */
+    static final double UNTIMED_ARRIVAL_FACTOR = 1.25;
+    static final float UNTIMED_IDLE_WAIT = 2.5f;
     private static final double PERFECT_BONUS = 0.02;
     private static final float ADD_SALAD_SECONDS = 0.6f;
     private static final float ADD_SAUCE_SECONDS = 0.5f;
@@ -59,7 +67,14 @@ public final class GameEngine {
     private final Map<Integer, int[]> blocked = new HashMap<>();
 
     private State state = State.READY;
+    /** Oyun saati (her zaman akar: ses/animasyon/Narrator için). */
     private float time;
+    /** Gün saati: yalnızca süreli modda akar; gün süresi ve mesai buna göre ölçülür. */
+    private float dayClock;
+    /** Otomatik gelen müşteri sayısı (süresiz modda kotayı doldurur; senaryo siparişleri sayılmaz). */
+    private int arrived;
+    /** Günün müşteri kotası (gün başında yükseltmelerle sabitlenir). */
+    private final int quota;
     private float spawnTimer = 1.5f;
     private int nextOrderId = 1;
     private int selectedId = -1;
@@ -84,6 +99,7 @@ public final class GameEngine {
         this.day = save.day;
         this.cfg = DayConfig.forDay(day);
         this.menu = Catalog.productsForDay(day);
+        this.quota = cfg.quota(upgrades.arrivalMult());
         this.rng = new Random(seed);
         this.nameCursor = rng.nextInt(Catalog.NAMES.length);
         summary.day = day;
@@ -108,9 +124,20 @@ public final class GameEngine {
     public int getMoney() { return save.money; }
     public double getStars() { return save.stars; }
     public float getElapsed() { return time; }
-    /** Hizmet süresinin kalanı (0'a iner; sonrasında mesai uzatması sürer). Hazırlık aşamasında tam gün süresi. */
-    public float getTimeLeft() { return Math.max(0f, cfg.duration - time); }
-    public boolean isOvertime() { return time >= cfg.duration; }
+    /**
+     * Hizmet süresinin kalanı (0'a iner; sonrasında mesai uzatması sürer). Hazırlık aşamasında tam gün süresi.
+     * Süresiz modda ({@link #isTimed()} false) anlamsızdır: gün süresi sabit döner; UI/Narrator {@link #getRemainingCustomers()} kullanır.
+     */
+    public float getTimeLeft() { return Math.max(0f, cfg.duration - dayClock); }
+    public boolean isOvertime() { return isTimed() && dayClock >= cfg.duration; }
+    /** Süre baskısı açık mı (süreli gün)? Ayar {@link SaveData#timePressure}; oyun ortasında {@link #setTimePressure} ile değişir. */
+    public boolean isTimed() { return save.timePressure; }
+    /** Süresiz modda günün müşteri kotası ({@link DayConfig#quota}, yükseltmeler dahil); süreli modda da bilgi olarak döner. */
+    public int getCustomerQuota() { return quota; }
+    /** Şimdiye dek otomatik gelen müşteri sayısı (senaryo siparişleri hariç). */
+    public int getCustomersArrived() { return arrived; }
+    /** Kalan müşteri: henüz gelmemiş kota + şu an bekleyen sipariş sayısı (süresiz modun ilerleme göstergesi). */
+    public int getRemainingCustomers() { return Math.max(0, quota - arrived) + orders.size(); }
     public int getSlotCount() { return upgrades.slots(); }
     /** Oyuncunun boş yuvası (çırak işleri yuva kullanmaz). */
     public int getFreeSlots() { return upgrades.slots() - playerActiveCount(); }
@@ -134,6 +161,19 @@ public final class GameEngine {
         save.flowMode = mode;
         save.flowChosen = true;
         for (GameListener l : snap()) l.onFlowModeChanged(mode);
+    }
+
+    /**
+     * Süre baskısını açar/kapatır (oyun ortasında da). Kapatınca sayaç durur, müşteri sabrı donar (kimse gitmez),
+     * kalan kota kadar müşteri gelir. Açınca gün saati, o ana dek gelen müşteri oranından az olmayacak biçimde ilerler.
+     * Kayda yazılır ({@link SaveData#timePressure}); {@code onTimePressureChanged} verilir.
+     */
+    public void setTimePressure(boolean on) {
+        if (save.timePressure == on) return;
+        save.timePressure = on;
+        if (on) dayClock = Math.max(dayClock, cfg.duration * Math.min(0.9f, arrived / (float) quota));
+        for (GameListener l : snap()) l.onTimePressureChanged(on);
+        if (!on) checkEnd();
     }
 
     /** Çırak seviyesi (0..3) = otomatik işçi sayısı. */
@@ -1492,14 +1532,17 @@ public final class GameEngine {
         if (o == null || !o.ready || state == State.FINISHED || state == State.FAILED) return false;
         ToppingCheck check = checkToppings(o);
         int mistakes = check.mistakes();
+        boolean timed = isTimed();
         float frac = o.customer.patienceFraction();
-        boolean fast = frac >= 0.5f;
-        boolean happy = frac >= 0.2f;
+        // Süresiz modda hız bonusu yok: teslim standart memnuniyettir (sabır sabit; bahşiş oranı UNTIMED_TIP_RATE x UNTIMED_TIP_MULT).
+        boolean fast = timed && frac >= 0.5f;
+        boolean happy = !timed || frac >= 0.2f;
         int price = o.price();
-        double tipRate = fast ? 0.20 : (happy ? 0.08 : 0.0);
+        double tipRate = timed ? (fast ? 0.20 : (happy ? 0.08 : 0.0)) : UNTIMED_TIP_RATE;
         if (mistakes > 0) tipRate *= 0.5;
         double flowTip = v06Balance ? 1.0 : getFlowMode().tipMult;
-        int tip = (int) Math.round(price * tipRate * o.customer.type.tipMult * upgrades.tipMult() * flowTip);
+        int tip = (int) Math.round(price * tipRate * o.customer.type.tipMult * upgrades.tipMult() * flowTip
+                * (timed ? 1.0 : UNTIMED_TIP_MULT));
         save.money += price + tip;
         summary.revenue += price;
         summary.tips += tip;
@@ -1515,7 +1558,7 @@ public final class GameEngine {
             for (GameListener l : snap()) l.onOrderPerfect(o);
         }
         for (GameListener l : snap()) l.onOrderDelivered(o, price, tip, happy && mistakes == 0);
-        double gain = fast ? 0.12 : (happy ? 0.08 : 0.02);
+        double gain = !timed ? UNTIMED_STAR_GAIN : (fast ? 0.12 : (happy ? 0.08 : 0.02));
         if (o.customer.type.id.equals("influencer") && fast) gain += 0.05;
         gain *= upgrades.starGainMult();
         if (check.perfect()) gain += PERFECT_BONUS * upgrades.starGainMult();
@@ -1574,11 +1617,13 @@ public final class GameEngine {
 
     private void step(float h) {
         time += h;
+        final boolean timed = isTimed();
+        if (timed) dayClock += h;
         // 1) çalışan işler
         advanceTasks(h);
         if (state != State.RUNNING) return;
-        // 2) sabır
-        for (Order o : new ArrayList<>(orders)) {
+        // 2) sabır (süresiz modda donar: müşteri gitmez, uyarı yok)
+        if (timed) for (Order o : new ArrayList<>(orders)) {
             Customer c = o.customer;
             c.patienceLeft -= h;
             if (c.patienceLeft <= 0f) {
@@ -1593,14 +1638,16 @@ public final class GameEngine {
                 for (GameListener l : snap()) l.onPatienceWarning(o, lvl);
             }
         }
-        // 3) geliş
-        if (spawning && time < cfg.duration) {
+        // 3) geliş (süreli: gün süresi boyunca; süresiz: kota dolana dek, sıra boşaldıkça)
+        if (spawning && (timed ? dayClock < cfg.duration : arrived < quota)) {
             spawnTimer -= h;
+            if (!timed && orders.isEmpty() && spawnTimer > UNTIMED_IDLE_WAIT) spawnTimer = UNTIMED_IDLE_WAIT;
             if (spawnTimer <= 0f) {
                 if (orders.size() < maxQueue()) {
                     spawnCustomer();
-                    double mult = DayConfig.starMultiplier(save.stars) * upgrades.arrivalMult()
-                            * (v06Balance ? 1.0 : getFlowMode().arrivalMult);
+                    double fm = v06Balance ? 1.0 : getFlowMode().arrivalMult;
+                    double mult = timed ? DayConfig.starMultiplier(save.stars) * upgrades.arrivalMult() * fm
+                            : fm * UNTIMED_ARRIVAL_FACTOR;
                     spawnTimer = (float) (cfg.arrivalInterval * (0.75 + 0.5 * rng.nextDouble()) / mult);
                 } else {
                     spawnTimer = 0.5f;
@@ -1625,9 +1672,12 @@ public final class GameEngine {
 
     private void checkEnd() {
         if (state != State.RUNNING) return;
-        if (time >= cfg.duration && orders.isEmpty()) {
+        if (!isTimed()) {
+            // Süresiz gün: kota kadar müşteri geldi ve tüm siparişler teslim edildi.
+            if (arrived >= quota && orders.isEmpty()) finishDay();
+        } else if (dayClock >= cfg.duration && orders.isEmpty()) {
             finishDay();
-        } else if (time >= cfg.duration + cfg.overtime) {
+        } else if (dayClock >= cfg.duration + cfg.overtime) {
             // Mesai bitti: kalan siparişler cezasız kapanır.
             for (Order o : new ArrayList<>(orders)) remove(o);
             finishDay();
@@ -1890,7 +1940,8 @@ public final class GameEngine {
     /** Boşta kalan çırak hazırlık yapar (israfı sınırlamak için hedefli ve gün sonuna yakın değil). */
     private boolean apprenticePrep(int w, int lvl) {
         boolean prepPhase = state == State.PREP;
-        float left = prepPhase ? 999f : cfg.duration - time;
+        float left = prepPhase ? 999f : (isTimed() ? cfg.duration - dayClock
+                : Math.max(0, quota - arrived) * cfg.arrivalInterval);
         // 1) içecek (israf yok: ertesi güne kalır)
         if (menuHasDrinkPrep() && save.readyDrinks + pendingPrep(PrepKind.DRINK, null) <= 4
                 && save.inventory.has(Catalog.AYRAN, PrepKind.DRINK.batch + 2)) {
@@ -1934,6 +1985,7 @@ public final class GameEngine {
         for (int k = 0; k < n; k++) items.add(pickProduct(menu, type));
         List<PortionSize> sizes = rollSizes(items, type);
         String name = Catalog.NAMES[nameCursor++ % Catalog.NAMES.length];
+        arrived++;
         addOrder(name, type, items, rollRequests(items), sizes);
     }
 
@@ -2087,6 +2139,7 @@ public final class GameEngine {
         summary.endStars = save.stars;
         summary.moneyAfter = save.money;
         summary.failed = false;
+        summary.timed = isTimed();
         StringBuilder sb = new StringBuilder();
         for (Product p : Catalog.newProductsOnDay(day + 1)) {
             if (sb.length() > 0) sb.append(", ");
@@ -2108,6 +2161,7 @@ public final class GameEngine {
     private void failDay() {
         state = State.FAILED;
         summary.failed = true;
+        summary.timed = isTimed();
         summary.endStars = save.stars;
         orders.clear();
         active.clear();

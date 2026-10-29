@@ -38,8 +38,16 @@ public final class Campaign {
         save.flowMode = flow;
         save.flowChosen = true;
     }
+
+    /** timePressure=false: süresiz mod (v0.8): sayaç yok, sabır sabit, kota kadar müşteri. */
+    public Campaign(FlowMode flow, boolean timePressure) {
+        this(flow);
+        save.timePressure = timePressure;
+    }
     public final List<Integer> attemptsPerDay = new ArrayList<>();
     public int firstUnpassedDay = -1;
+    /** Son oynanan günün motoru (hata ayıklama / takılma incelemesi için). */
+    public GameEngine lastEngine;
 
     /** @return geçilemeyen ilk gün (hepsi geçildiyse -1) */
     public int run(int lastDay, long seed, float reaction, boolean buyUpgrades, int maxAttempts) {
@@ -58,12 +66,14 @@ public final class Campaign {
                 TestBot bot = new TestBot(reaction, prep, careful);
                 if (humanLike) bot.humanLike(seed * 31 + d * 7 + attempt);
                 bot.playDay(e);
+                lastEngine = e;
                 taps += bot.taps;
                 v04Taps += bot.v04Taps;
                 delivered += bot.delivered;
                 lost += e.getSummary().lost;
                 results.add(e.getSummary());
-                passed = !e.getSummary().failed;
+                // süresiz modda günün bitmemesi (takılma) geçmek sayılmaz
+                passed = !e.getSummary().failed && e.getState() == GameEngine.State.FINISHED;
                 attempt++;
             }
             attemptsPerDay.add(attempt);
@@ -89,6 +99,13 @@ public final class Campaign {
     /** Başarısız deneme sayısı. */
     public int failedAttempts() { int n = 0; for (DaySummary d : results) if (d.failed) n++; return n; }
 
+    /** Yükseltmeyi alınca günün önerilen stoğu hâlâ karşılanıyor mu (alım sonrası yeniden hesaplanır)? */
+    private boolean affordsStockAfter(String id) {
+        SaveData sim = save.copy();
+        if (Shop.buyUpgrade(sim, id) != Shop.BuyResult.OK) return false;
+        return sim.money >= Shop.recommendedCost(sim);
+    }
+
     private void shop() {
         boolean bought = true;
         while (bought) {
@@ -100,6 +117,7 @@ public final class Campaign {
                 int price = u.priceForNext(lv);
                 if (price < 0 || save.day < u.unlockDayForNext(lv)) continue;
                 if (humanLike && java.util.Arrays.asList(CROWD).contains(id) && lastLost() > 1) continue;
+                if (!save.timePressure && !affordsStockAfter(id)) continue; // süresiz modda stoksuz kalmak günü kilitler
                 if (save.money - price >= reserve) {
                     if (Shop.buyUpgrade(save, id) == Shop.BuyResult.OK) { bought = true; break; }
                 } else if (id.equals("cirak")) {

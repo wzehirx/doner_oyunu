@@ -66,6 +66,17 @@ public class PrepToppingUiTest {
         assertFalse("seçenek uygulanınca panel kapanmalı", UiBot.panelOpen(h));
     }
 
+    /** Gün içi hazırlık: DONER istasyon düğmesine dokunur (sipariş yoksa hazırlık seçenekleri paneli açılır), "4 porsiyon" der. */
+    private void prepDoner4ViaStation(UiHarness h) {
+        View tile = h.stationTile(Station.DONER);
+        assertNotNull(tile);
+        tile.performClick(); h.run(100);
+        assertTrue("döner istasyonunun hazırlık paneli açılmalı", UiBot.panelOpen(h));
+        assertEquals(Station.DONER.id, UiBot.panelOf(h).stationId);
+        h.click("4 porsiyon"); h.run(100);
+        assertFalse("seçenek uygulanınca panel kapanmalı", UiBot.panelOpen(h));
+    }
+
     private static boolean sosPanelOpen(UiHarness h) {
         return UiBot.panelOpen(h) && UiBot.panelOf(h).stationId == Station.SOS.id;
     }
@@ -117,21 +128,93 @@ public class PrepToppingUiTest {
         return n;
     }
 
-    @Test public void prepSectionMovesBelowStationsWhenShopOpensAndPrepWorksDuringDay() {
+    /** v0.8: hazırlık bölümü (düğmeler, hazır stok göstergeleri, stok okuma) yalnızca PREP'te görünür; gün içinde yoktur. */
+    private static void assertPrepSectionVisible(UiHarness h, boolean visible) {
+        for (String label : new String[]{"Döner dilimle: ", "Salata ve sos tepsisi hazırla", "Hazır stoğu oku"}) {
+            if (visible) assertNotNull("hazırlıkta görünür: " + label, h.findLabel(label));
+            else assertNull("gün içinde yok: " + label + " -> " + (h.findLabel(label) == null ? "" : UiHarness.label(h.findLabel(label))), h.findLabel(label));
+        }
+        if (visible) assertNotNull(h.findText("Hazır döner:"));
+        else {
+            assertNull("hazır stok göstergesi gün içinde yok", h.findText("Hazır döner:"));
+            assertNull(h.findText("Hazır salata ve sos tepsisi"));
+        }
+    }
+
+    @Test public void prepSectionOnlyInPrepPhaseAndPrepWorksFromStationsDuringDay() {
         UiHarness h = prep();
         GameEngine e = h.engine();
+        assertPrepSectionVisible(h, true);
         h.click("Dükkânı aç"); h.run(300);
         assertEquals(GameEngine.State.RUNNING, e.getState());
         assertNull(h.findLabel("Dükkânı aç"));
         assertNull(h.findLabel("Hazırlık yapmadan aç"));
         assertNotNull(h.stationTile(Station.DONER));
+        assertPrepSectionVisible(h, false);
+        assertNull("Hazırlık bölüm başlığı gün içinde yok", h.findText("Hazırlık"));
         e.setSpawning(false);
-        // gün içinde de hazırlık yapılabilir
-        prepDoner4(h); h.run(200);
+        // gün içi hazırlık YALNIZCA istasyon düğmesinin menüsünden/panelinden
+        prepDoner4ViaStation(h); h.run(200);
         assertEquals(1, activePrepCount(e));
+        assertPrepSectionVisible(h, false);
         h.run(7000);
         assertEquals(4, e.getReadyDoner());
         assertTrue("saat gün içinde akar", e.getElapsed() > 5f);
+        assertTrue("hazır stok istasyon etiketinde", UiHarness.label(h.stationTile(Station.DONER)).contains("hazır 4 porsiyon"));
+        assertPrepSectionVisible(h, false);
+    }
+
+    @Test public void inDayPrepWorksViaTalkBackActionsAndPanelWithAnOrderPending() {
+        UiHarness h = day();
+        GameEngine e = h.engine();
+        e.getSave().inventory.add("ayran", 10);
+        Order o = spawn(h, list("ekmek_arasi"), list());
+        h.orderCard(o).performClick(); h.run(100);
+        // sipariş bekliyor: Döner makinesi düğmesinin Eylemler menüsünde hazırlık seçenekleri bulunur ve çalışır
+        View tile = h.stationTile(Station.DONER);
+        int id4 = UiBot.actionIdByLabel(tile, "4 porsiyon");
+        assertTrue("gün içinde DONER eylem menüsünde hazırlık var", id4 >= 0);
+        assertTrue(UiBot.actionIdByLabel(tile, "2 porsiyon") >= 0);
+        assertTrue(tile.performAccessibilityAction(id4, null));
+        h.run(200);
+        assertEquals("hazırlık başladı", 1, activePrepCount(e));
+        h.run(7000);
+        assertEquals(4, e.getReadyDoner());
+        // sos tezgahı: tepsi hazırlığı eylemi
+        View sos = h.stationTile(Station.SOS);
+        int tray = UiBot.actionIdByLabel(sos, "Salata ve sos tepsisi hazırla");
+        assertTrue("SOS eylem menüsünde tepsi hazırlığı var", tray >= 0);
+        assertTrue(sos.performAccessibilityAction(tray, null));
+        h.run(7000);
+        assertTrue("tepsi hazırlandı", e.getTrayTotal() > 0);
+        assertNull("gün içinde hazırlık düğmesi yok", h.findLabel("Salata ve sos tepsisi hazırla"));
+        // hazır stok, durum okumada ve istasyon etiketinde
+        String status = new com.doner.oyunu.engine.Narrator(e).statusText();
+        assertTrue(status, status.contains("Hazır: döner 4 porsiyon"));
+        assertTrue(UiHarness.label(h.stationTile(Station.DONER)).contains("hazır 4 porsiyon"));
+        assertTrue(UiHarness.label(h.stationTile(Station.SOS)).contains("hazır tepsi"));
+    }
+
+    @Test public void inDayDrinkPrepFromIcecekStationAndStockReadable() {
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
+        h.click("Yeni oyun"); h.settle();
+        h.act.save.day = 2; // ayran menüde
+        h.act.save.tutorialDone = true;
+        com.doner.oyunu.engine.Shop.buyRecommended(h.act.save);
+        h.startDay();
+        GameEngine e = h.engine();
+        e.setSpawning(false);
+        assertTrue(e.menuHasDrinkPrep());
+        assertNull(h.findLabel("Ayran doldur"));
+        View tile = h.stationTile(Station.ICECEK);
+        // sipariş yokken İçecek dolabı: tek seçenek (hazırlık) doğrudan uygulanır
+        tile.performClick(); h.run(200);
+        assertEquals("ayran doldurma başladı", 1, activePrepCount(e));
+        assertFalse(UiBot.panelOpen(h));
+        h.run(8000);
+        assertTrue("hazır ayran var", e.getReadyDrinks() > 0);
+        assertTrue(UiHarness.label(h.stationTile(Station.ICECEK)).contains("bardak ayran"));
+        assertNull("hazır ayran göstergesi gün içinde yok", h.findText("Hazır ayran"));
     }
 
     @Test public void prepSkipOpensDayWithoutPrep() {
@@ -457,8 +540,8 @@ public class PrepToppingUiTest {
         while (o.isRunning() && t < 20_000) { h.run(100); t += 100; }
         assertFalse(o.isRunning());
         assertEquals(0, snd.activeLoopCount());
-        // hazırlık da istasyon sesi kullanır
-        prepDoner4(h); h.run(200);
+        // hazırlık da istasyon sesi kullanır (gün içinde istasyon düğmesinden)
+        prepDoner4ViaStation(h); h.run(200);
         assertEquals(1, snd.activeLoopCount());
         h.controller.pause(); h.idle(200);
         assertEquals("arka planda sesler durur", 0, snd.activeLoopCount());

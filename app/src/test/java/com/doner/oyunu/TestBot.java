@@ -35,6 +35,8 @@ public final class TestBot {
     private final boolean careful;
     /** Tek tek malzeme eklemede aynı menüde ardışık eylem: tepki süresinin bu oranı (kas hafızası). */
     static final float ADD_REACTION_FACTOR = 0.5f;
+    /** Süresiz modda bir günün sanal süre koruması (sn). */
+    static final float UNTIMED_GUARD_SECONDS = 6000f;
     private float cooldown;
     private float delay;
     public int emergencyBuys;
@@ -70,7 +72,7 @@ public final class TestBot {
         this.careful = careful;
     }
 
-    /** Günü bitene (veya başarısız olana) kadar oynar. Güvenlik: 1000 sn. */
+    /** Günü bitene (veya başarısız olana) kadar oynar. Güvenlik: süreli 1000 sn, süresiz 6000 sn sanal süre. */
     public void playDay(GameEngine e) {
         float guard = 0;
         if (prep && e.getState() == GameEngine.State.READY) {
@@ -88,7 +90,9 @@ public final class TestBot {
             e.startDay();
         }
         guard = 0;
-        while (e.isRunning() && guard < 1000f) {
+        // Süresiz günde (kota kadar müşteri) bot daha uzun oynar; yine de sanal süreyle sınırlıdır (sonsuz döngü olamaz).
+        final float limit = e.isTimed() ? 1000f : UNTIMED_GUARD_SECONDS;
+        while (e.isRunning() && guard < limit) {
             if (cooldown <= 0f && act(e)) {
                 cooldown = delay;
                 if (humanLike) cooldown *= 0.8f + 0.4f * jitter.nextFloat();
@@ -114,6 +118,8 @@ public final class TestBot {
             if (ps != null && e.getFreeSlots() > 0) {
                 StartResult r = doStep(e, po, ps);
                 if (r == StartResult.STARTED || r == StartResult.INFO) return true;
+                // panelde stok yoksa insan "Acil al" der (panel açık kalır)
+                if (r == StartResult.OUT_OF_STOCK && e.emergencyBuyMissing(po.id)) { emergencyBuys++; taps++; return true; }
             }
             panelKey = null; // seçenek uygulanamadı: panel kapatıldı (Kapat bir dokunuş)
             taps++;
@@ -241,7 +247,7 @@ public final class TestBot {
     /** Hazırlık sırası: içecek, döner, tepsi. Pre-day: hedef daha yüksek. */
     private boolean prepStep(GameEngine e, boolean preDay) {
         if (e.getFreeSlots() <= 0) return false;
-        float left = preDay ? 999f : e.getTimeLeft();
+        float left = preDay || !e.isTimed() ? 999f : e.getTimeLeft();
         if (e.menuHasDrinkPrep() && e.getReadyDrinks() <= (preDay ? 4 : 3)
                 && e.getSave().inventory.has("ayran", 4)) {
             if (e.startPrepDrink() == PrepResult.STARTED) { prepActions++; return true; }

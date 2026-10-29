@@ -152,7 +152,8 @@ public class Narrator implements GameListener {
 
     public String dayStarted(int day, DayConfig cfg) {
         StringBuilder sb = new StringBuilder();
-        sb.append("Gün ").append(day).append(" başladı. Süre ").append(Math.round(cfg.duration)).append(" saniye.");
+        if (engine != null && !engine.isTimed()) sb.append("Gün ").append(day).append(" başladı. ").append(untimedDayText(engine.getCustomerQuota()));
+        else sb.append("Gün ").append(day).append(" başladı. Süre ").append(Math.round(cfg.duration)).append(" saniye.");
         List<Product> news = Catalog.newProductsOnDay(day);
         if (!news.isEmpty()) {
             sb.append(" Yeni ürün: ");
@@ -165,6 +166,22 @@ public class Narrator implements GameListener {
         if (!ps.isEmpty()) sb.append(' ').append(ps);
         if (engine != null) sb.append(" Oyun akışı: ").append(engine.getFlowMode().displayName).append('.');
         return sb.toString();
+    }
+
+    /** Süresiz gün duyurusu: "Bu gün süre yok, 7 müşteri. Müşteriler beklemekten gitmez; hepsi teslim edilince gün biter." */
+    public static String untimedDayText(int quota) {
+        return "Bu gün süre yok, " + quota + " müşteri. Müşteriler beklemekten gitmez; hepsi teslim edilince gün biter.";
+    }
+
+    /** Süre baskısı değişimi duyurusu (ayar, duraklat menüsü). */
+    public String timePressureChanged(boolean timed) {
+        if (timed) {
+            return "Süre baskısı: açık. Süre sayacı işliyor ve müşteriler sabırsızlanır."
+                    + (engine != null && engine.getState() == GameEngine.State.RUNNING && !engine.isPrepPhase()
+                    ? " Kalan süre " + Math.round(engine.getTimeLeft()) + " saniye." : "");
+        }
+        return "Süre baskısı: kapalı. Süre sayacı yok, müşteri sabrı azalmaz, kimse gitmez."
+                + (engine != null && engine.getState() == GameEngine.State.RUNNING ? " Kalan müşteri: " + engine.getRemainingCustomers() + "." : "");
     }
 
     /** Brifing: o gün açılan yeni sos/salata malzemeleri. "Yeni: nar ekşisi." / "Yeni malzemeler: ketçap ve mayonez." Yoksa (veya 1. gün) boş. */
@@ -529,7 +546,8 @@ public class Narrator implements GameListener {
     }
 
     public String dayFinished(DaySummary s) {
-        String t = "Gün " + s.day + " bitti. " + s.delivered + " sipariş teslim, " + s.lost + " müşteri kaybedildi. "
+        String t = "Gün " + s.day + " bitti. " + s.delivered + (s.timed ? " sipariş teslim, " + s.lost + " müşteri kaybedildi. "
+                : " sipariş teslim, süre baskısı kapalıydı. ")
                 + "Satış " + fmtMoney(s.revenue) + ", bahşiş " + fmtMoney(s.tips);
         if (s.emergencySpend > 0) t += ", acil alım " + fmtMoney(s.emergencySpend);
         if (s.rentUnpaid() > 0) {
@@ -558,6 +576,7 @@ public class Narrator implements GameListener {
         int n = engine.getOrders().size();
         String t = "Para " + fmtMoney(engine.getMoney()) + ", yıldız " + fmtStars(engine.getStars());
         if (engine.isPrepPhase()) t += ", hazırlık aşaması, süre akmıyor";
+        else if (!engine.isTimed()) t += ", süre yok, kalan müşteri " + engine.getRemainingCustomers();
         else if (engine.isOvertime()) t += ", mesai uzatması";
         else t += ", kalan süre " + Math.round(engine.getTimeLeft()) + " saniye";
         t += ", " + (n == 0 ? "bekleyen sipariş yok" : n + " bekleyen sipariş") + ".";
@@ -598,9 +617,9 @@ public class Narrator implements GameListener {
                         .append(need.name).append(" için gerekli").append(sizeSuffix(sel, need));
             }
         }
-        if (st == Station.DONER && engine.getReadyDonerHalves() > 0) sb.append(", hazır döner ").append(portionsText(engine.getReadyDonerHalves()));
-        if (st == Station.ICECEK && engine.getReadyDrinks() > 0) sb.append(", hazır ayran ").append(engine.getReadyDrinks());
-        if (st == Station.SOS && engine.getTrayTotal() > 0) sb.append(", hazır tepsi var");
+        if (st == Station.DONER && engine.getReadyDonerHalves() > 0) sb.append(", hazır ").append(portionsText(engine.getReadyDonerHalves())).append(" porsiyon");
+        if (st == Station.ICECEK && engine.getReadyDrinks() > 0) sb.append(", hazır ").append(engine.getReadyDrinks()).append(" bardak ayran");
+        if (st == Station.SOS && engine.getTrayTotal() > 0) sb.append(", hazır tepsi ").append(engine.getTrayTotal()).append(" kullanım");
         return sb.toString();
     }
 
@@ -702,4 +721,5 @@ public class Narrator implements GameListener {
         say(toppingsAutoAdded(o, i, added, removed, finished), !finished);
     }
     @Override public void onFlowModeChanged(FlowMode mode) { say(flowModeChanged(mode), true); }
+    @Override public void onTimePressureChanged(boolean timed) { say(timePressureChanged(timed), true); }
 }

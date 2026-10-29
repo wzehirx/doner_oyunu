@@ -215,15 +215,21 @@ public class A11yTest {
 
     @Test public void largeFontDoesNotCrashAndKeepsTargets() {
         org.robolectric.RuntimeEnvironment.setFontScale(2.0f);
-        UiHarness h = gameHarness();
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
+        h.click("Yeni oyun"); h.settle();
+        h.click("Güne başla"); h.settle();
+        // hazırlık aşaması (hazırlık düğmeleri ve paneli yalnızca burada)
+        h.click("Döner dilimle"); h.run(100);
+        auditPanel(h, "Hazırlık paneli(yazı 2x)");
+        h.click("Kapat"); h.run(100);
+        audit(h, "Hazırlık(yazı 2x)");
+        h.skipPrep();
         h.run(8000);
         audit(h, "Oyun(yazı 2x)");
         h.click("Duraklat"); h.run(100);
         audit(h, "Oyun(duraklat, yazı 2x)");
         h.click("Devam et"); h.run(100);
-        h.click("Döner dilimle"); h.run(100);
-        auditPanel(h, "Hazırlık paneli(yazı 2x)");
-        h.click("Kapat"); h.run(100);
+        assertNull("gün içinde hazırlık düğmesi yok", h.findLabel("Döner dilimle: "));
         GameEngine e2 = h.engine();
         e2.setSpawning(false);
         Order o2 = e2.spawnOrder(java.util.Arrays.asList("ekmek_arasi"), new ArrayList<String>());
@@ -291,15 +297,13 @@ public class A11yTest {
         java.util.List<String> pack = A11yAudit.customActionLabels(h.stationTile(com.doner.oyunu.engine.Station.PAKET));
         assertEquals(pack.toString(), 1, pack.size());
         assertTrue(pack.toString(), pack.get(0).startsWith("Siparişi paketle"));
-        // hazırlık düğmesi
-        View prep = h.findLabel("Döner dilimle");
-        assertNotNull(prep);
-        java.util.List<String> pl = A11yAudit.customActionLabels(prep);
-        assertEquals(pl.toString(), 2, pl.size());
-        assertTrue(pl.toString(), anyStartsWith(pl, "4 porsiyon"));
-        assertTrue(pl.toString(), anyStartsWith(pl, "2 porsiyon"));
-        View tray = h.findLabel("Salata ve sos tepsisi hazırla");
-        assertTrue(A11yAudit.customActionLabels(tray).get(0).startsWith("Salata ve sos tepsisi hazırla"));
+        // v0.8: gün içinde ayrı hazırlık düğmesi yok; hazırlık seçenekleri istasyon düğmelerinin Eylemler menüsünde
+        assertNull(h.findLabel("Döner dilimle: "));
+        assertNull(h.findLabel("Salata ve sos tepsisi hazırla"));
+        java.util.List<String> doner = A11yAudit.customActionLabels(h.stationTile(com.doner.oyunu.engine.Station.DONER));
+        assertTrue(doner.toString(), anyStartsWith(doner, "4 porsiyon"));
+        assertTrue(doner.toString(), anyStartsWith(doner, "2 porsiyon"));
+        assertTrue(sos.toString(), anyStartsWith(sos, "Salata ve sos tepsisi hazırla"));
     }
 
     @Test public void customActionListFollowsStateChanges() {

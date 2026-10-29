@@ -92,4 +92,8 @@ public interface GameListener {
     void onToppingsAutoAdded(Order order, int itemIndex, java.util.List<Ingredient> added, java.util.List<Ingredient> removed, boolean finished);
     /** Oyun akışı değişti (oyun ortasında da olabilir). */
     void onFlowModeChanged(FlowMode mode);
+
+    // ---- v0.8: süre baskısı
+    /** Süre baskısı ayarı değişti (oyun ortasında da olabilir). timed=false: süresiz gün (sayaç yok, sabır sabit). */
+    void onTimePressureChanged(boolean timed);
 }

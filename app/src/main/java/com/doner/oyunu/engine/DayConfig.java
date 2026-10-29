@@ -17,6 +17,14 @@ public final class DayConfig {
     public final float multiItemChance;
     public final int baseQueue;
     public final int rent;
+    /** Süresiz modda (süre baskısı kapalı) günün müşteri kotası: normal süre / geliş aralığı (en az 4). */
+    public final int customerQuota;
+    /** Kota çarpanı (süreli gün oyuncusu bütün gelenlere yetişemez; süresizde hepsi teslim edilmeli: gün makul uzunlukta kalsın). */
+    public static final double QUOTA_FACTOR = 1.0;
+    public static final int QUOTA_MIN = 5;
+    public static final int QUOTA_MAX = 60;
+    /** Restoran yükseltmelerinin kotaya en çok etkisi (çarpan sınırı). */
+    public static final double QUOTA_MULT_MAX = 1.25;
 
     private DayConfig(int day) {
         this.day = day;
@@ -37,6 +45,24 @@ public final class DayConfig {
         this.multiItemChance = (float) Math.min(0.75, 0.15 + i * 0.015);
         this.baseQueue = i < 10 ? 2 : (i < 25 ? 3 : 4);
         this.rent = 300 + 30 * (day - 1);
+        this.customerQuota = computeQuota(this.duration, this.arrivalInterval, 1.0);
+    }
+
+    /**
+     * Yükseltmeli müşteri kotası (süresiz mod): temel kota x restoran yükseltmelerinin müşteri çarpanı
+     * ({@code Upgrades.arrivalMult()}); böylece tabela/müzik/masa gibi yükseltmeler süresiz modda da anlamlı kalır.
+     */
+    public int quota(double arrivalMult) { return computeQuota(duration, arrivalInterval, arrivalMult); }
+
+    private static int computeQuota(float duration, float interval, double mult) {
+        double m = Math.max(1.0, Math.min(QUOTA_MULT_MAX, mult));
+        int q = (int) Math.round(duration / interval * QUOTA_FACTOR * m);
+        return Math.max(QUOTA_MIN, Math.min(QUOTA_MAX, q));
+    }
+
+    /** Verilen kayıttaki günün (yükseltmeler dahil) müşteri kotası; brifing ve motor aynı değeri kullanır. */
+    public static int quotaFor(SaveData save) {
+        return forDay(save.day).quota(new Upgrades(save).arrivalMult());
     }
 
     /** Müşteri isteği olasılığı: 1. gün 0, 2. gün %20, sonra %45. */

@@ -328,7 +328,9 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     private void showOverlay(boolean quiet) {
         overlay = new FrameLayout(ctx);
         overlay.setBackgroundColor(0xE61A0E08);
-        overlay.setClickable(true);
+        overlay.setClickable(true); // arkadaki oyuna dokunmayı engeller
+        // Etiketsiz tıklanabilir perde TalkBack'te "etiketsiz" odak noktası olmasın: kendisi gizli, çocukları açık.
+        overlay.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         LinearLayout panel = column();
         panel.setBackground(Ui.round(ctx, Theme.CARD, Theme.GOLD, 3, 20));
         panel.setPadding(dp(18), dp(18), dp(18), dp(18));

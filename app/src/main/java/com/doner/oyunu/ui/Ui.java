@@ -174,5 +174,5 @@ public final class Ui {
         v.setContentDescription(d);
     }
 
-    public static void dim(View v, boolean dim) { v.setAlpha(dim ? 0.6f : 1f); }
+    public static void dim(View v, boolean dim) { v.setAlpha(dim ? 0.7f : 1f); }
 }

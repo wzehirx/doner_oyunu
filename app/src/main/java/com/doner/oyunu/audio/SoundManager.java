@@ -37,6 +37,8 @@ public final class SoundManager {
     private float musicVolume = 0.7f;
 
     private MediaPlayer music;
+    /** Sönümlenip bırakılmayı bekleyen eski oynatıcılar (release sırasında sızmasın). */
+    private final java.util.List<MediaPlayer> retiring = new java.util.ArrayList<>();
     private String musicName;
     private boolean paused;
     private float fade = 1f; // 0..1 müzik geçiş çarpanı
@@ -161,6 +163,7 @@ public final class SoundManager {
         final MediaPlayer old = music;
         music = null;
         if (old == null) return;
+        retiring.add(old);
         // kısa sönümleme sonra bırak
         final float start = musicVolume * fade;
         final int[] step = {0};
@@ -170,6 +173,7 @@ public final class SoundManager {
                 float v = start * Math.max(0f, 1f - step[0] / 5f);
                 try { old.setVolume(v, v); } catch (Exception ignored) { }
                 if (step[0] < 5) { handler.postDelayed(this, 40); return; }
+                if (!retiring.remove(old)) return; // release() zaten bıraktı
                 try { old.stop(); } catch (Exception ignored) { }
                 try { old.release(); } catch (Exception ignored) { }
             }
@@ -197,6 +201,11 @@ public final class SoundManager {
         handler.removeCallbacksAndMessages(null);
         sfxHandler.removeCallbacksAndMessages(null);
         fadeToken++;
+        for (MediaPlayer old : new java.util.ArrayList<>(retiring)) {
+            try { old.stop(); } catch (Exception ignored) { }
+            try { old.release(); } catch (Exception ignored) { }
+        }
+        retiring.clear();
         if (music != null) {
             try { music.stop(); } catch (Exception ignored) { }
             try { music.release(); } catch (Exception ignored) { }

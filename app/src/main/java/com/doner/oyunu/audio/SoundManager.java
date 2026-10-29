@@ -3,6 +3,7 @@ package com.doner.oyunu.audio;
 import android.content.Context;
 import android.content.res.AssetFileDescriptor;
 import android.media.AudioAttributes;
+import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.media.SoundPool;
 import android.os.Handler;
@@ -25,7 +26,15 @@ public final class SoundManager {
             "sfx_day_start", "sfx_day_end", "sfx_buy", "sfx_tap", "sfx_tick"
     };
 
+    /** Konuşma / başka bir uygulamanın kısa ses odağı sırasında müziğin çarpanı (kısma). */
+    static final float DUCK_FACTOR = 0.25f;
+
     private final Context ctx;
+    /** Müzik odağı: başka uygulama alırsa müzik durur/kısılır; bitince geri açılır. */
+    private final AudioFocus focus;
+    private boolean speechDuck;   // Speaker konuşuyor
+    private boolean focusDuck;    // sistem "kıs" dedi (örn. TalkBack/başka uygulama)
+    private boolean focusPaused;  // odak kaybı yüzünden duraklatıldı
     /** Müzik geçişleri (iptal edilmez). */
     private final Handler handler = new Handler(Looper.getMainLooper());
     /** Gecikmeli efektler (ekran değişince/duraklatınca iptal edilir). */
@@ -46,6 +55,10 @@ public final class SoundManager {
 
     public SoundManager(Context context) {
         ctx = context.getApplicationContext();
+        focus = new AudioFocus(ctx, AudioAttributes.USAGE_GAME, AudioAttributes.CONTENT_TYPE_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN, new AudioFocus.Listener() {
+            @Override public void onFocusChange(int change) { onMusicFocusChange(change); }
+        });
         try {
             AudioAttributes attrs = new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_GAME)
@@ -77,6 +90,46 @@ public final class SoundManager {
 
     public void setMusicVolume(float v) { musicVolume = clamp(v); applyMusicVolume(); }
 
+    /** Speaker konuşurken müziği kıs, bitince geri aç. */
+    public void setSpeechDucking(boolean on) {
+        speechDuck = on;
+        applyMusicVolume();
+    }
+
+    /** Müzik şu an kısık mı (konuşma ya da sistem isteğiyle)? */
+    public boolean isDucked() { return speechDuck || focusDuck; }
+
+    /** Müziğin fiilen çalındığı ses düzeyi (0..1). */
+    public float musicOutputVolume() { return musicVolume * fade * (isDucked() ? DUCK_FACTOR : 1f); }
+
+    /** Odak kaybı yüzünden müzik duraklatıldı mı? */
+    public boolean isMusicPausedByFocus() { return focusPaused; }
+
+    void onMusicFocusChange(int change) {
+        switch (change) {
+            case AudioManager.AUDIOFOCUS_LOSS:
+            case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
+                focusPaused = true;
+                focusDuck = false;
+                if (music != null) try { music.pause(); } catch (Exception ignored) { }
+                break;
+            case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
+                focusDuck = true;
+                applyMusicVolume();
+                break;
+            case AudioManager.AUDIOFOCUS_GAIN:
+                focusDuck = false;
+                if (focusPaused) {
+                    focusPaused = false;
+                    if (!paused && music != null) try { music.start(); } catch (Exception ignored) { }
+                }
+                applyMusicVolume();
+                break;
+            default:
+                break;
+        }
+    }
+
     private static float clamp(float v) { return Math.max(0f, Math.min(1f, v)); }
 
     // ------------------------------------------------------------------ efekt
@@ -106,10 +159,10 @@ public final class SoundManager {
     public void playMusic(String name) {
         if (name == null) { stopMusic(); return; }
         if (name.equals(musicName) && music != null) {
-            if (!paused) try { if (!music.isPlaying()) music.start(); } catch (Exception ignored) { }
+            if (!paused && !focusPaused) try { if (!music.isPlaying()) music.start(); } catch (Exception ignored) { }
             return;
         }
-        stopMusic();
+        fadeOutCurrent();
         musicName = name;
         int res = resId(name);
         if (res == 0) return;
@@ -132,7 +185,8 @@ public final class SoundManager {
         fade = 0f;
         applyMusicVolume();
         if (!paused) {
-            try { mp.start(); } catch (Exception ignored) { }
+            focus.request();
+            if (!focusPaused) try { mp.start(); } catch (Exception ignored) { }
             fadeIn();
         }
     }
@@ -153,11 +207,17 @@ public final class SoundManager {
 
     private void applyMusicVolume() {
         if (music == null) return;
-        float v = musicVolume * fade;
+        float v = musicOutputVolume();
         try { music.setVolume(v, v); } catch (Exception ignored) { }
     }
 
     public void stopMusic() {
+        fadeOutCurrent();
+        focus.abandon();
+    }
+
+    /** Odağı bırakmadan geçerli müziği sönümleyip bırakır (parça değişiminde odak korunur). */
+    private void fadeOutCurrent() {
         fadeToken++;
         musicName = null;
         final MediaPlayer old = music;
@@ -185,12 +245,15 @@ public final class SoundManager {
         paused = true;
         sfxHandler.removeCallbacksAndMessages(null);
         if (music != null) try { music.pause(); } catch (Exception ignored) { }
+        focus.abandon();
         if (pool != null) try { pool.autoPause(); } catch (Exception ignored) { }
     }
 
     public void resume() {
         paused = false;
         if (music != null) {
+            focus.request();
+            focusPaused = false;
             try { music.start(); } catch (Exception ignored) { }
             fadeIn();
         }
@@ -198,6 +261,7 @@ public final class SoundManager {
     }
 
     public void release() {
+        focus.abandon();
         handler.removeCallbacksAndMessages(null);
         sfxHandler.removeCallbacksAndMessages(null);
         fadeToken++;

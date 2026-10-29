@@ -40,18 +40,10 @@ import java.util.Set;
 /** Oyun ekranı: canlı durum çubuğu, sipariş listesi, istasyon ızgarası, eylem düğmeleri, duraklatma paneli. */
 public final class GameScreen extends Screen implements Choreographer.FrameCallback {
 
-    /** Yıldız değişimini yalnızca görünen değer (bir ondalık) değişince anlatır. */
-    private static final class QuietNarrator extends Narrator {
-        QuietNarrator(GameEngine e, Output o) { super(e, o); }
-        @Override public void onStarsChanged(double oldS, double newS) {
-            if (!fmtStars(oldS).equals(fmtStars(newS))) super.onStarsChanged(oldS, newS);
-        }
-    }
-
     // ------------------------------------------------------------------ durum
     private SaveData gameSave;
     private GameEngine engine;
-    private QuietNarrator narrator;
+    private Narrator narrator;
     private Set<Station> inUse;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
@@ -67,7 +59,10 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     private float noSelTimer;
     private float busyHold;
     private int lastTickSecond = -1;
-    private Ingredient pendingMissing;
+    /** Eksik malzeme uyarısı verilen sipariş (acil al düğmesi onun için); yoksa -1. */
+    private int missingOrderId = -1;
+    /** Acil al düğmesinin en son gösterdiği eksik malzeme kümesi (odak/duyuru yalnızca değişince). */
+    private String emergencyKey = "";
     private boolean tutorialActive;
     private int tutorialStage;
 
@@ -101,7 +96,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     @Override public View create() {
         gameSave = a.save.copy();
         engine = new GameEngine(System.nanoTime(), gameSave);
-        narrator = new QuietNarrator(engine, a.speaker);
+        narrator = new Narrator(engine, a.speaker);
         engine.addListener(narrator);
         engine.addListener(new Feedback());
         inUse = Texts.stationsInUse(gameSave.day);
@@ -120,6 +115,12 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
         buildStatusBar();
 
+        // Acil al: kaydırılan listenin DIŞINDA, durum çubuğunun hemen altında sabit; kartların altına düşmez.
+        emergencyBtn = Ui.button(ctx, "", Ui.DANGER);
+        emergencyBtn.setVisibility(View.GONE);
+        tap(emergencyBtn, new Runnable() { @Override public void run() { onEmergency(); } });
+        content.addView(emergencyBtn, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 0, 0, 4));
+
         ScrollView sv = new ScrollView(ctx);
         sv.setVerticalScrollBarEnabled(false);
         sv.setOverScrollMode(View.OVER_SCROLL_NEVER);
@@ -134,11 +135,6 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         body.addView(emptyTv);
         cardsBox = column();
         body.addView(cardsBox);
-
-        emergencyBtn = Ui.button(ctx, "", Ui.DANGER);
-        emergencyBtn.setVisibility(View.GONE);
-        tap(emergencyBtn, new Runnable() { @Override public void run() { onEmergency(); } });
-        body.addView(emergencyBtn, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 6, 0, 4));
 
         body.addView(sectionHeading("İstasyonlar"));
         buildGrid(body);
@@ -264,7 +260,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     }
 
     @Override public boolean onBack() {
-        if (finishing) return true;
+        if (finishing) { showSummary(); return true; } // gün bitti: beklemeden özete geç
         if (paused) resumeGame(); else pauseGame();
         return true;
     }
@@ -451,8 +447,8 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     }
 
     private void onEmergency() {
-        if (paused || finishing || pendingMissing == null) return;
-        if (engine.emergencyBuy(pendingMissing.id)) pendingMissing = null;
+        if (paused || finishing || missingOrderId < 0) return;
+        if (engine.emergencyBuyMissing(missingOrderId)) missingOrderId = -1;
         dirty = true;
     }
 
@@ -512,19 +508,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         emptyTv.setVisibility(orders.isEmpty() ? View.VISIBLE : View.GONE);
 
         // acil alım
-        if (pendingMissing != null) {
-            Order s = selected;
-            boolean still = s != null && !s.isRunning() && !s.isReady() && engine.missingIngredient(s.id) != null;
-            if (!still) pendingMissing = null;
-        }
-        if (pendingMissing != null) {
-            int cost = pendingMissing.emergencyPrice() * Ingredient.EMERGENCY_BATCH;
-            emergencyBtn.setVisibility(View.VISIBLE);
-            emergencyBtn.setText("Acil al: " + pendingMissing.name + " (" + cost + " TL)");
-            Ui.setDesc(emergencyBtn, "Acil al: " + pendingMissing.name + ", " + Ingredient.EMERGENCY_BATCH + " birim, " + cost + " lira. Normalden yüzde elli pahalı.");
-        } else {
-            emergencyBtn.setVisibility(View.GONE);
-        }
+        updateEmergency(selected);
 
         // istasyonlar
         for (Map.Entry<Station, StationTile> e : tiles.entrySet()) e.getValue().update();
@@ -539,6 +523,35 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         Ui.dim(deliverBtn, !anyReady);
 
         updateMusic(orders.size());
+    }
+
+    /** Acil al düğmesini eksik TÜM malzemeler için günceller; yeni belirince duyurur ve odağı ona taşır. */
+    private void updateEmergency(Order selected) {
+        List<Ingredient> missing = new ArrayList<>();
+        if (missingOrderId >= 0) {
+            boolean still = selected != null && selected.id == missingOrderId && !selected.isRunning() && !selected.isReady();
+            if (still) missing = engine.missingIngredients(missingOrderId);
+            if (!still || missing.isEmpty()) { missingOrderId = -1; missing = new ArrayList<>(); }
+        }
+        if (missing.isEmpty()) {
+            emergencyBtn.setVisibility(View.GONE);
+            emergencyKey = "";
+            return;
+        }
+        int cost = engine.emergencyCostForMissing(missingOrderId);
+        String label = Texts.emergencyLabel(missing, cost);
+        String desc = Texts.emergencyDescription(missing, cost);
+        emergencyBtn.setVisibility(View.VISIBLE);
+        emergencyBtn.setText(label);
+        Ui.setDesc(emergencyBtn, desc);
+        StringBuilder key = new StringBuilder().append(missingOrderId);
+        for (Ingredient ing : missing) key.append('|').append(ing.id);
+        if (!key.toString().equals(emergencyKey)) {
+            emergencyKey = key.toString();
+            // Belirdi (ya da eksik küme değişti): duyuru Narrator.onOutOfStock'ta yapıldı (acil, kesici);
+            // TalkBack erişilebilirlik odağı da doğrudan düğmeye taşınır.
+            a.focusOn(emergencyBtn);
+        }
     }
 
     private void updateStatusDescription(int pending, Order selected) {
@@ -566,9 +579,16 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     }
 
     // ================================================================== bitiş
+    /** Duyuru bitince ya da en geç bu kadar ms sonra özet ekranına geçilir. */
+    static final long FINISH_MAX_MS = 4000;
+    private static final long FINISH_MIN_MS = 1200;
+    private DaySummary finishSummary;
+    private boolean summaryShown;
+
     private void beginFinish(final DaySummary s) {
         if (finishing) return;
         finishing = true;
+        finishSummary = s;
         a.save = gameSave; // motor başarısızlıkta durumu zaten geri aldı
         a.markStarted();
         a.saveNow();
@@ -577,11 +597,17 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             @Override public void run() {
                 if (exited) return;
                 long el = SystemClock.uptimeMillis() - t0;
-                if ((el > 1800 && !a.speaker.isBusy()) || el > 14000) a.show(new SummaryScreen(a, s));
-                else handler.postDelayed(this, 250);
+                if ((el >= FINISH_MIN_MS && !a.speaker.isBusy()) || el >= FINISH_MAX_MS) showSummary();
+                else handler.postDelayed(this, 150);
             }
         };
-        handler.postDelayed(r, 1500);
+        handler.postDelayed(r, FINISH_MIN_MS);
+    }
+
+    private void showSummary() {
+        if (summaryShown || exited || finishSummary == null) return;
+        summaryShown = true;
+        a.show(new SummaryScreen(a, finishSummary));
     }
 
     // ================================================================== öğretici
@@ -622,7 +648,10 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
     /** Motor olaylarını ses + titreşim + arayüz yenilemeye çevirir (anlatım Narrator'dadır). */
     private final class Feedback extends GameListenerAdapter {
+        private final Narrator.StarsTracker starsFx = new Narrator.StarsTracker();
+
         @Override public void onDayStarted(int day, DayConfig config) {
+            starsFx.reset(engine.getStars());
             a.sound.play("sfx_day_start");
             a.haptics.dayStart();
             if (tutorialActive) {
@@ -681,15 +710,14 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         @Override public void onOutOfStock(Order o, Ingredient ing) {
             a.sound.play("sfx_error");
             a.haptics.error();
-            pendingMissing = ing;
+            missingOrderId = o.id;
             dirty = true;
         }
 
         @Override public void onEmergencyPurchase(Ingredient ing, int qty, int cost) {
             a.sound.play("sfx_buy");
             a.haptics.buy();
-            pendingMissing = null;
-            dirty = true;
+            dirty = true; // düğme, eksik kalmayınca refresh'te kendiliğinden kapanır
         }
 
         @Override public void onNotEnoughMoney(int needed) {
@@ -728,7 +756,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         }
 
         @Override public void onStarsChanged(double oldS, double newS) {
-            if (Narrator.fmtStars(oldS).equals(Narrator.fmtStars(newS))) return;
+            if (!starsFx.changed(oldS, newS)) return;
             if (newS > oldS) { a.sound.playLater("sfx_star_up", 0f, 650); a.haptics.starUp(); }
             else { a.sound.playLater("sfx_star_down", 0f, 650); a.haptics.starDown(); }
             dirty = true;

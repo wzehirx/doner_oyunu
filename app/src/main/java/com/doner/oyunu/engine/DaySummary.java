@@ -7,7 +7,10 @@ public final class DaySummary {
     public int revenue;
     public int tips;
     public int emergencySpend;
+    /** Gerçekten kasadan düşülen kira (para yetmezse rentDue'dan az olabilir). */
     public int rent;
+    /** O gün için hesaplanan tam kira. */
+    public int rentDue;
     public int delivered;
     public int lost;
     public int wrongTaps;
@@ -17,12 +20,15 @@ public final class DaySummary {
     /** Sonraki gün açılan yeni ürünler (adlar). */
     public String newProductsNext = "";
 
+    /** Para yetmediği için ödenemeyen kira. */
+    public int rentUnpaid() { return Math.max(0, rentDue - rent); }
+
     public int profit() { return revenue + tips - emergencySpend - rent; }
 
     @Override
     public String toString() {
         return "Gün " + day + (failed ? " BAŞARISIZ" : "") + " gelir=" + revenue + " bahşiş=" + tips
-                + " acil=" + emergencySpend + " kira=" + rent + " teslim=" + delivered + " kayıp=" + lost
+                + " acil=" + emergencySpend + " kira=" + rent + (rentUnpaid() > 0 ? "(eksik " + rentUnpaid() + ")" : "") + " teslim=" + delivered + " kayıp=" + lost
                 + " yıldız=" + startStars + "->" + endStars + " para=" + moneyAfter;
     }
 }

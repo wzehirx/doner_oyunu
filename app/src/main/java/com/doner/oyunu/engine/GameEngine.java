@@ -80,14 +80,62 @@ public final class GameEngine {
         return null;
     }
 
-    /** Verilen siparişin bir sonraki adımı için eksik malzeme (yoksa null). */
+    /** Verilen siparişin bir sonraki adımı için eksik ilk malzeme (yoksa null). */
     public Ingredient missingIngredient(int orderId) {
+        List<Ingredient> all = missingIngredients(orderId);
+        return all.isEmpty() ? null : all.get(0);
+    }
+
+    /** Verilen siparişin bir sonraki adımı için eksik TÜM malzemeler (eksik yoksa boş liste). */
+    public List<Ingredient> missingIngredients(int orderId) {
+        List<Ingredient> out = new ArrayList<>();
         Order o = getOrder(orderId);
-        if (o == null || o.nextStep() == null) return null;
+        if (o == null || o.nextStep() == null) return out;
         for (java.util.Map.Entry<String, Integer> e : o.nextStep().needs.entrySet()) {
-            if (!save.inventory.has(e.getKey(), e.getValue())) return Catalog.ingredient(e.getKey());
+            if (!save.inventory.has(e.getKey(), e.getValue())) {
+                Ingredient ing = Catalog.ingredient(e.getKey());
+                if (ing != null) out.add(ing);
+            }
         }
-        return null;
+        return out;
+    }
+
+    /** Bir malzeme için, sıradaki adımın ihtiyacını karşılayacak acil alım parti sayısı (en az 1). */
+    private int emergencyBatches(Order o, Ingredient ing) {
+        Integer need = o.nextStep().needs.get(ing.id);
+        int lack = (need == null ? 1 : need) - save.inventory.get(ing.id);
+        return Math.max(1, (lack + Ingredient.EMERGENCY_BATCH - 1) / Ingredient.EMERGENCY_BATCH);
+    }
+
+    /** Eksik tüm malzemeleri tek seferde acil almanın toplam maliyeti (eksik yoksa 0). */
+    public int emergencyCostForMissing(int orderId) {
+        Order o = getOrder(orderId);
+        int total = 0;
+        for (Ingredient ing : missingIngredients(orderId)) {
+            total += ing.emergencyPrice() * Ingredient.EMERGENCY_BATCH * emergencyBatches(o, ing);
+        }
+        return total;
+    }
+
+    /**
+     * Siparişin sıradaki adımı için eksik TÜM malzemeleri tek hamlede acil alır (ihtiyaç tek partiyi aşarsa
+     * gereken parti kadar). Hepsine para yetmezse hiçbiri alınmaz, {@code onNotEnoughMoney(toplam)} bildirilir.
+     */
+    public boolean emergencyBuyMissing(int orderId) {
+        if (state == State.FINISHED || state == State.FAILED) return false;
+        Order o = getOrder(orderId);
+        List<Ingredient> missing = missingIngredients(orderId);
+        if (o == null || missing.isEmpty()) return false;
+        int total = emergencyCostForMissing(orderId);
+        if (save.money < total) {
+            for (GameListener l : snap()) l.onNotEnoughMoney(total);
+            return false;
+        }
+        for (Ingredient ing : missing) {
+            int batches = emergencyBatches(o, ing);
+            for (int i = 0; i < batches; i++) emergencyBuy(ing.id);
+        }
+        return true;
     }
 
     // ---------------------------------------------------------------- eylemler
@@ -112,7 +160,7 @@ public final class GameEngine {
     /** Seçili siparişin sıradaki adımını verilen istasyonda başlatmayı dener. */
     public StartResult startStep(int orderId, int stationId) {
         if (state == State.FINISHED || state == State.FAILED) return StartResult.NOT_RUNNING;
-        state = State.RUNNING;
+        ensureStarted();
         Order o = getOrder(orderId);
         if (o == null) return StartResult.NO_ORDER;
         if (o.ready) return StartResult.ORDER_READY;
@@ -189,12 +237,17 @@ public final class GameEngine {
     // ---------------------------------------------------------------- zaman
     public void tick(float dt) {
         if (state == State.FINISHED || state == State.FAILED) return;
-        if (state == State.READY) start();
+        ensureStarted();
         while (dt > 1e-6f && (state == State.RUNNING)) {
             float h = Math.min(dt, MAX_SUBSTEP);
             step(h);
             dt -= h;
         }
+    }
+
+    /** Gün henüz başlamadıysa başlatır ve onDayStarted'i tam bir kez bildirir. */
+    private void ensureStarted() {
+        if (state == State.READY) start();
     }
 
     private void start() {
@@ -361,9 +414,10 @@ public final class GameEngine {
 
     private void finishDay() {
         state = State.FINISHED;
-        int rent = Math.min(cfg.rent, save.money);
+        int rent = Math.max(0, Math.min(cfg.rent, save.money));
         save.money -= rent;
-        summary.rent = cfg.rent;
+        summary.rentDue = cfg.rent;
+        summary.rent = rent; // gerçekten düşülen tutar
         summary.endStars = save.stars;
         summary.moneyAfter = save.money;
         summary.failed = false;

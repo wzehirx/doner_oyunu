@@ -2,6 +2,7 @@ package com.doner.oyunu.audio;
 
 import android.content.Context;
 import android.media.AudioAttributes;
+import android.media.AudioManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -27,8 +28,15 @@ import java.util.Set;
 public final class Speaker implements Narrator.Output {
     private static final int MAX_QUEUE = 4;
 
+    /** Konuşma başladı/bitti (müzik kısma gibi tepkiler için). */
+    public interface SpeechListener { void onSpeaking(boolean active); }
+
     private final Context ctx;
     private final AccessibilityManager am;
+    /** Konuşurken kısa süreli, "kıs" (duck) ses odağı: diğer müzik/medya kısılır, bitince geri açılır. */
+    private final AudioFocus focus;
+    private SpeechListener speechListener;
+    private boolean speaking;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private View anchor;
     private boolean enabled = true;
@@ -51,6 +59,27 @@ public final class Speaker implements Narrator.Output {
     public Speaker(Context context) {
         ctx = context.getApplicationContext();
         am = (AccessibilityManager) ctx.getSystemService(Context.ACCESSIBILITY_SERVICE);
+        focus = new AudioFocus(ctx, AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY, AudioAttributes.CONTENT_TYPE_SPEECH,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK, null);
+    }
+
+    public void setSpeechListener(SpeechListener l) { speechListener = l; }
+
+    /** Şu an konuşuyor (duyuru süresince ya da TTS sürerken) mu? */
+    public boolean isSpeaking() { return speaking; }
+
+    private void beginSpeech() {
+        if (speaking) return;
+        speaking = true;
+        focus.request();
+        if (speechListener != null) speechListener.onSpeaking(true);
+    }
+
+    private void endSpeech() {
+        if (!speaking) return;
+        speaking = false;
+        focus.abandon();
+        if (speechListener != null) speechListener.onSpeaking(false);
     }
 
     public void setAnchor(View v) { anchor = v; }
@@ -118,10 +147,12 @@ public final class Speaker implements Narrator.Output {
         pendingBeforeReady.clear();
         utterances.clear();
         if (tts != null) try { tts.stop(); } catch (Exception ignored) { }
+        endSpeech();
     }
 
     public void shutdown() {
         stop();
+        endSpeech();
         handler.removeCallbacksAndMessages(null);
         if (tts != null) {
             try { tts.shutdown(); } catch (Exception ignored) { }
@@ -154,6 +185,7 @@ public final class Speaker implements Narrator.Output {
     }
 
     private void announceNow(String text) {
+        beginSpeech();
         busyUntil = SystemClock.uptimeMillis() + estimateMs(text);
         try { if (anchor != null) anchor.announceForAccessibility(text); } catch (Exception ignored) { }
         schedulePump(estimateMs(text));
@@ -170,11 +202,18 @@ public final class Speaker implements Narrator.Output {
     };
 
     private void pump() {
-        if (queue.isEmpty()) return;
         long now = SystemClock.uptimeMillis();
+        if (queue.isEmpty()) {
+            if (speaking && !isTtsActive()) {
+                if (now >= busyUntil) endSpeech(); else schedulePump(busyUntil - now + 20);
+            }
+            return;
+        }
         if (now < busyUntil) { schedulePump(busyUntil - now + 20); return; }
         announceNow(queue.pollFirst());
     }
+
+    private boolean isTtsActive() { return !utterances.isEmpty() || !pendingBeforeReady.isEmpty(); }
 
     // ------------------------------------------------------------------ TTS
     private void ensureTts() {
@@ -212,7 +251,12 @@ public final class Speaker implements Narrator.Output {
     }
 
     private void finished(final String id) {
-        handler.post(new Runnable() { @Override public void run() { utterances.remove(id); } });
+        handler.post(new Runnable() {
+            @Override public void run() {
+                utterances.remove(id);
+                if (!isTtsActive() && queue.isEmpty()) endSpeech();
+            }
+        });
     }
 
     private void speakTts(String text, boolean urgent) {
@@ -228,10 +272,12 @@ public final class Speaker implements Narrator.Output {
         try {
             if (urgent) utterances.clear();
             utterances.add(id);
+            beginSpeech();
             Bundle params = new Bundle();
             tts.speak(text, urgent ? TextToSpeech.QUEUE_FLUSH : TextToSpeech.QUEUE_ADD, params, id);
         } catch (Exception e) {
             utterances.remove(id);
+            if (!isTtsActive()) endSpeech();
         }
     }
 }

@@ -139,8 +139,35 @@ public final class Texts {
         return i.name + ": stok " + stock + " / " + cap + " " + i.unit + ", birim " + i.price + " lira";
     }
 
-    public static String buyDescription(Ingredient i, int qty) {
-        return qty + " " + i.name + " al, " + (qty * i.price) + " lira";
+    /** Stok kapasitesini ve parayı gözeterek GERÇEKTE alınacak miktarı ve ödenecek tutarı söyler. */
+    public static String buyDescription(Ingredient i, int qty, SaveData save) {
+        int real = Shop.purchasableQty(save, i.id, qty);
+        String head = qty + " " + i.name + " al";
+        if (real <= 0) return head + ": stok dolu, hiçbir şey alınmaz, ödeme yok";
+        int cost = real * i.price;
+        String t = real < qty
+                ? head + ", ama stok kapasitesi nedeniyle yalnızca " + real + " " + i.unit + " alınır, " + cost + " lira ödenir"
+                : head + ", " + cost + " lira";
+        if (save.money < cost) t += ". Paran yetmiyor";
+        return t;
+    }
+
+    /** Acil al düğmesi metni (görsel). */
+    public static String emergencyLabel(List<Ingredient> missing, int cost) {
+        return "Acil al: " + names(missing) + " (" + cost + " TL)";
+    }
+
+    /** Acil al düğmesi erişilebilirlik açıklaması: malzeme adları ve toplam fiyat. */
+    public static String emergencyDescription(List<Ingredient> missing, int cost) {
+        String t = "Acil al: " + names(missing) + ", toplam " + cost + " lira. ";
+        t += missing.size() > 1 ? "Eksik malzemelerin hepsi tek dokunuşla alınır. " : "";
+        return t + "Normalden yüzde elli pahalı.";
+    }
+
+    private static String names(List<Ingredient> l) {
+        List<String> n = new ArrayList<>();
+        for (Ingredient i : l) n.add(i.name);
+        return join(n);
     }
 
     public static String recommendedDescription(SaveData save) {
@@ -232,7 +259,11 @@ public final class Texts {
         r.add(new String[]{"Satış", s.revenue + " lira"});
         r.add(new String[]{"Bahşiş", s.tips + " lira"});
         if (s.emergencySpend > 0) r.add(new String[]{"Acil alım", s.emergencySpend + " lira"});
-        r.add(new String[]{"Kira", s.rent + " lira"});
+        if (s.rentUnpaid() > 0) {
+            r.add(new String[]{"Kira", s.rent + " lira ödendi (" + s.rentDue + " lira gerekiyordu, " + s.rentUnpaid() + " lira ödenemedi)"});
+        } else {
+            r.add(new String[]{"Kira", s.rent + " lira"});
+        }
         int p = s.profit();
         r.add(new String[]{"Net kazanç", (p < 0 ? "eksi " + (-p) : String.valueOf(p)) + " lira"});
         r.add(new String[]{"Kasada", s.moneyAfter + " lira"});

@@ -13,6 +13,13 @@ public final class Shop {
         return Catalog.ingredient(id).price * qty;
     }
 
+    /** İstenen adetten, stok kapasitesine sığacak gerçekten alınabilir adet (0 = stok dolu). */
+    public static int purchasableQty(SaveData save, String id, int qty) {
+        if (Catalog.ingredient(id) == null || qty <= 0) return 0;
+        int room = new Upgrades(save).stockCap() - save.inventory.get(id);
+        return Math.max(0, Math.min(qty, room));
+    }
+
     /** Kapasiteyi aşmayacak kadar alır; kapasite doluysa STOCK_FULL. */
     public static BuyResult buyIngredient(SaveData save, String id, int qty) {
         Ingredient ing = Catalog.ingredient(id);

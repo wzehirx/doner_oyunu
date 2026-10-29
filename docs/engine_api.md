@@ -27,7 +27,7 @@ Gün bitince motor `save.day`'i artırır, kirayı düşer. Gün BAŞARISIZ olur
 | `Order` | `id,customer,items,steps`; `nextStep()`, `getNextStepIndex()`, `isRunning()`, `isReady()`, `getPosition()` (1..; stereo pan), `price()`, `itemsText()` |
 | `ActiveStep` | çalışan adım: `order, step, total, slot`; `getRemaining()`, `progress()` |
 | `StartResult` (enum) | STARTED, NO_ORDER, WRONG_STATION, NO_SLOT, OUT_OF_STOCK, ORDER_BUSY, ORDER_READY, NOT_RUNNING |
-| `DaySummary` | `day, failed, revenue, tips, emergencySpend, rent, delivered, lost, wrongTaps, startStars, endStars, moneyAfter, newProductsNext`; `profit()` |
+| `DaySummary` | `day, failed, revenue, tips, emergencySpend, rent (gerçekten düşülen), rentDue (tam kira), rentUnpaid(), delivered, lost, wrongTaps, startStars, endStars, moneyAfter, newProductsNext`; `profit()` |
 | `Catalog` | statik: `ingredients()`, `ingredient(id)`, `products()`, `product(id)`, `productsForDay(day)` (birikimli), `newProductsOnDay(day)`, `upgrades()`, `upgrade(id)`, `customerTypes()`, `typesForDay(day)` |
 | `Upgrade` | `id,name,category(MUTFAK/RESTORAN),description,prices[],unlockDays[],effects[]`; `maxLevel()`, `priceForNext(level)`, `unlockDayForNext(level)` |
 | `Upgrades` | `new Upgrades(save)`: `speedMult(Station)`, `slots()`, `patienceMult()`, `arrivalMult()`, `tipMult()`, `starGainMult()`, `touristMult()`, `queueBonus()`, `stockCap()` |
@@ -55,7 +55,9 @@ int getMoney(); double getStars(); float getElapsed(); float getTimeLeft(); bool
 int getSlotCount(); int getFreeSlots(); DaySummary getSummary(); Upgrades getUpgrades()
 List<Order> getOrders(); Order getOrder(int); Order getSelectedOrder(); int getSelectedOrderId()
 List<ActiveStep> getActiveSteps(); ActiveStep getActiveFor(int orderId)
-Ingredient missingIngredient(int orderId)  // sıradaki adım için eksik malzeme
+Ingredient missingIngredient(int orderId)  // sıradaki adım için eksik ilk malzeme
+List<Ingredient> missingIngredients(int orderId) // eksik TÜM malzemeler
+int emergencyCostForMissing(int orderId); boolean emergencyBuyMissing(int orderId) // hepsini tek hamlede (hepsine para yetmezse hiçbiri) acil al
 ```
 Kurallar: yanlış istasyon -0.02 yıldız; müşteri gidince -0.30; teslimde sabrın kalanı >=%50 hızlı (+0.12, %20 bahşiş), >=%20 memnun (+0.08, %8 bahşiş), aksi +0.02 (yıldız kazanımları `starGainMult` ile artar); yıldız <1.0 => gün başarısız. Sabır uyarıları: seviye 1 (<=%50), seviye 2 (<=%20). Mesai bitince (+30 sn) kalan siparişler cezasız kapanır. Malzeme adım BAŞLARKEN tüketilir. Stok kapasitesi malzeme başına 30 (buzdolabı: 50/100/220). Müşteri gelişi bekleyen sipariş üst sınırı (`baseQueue + masa`) dolunca ertelenir.
 

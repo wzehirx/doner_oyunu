@@ -14,7 +14,29 @@ public class Narrator implements GameListener {
         void say(String text, boolean urgent);
     }
 
+    /**
+     * Yıldız değişimini yalnızca EKRANDA görünen değer (1 ondalık) en son duyurulan değerden farklılaşınca
+     * "duyurulmalı" sayar. Her karşılaştırma son duyurulan değere göredir; böylece 0,02'lik küçük adımlar
+     * sessiz kalır ama birikip görünen değeri değiştirdiği an (ör. 3,0 -> 2,9) duyurulur; hiçbir görünür değişim kaçmaz.
+     */
+    public static final class StarsTracker {
+        private String shown;
+
+        /** Gün başında/sıfırlamada görünen değeri sabitler. */
+        public void reset(double stars) { shown = fmtStars(stars); }
+
+        /** Bu değişim duyurulmalı mı? Duyurulacaksa son duyurulan değeri günceller. */
+        public boolean changed(double oldS, double newS) {
+            String now = fmtStars(newS);
+            String base = shown != null ? shown : fmtStars(oldS);
+            if (now.equals(base)) { shown = base; return false; }
+            shown = now;
+            return true;
+        }
+    }
+
     private final GameEngine engine;
+    private final StarsTracker starsTracker = new StarsTracker();
     private Output output;
 
     public Narrator(GameEngine engine) { this.engine = engine; }
@@ -118,6 +140,20 @@ public class Narrator implements GameListener {
                 + fmtMoney(ing.emergencyPrice() * Ingredient.EMERGENCY_BATCH) + ".";
     }
 
+    /** Sıradaki adım için eksik TÜM malzemeleri ve tek dokunuşla toplam acil alım tutarını söyler. */
+    public String outOfStock(Order o) {
+        List<Ingredient> missing = engine == null ? null : engine.missingIngredients(o.id);
+        if (missing == null || missing.isEmpty()) return null;
+        if (missing.size() == 1) return outOfStock(o, missing.get(0));
+        StringBuilder names = new StringBuilder();
+        for (int i = 0; i < missing.size(); i++) {
+            if (i > 0) names.append(i == missing.size() - 1 ? " ve " : ", ");
+            names.append(missing.get(i).name);
+        }
+        return "Malzemeler bitti: " + names + ". Marketten hepsini acil al, "
+                + fmtMoney(engine.emergencyCostForMissing(o.id)) + ".";
+    }
+
     public String emergencyPurchase(Ingredient ing, int qty, int cost) {
         return qty + " " + ing.name + " alındı, " + fmtMoney(cost) + ".";
     }
@@ -130,7 +166,13 @@ public class Narrator implements GameListener {
         String t = "Gün " + s.day + " bitti. " + s.delivered + " sipariş teslim, " + s.lost + " müşteri kaybedildi. "
                 + "Satış " + fmtMoney(s.revenue) + ", bahşiş " + fmtMoney(s.tips);
         if (s.emergencySpend > 0) t += ", acil alım " + fmtMoney(s.emergencySpend);
-        t += ", kira " + fmtMoney(s.rent) + ". Net " + (s.profit() < 0 ? "eksi " + fmtMoney(-s.profit()) : fmtMoney(s.profit()))
+        if (s.rentUnpaid() > 0) {
+            t += ", kira " + fmtMoney(s.rentDue) + " ama paran yetmediği için yalnızca " + fmtMoney(s.rent)
+                    + " ödenebildi, " + fmtMoney(s.rentUnpaid()) + " ödenemedi";
+        } else {
+            t += ", kira " + fmtMoney(s.rent);
+        }
+        t += ". Net " + (s.profit() < 0 ? "eksi " + fmtMoney(-s.profit()) : fmtMoney(s.profit()))
                 + ". Kasada " + fmtMoney(s.moneyAfter) + ". Yıldız " + fmtStars(s.endStars) + ".";
         if (s.newProductsNext != null && !s.newProductsNext.isEmpty()) t += " Yarın yeni ürün: " + s.newProductsNext + ".";
         return t;
@@ -183,7 +225,10 @@ public class Narrator implements GameListener {
     }
 
     // ------------------------------------------------------------ GameListener
-    @Override public void onDayStarted(int day, DayConfig c) { say(dayStarted(day, c), false); }
+    @Override public void onDayStarted(int day, DayConfig c) {
+        if (engine != null) starsTracker.reset(engine.getStars());
+        say(dayStarted(day, c), false);
+    }
     @Override public void onCustomerArrived(Order o) { say(customerArrived(o), false); }
     @Override public void onOrderSelected(Order o) { say(orderSelected(o), true); }
     @Override public void onNextStepHint(Order o, Step s) { say(nextStepHint(o, s), false); }
@@ -195,8 +240,13 @@ public class Narrator implements GameListener {
     @Override public void onOrderDelivered(Order o, int m, int t, boolean h) { say(orderDelivered(o, m, t, h), false); }
     @Override public void onPatienceWarning(Order o, int l) { say(patienceWarning(o, l), l >= 2); }
     @Override public void onCustomerLeft(Order o) { say(customerLeft(o), true); }
-    @Override public void onStarsChanged(double a, double b) { say(starsChanged(a, b), false); }
-    @Override public void onOutOfStock(Order o, Ingredient i) { say(outOfStock(o, i), true); }
+    @Override public void onStarsChanged(double a, double b) {
+        if (starsTracker.changed(a, b)) say(starsChanged(a, b), false);
+    }
+    @Override public void onOutOfStock(Order o, Ingredient i) {
+        String all = outOfStock(o);
+        say(all != null ? all : outOfStock(o, i), true);
+    }
     @Override public void onEmergencyPurchase(Ingredient i, int q, int c) { say(emergencyPurchase(i, q, c), false); }
     @Override public void onNotEnoughMoney(int n) { say(notEnoughMoney(n), true); }
     @Override public void onDayFinished(DaySummary s) { say(dayFinished(s), true); }

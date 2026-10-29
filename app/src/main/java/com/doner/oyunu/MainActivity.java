@@ -53,6 +53,9 @@ public class MainActivity extends Activity {
         container.setBackground(new GradientBackground());
         setContentView(container);
         speaker.setAnchor(container);
+        speaker.setSpeechListener(new Speaker.SpeechListener() {
+            @Override public void onSpeaking(boolean active) { sound.setSpeechDucking(active); }
+        });
         applySettings();
         show(new MenuScreen(this));
     }

@@ -145,9 +145,12 @@ public final class ShopScreen extends Screen {
         int[] qtys = {1, 5, 10};
         for (int i = 0; i < qtys.length; i++) {
             final int q = qtys[i];
-            Button b = Ui.button(ctx, "+" + q, Ui.SECONDARY);
-            b.setContentDescription(Texts.buyDescription(ing, q));
+            final Button b = Ui.button(ctx, "+" + q, Ui.SECONDARY);
+            b.setContentDescription(Texts.buyDescription(ing, q, a.save));
             tap(b, new Runnable() { @Override public void run() { buyIngredient(ing, q); } });
+            refreshers.add(new Runnable() {
+                @Override public void run() { b.setContentDescription(Texts.buyDescription(ing, q, a.save)); }
+            });
             row.addView(b, Ui.lp(ctx, 0, Ui.WRAP, 1f, i == 0 ? 0 : 4, 6, i == 2 ? 0 : 4, 0));
         }
         c.addView(row);
@@ -178,7 +181,8 @@ public final class ShopScreen extends Screen {
         } else {
             a.sound.play("sfx_error");
             a.haptics.error();
-            a.speaker.announce(Texts.buyResult(r, ing.name, q, Shop.ingredientCost(ing.id, q)), true);
+            int real = Shop.purchasableQty(s, ing.id, q);
+            a.speaker.announce(Texts.buyResult(r, ing.name, real, Shop.ingredientCost(ing.id, real)), true);
         }
     }
 

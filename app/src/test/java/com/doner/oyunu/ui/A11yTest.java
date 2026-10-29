@@ -324,7 +324,7 @@ public class A11yTest {
         assertFalse(UiBot.panelOpen(h));
         java.util.List<String> labels = A11yAudit.customActionLabels(sos);
         assertFalse(labels.toString(), anyContains(labels, "Önce kalemin diğer adımları bitmeli"));
-        assertTrue(labels.toString(), anyStartsWith(labels, "Domates ekle, stokta"));
+        assertTrue(labels.toString(), anyStartsWith(labels, "Domates ekle"));
         View tile = h.stationTile(com.doner.oyunu.engine.Station.SOS);
         int id = UiBot.actionIdByLabel(tile, "Domates ekle");
         assertTrue(id >= 0);

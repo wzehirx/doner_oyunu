@@ -372,9 +372,9 @@ public class PortionSizeTest {
         Order o4 = spawn(e4, "ekmek_arasi", PortionSize.HALF);
         List<StationOption> l4 = e4.getStationOptions(o4.id, 0, Station.DONER.id);
         for (String id : new String[]{"size:yarim", "size:tam", "size:duble"}) assertTrue(id, find(l4, id).enabled);
-        assertEquals("Yarım ekmek, 0,5 porsiyon, 2 saniye", find(l4, "size:yarim").description);
-        assertEquals("Tam ekmek, 1 porsiyon, 4 saniye", find(l4, "size:tam").description);
-        assertEquals("Duble, 2 porsiyon, 5 saniye", find(l4, "size:duble").description);
+        assertEquals("Yarım ekmek", find(l4, "size:yarim").description);
+        assertEquals("Tam ekmek", find(l4, "size:tam").description);
+        assertEquals("Duble", find(l4, "size:duble").description);
         // doğru boyu işaretlemez: seçenekler siparişe göre farklı görünmez
         Order o4b = spawn(e4, "ekmek_arasi", PortionSize.DOUBLE);
         assertEquals(find(l4, "size:tam").description, find(e4.getStationOptions(o4b.id, 0, Station.DONER.id), "size:tam").description);

@@ -21,9 +21,9 @@ public class FlowTextsTest {
         s.flowMode = FlowMode.RAHAT;
         all = String.join(" | ", Texts.briefingLines(s));
         assertFalse(all.contains("Seçim:"));
-        assertTrue(all, all.contains("Oyun akışı: Rahat. Malzemeler ve döner boyu otomatik."));
+        assertTrue(all, all.contains("Oyun akışı: Rahat. Malzemeler ve boy otomatik"));
         assertTrue(all, all.contains("Duraklat menüsünden"));
-        assertTrue("öğretici satırı akışa göre", all.contains("malzemelerin ve boyun otomatik eklendiğini"));
+        assertTrue("öğretici satırı kısa", all.contains("Öğretici açık: kısa sesli ipuçlarıyla"));
         s.day = 2;
         assertTrue(String.join(" ", Texts.briefingLines(s)).contains("Yeni boy: yarım ekmek. Rahat akışta boy otomatik seçilir."));
         s.flowMode = FlowMode.GERCEKCI;
@@ -32,10 +32,9 @@ public class FlowTextsTest {
 
     @Test public void flowButtonAndOptionDescriptionsSayStateAndNext() {
         assertEquals("Oyun akışı: Dengeli", Texts.flowButtonLabel(FlowMode.DENGELI));
-        assertTrue(Texts.flowButtonDescription(FlowMode.DENGELI).startsWith("Oyun akışı: Dengeli. Dokununca Gerçekçi akışına geçer."));
-        assertTrue(Texts.flowOptionDescription(FlowMode.DENGELI, true).startsWith("Dengeli, seçili."));
-        assertTrue(Texts.flowOptionDescription(FlowMode.DENGELI, true).endsWith("Önerilen."));
-        assertTrue(Texts.flowOptionDescription(FlowMode.RAHAT, false).startsWith("Rahat, seçmek için dokun."));
+        assertEquals("v0.9: düğme etiketi yalnızca ad ve durum", "Oyun akışı: Dengeli", Texts.flowButtonDescription(FlowMode.DENGELI));
+        assertEquals("Dengeli, seçili, önerilen", Texts.flowOptionDescription(FlowMode.DENGELI, true));
+        assertEquals("Rahat", Texts.flowOptionDescription(FlowMode.RAHAT, false));
         for (FlowMode m : FlowMode.values()) {
             assertFalse(m.description.isEmpty());
             assertTrue(m.spoken().startsWith("Oyun akışı: " + m.displayName + ". "));
@@ -47,9 +46,8 @@ public class FlowTextsTest {
         assertEquals(Texts.TUT_SIZE, Texts.tutSize(FlowMode.GERCEKCI));
         assertEquals(Texts.quickHelp(), Texts.quickHelp(FlowMode.GERCEKCI));
         assertTrue(Texts.tutTopping(FlowMode.RAHAT).contains("otomatik"));
-        assertTrue(Texts.tutTopping(FlowMode.DENGELI).contains("Soğan çıkar"));
         assertTrue(Texts.tutTopping(FlowMode.DENGELI).contains("Malzemeleri bitir"));
-        assertTrue(Texts.tutSize(FlowMode.RAHAT).contains("sistem seçer"));
+        assertTrue(Texts.tutSize(FlowMode.RAHAT).contains("otomatik"));
         assertTrue(Texts.tutSize(FlowMode.DENGELI).contains("yarım ekmek ya da duble"));
         assertTrue(Texts.quickHelp(FlowMode.RAHAT).contains("Rahat akışta"));
         assertTrue(Texts.quickHelp(FlowMode.DENGELI).contains("Hedefi oku"));

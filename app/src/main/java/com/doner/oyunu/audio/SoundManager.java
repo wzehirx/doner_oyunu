@@ -26,13 +26,17 @@ import java.util.Set;
 public final class SoundManager {
     public static final String[] SFX = {
             "sfx_customer_arrive", "sfx_order_new", "sfx_slice", "sfx_bread_warm", "sfx_sauce", "sfx_wrap", "sfx_veg_tomato", "sfx_veg_lettuce",
-            "sfx_grill_sizzle", "sfx_pour", "sfx_step_done", "sfx_deliver", "sfx_coin", "sfx_error",
+            "sfx_grill_sizzle", "sfx_fry", "sfx_pour", "sfx_step_done", "sfx_deliver", "sfx_coin", "sfx_error",
             "sfx_warning", "sfx_customer_happy", "sfx_customer_angry", "sfx_star_up", "sfx_star_down",
             "sfx_day_start", "sfx_day_end", "sfx_buy", "sfx_tap", "sfx_tick"
     };
 
     /** Döngülenebilen istasyon sesleri: SoundPool döngüsüyle adım süresince çalar. */
-    public static final String[] LOOPED = {"sfx_grill_sizzle", "sfx_pour", "sfx_wrap", "sfx_bread_warm"};
+    public static final String[] LOOPED = {"sfx_grill_sizzle", "sfx_fry", "sfx_pour", "sfx_wrap", "sfx_bread_warm"};
+    /** Dükkân ambiyansı (res/raw/amb_shop.ogg, döngülenebilir): gün boyunca düşük sesle çalar; dosya yoksa sessizce atlanır. */
+    public static final String AMBIENCE_SHOP = "amb_shop";
+    /** Ambiyans ses düzeyi varsayılanı (SaveData.ambienceVolume ile aynı). */
+    public static final float DEFAULT_AMBIENCE_VOLUME = 0.35f;
     /** Darbeli istasyon sesleri: adım süresince rastgele aralıkla tekrarlanır. */
     public static final String[] PULSED = {"sfx_slice", "sfx_sauce"};
     /** Darbeli tekrar aralığı (sn), perde ve ses rastgeleliği (şartname §5). */
@@ -58,6 +62,13 @@ public final class SoundManager {
     private Sink sink = new PoolSink();
     private float sfxVolume = 1f;
     private float musicVolume = 0.7f;
+    private float ambienceVolume = DEFAULT_AMBIENCE_VOLUME;
+
+    /** Ambiyans oynatıcısı (dosya yoksa null); istenen ad ayrı tutulur, böylece dosya sonradan gelse de durum tutarlıdır. */
+    private MediaPlayer amb;
+    private String ambWanted;
+    /** Ekran/oyun duraklatması (Duraklat paneli) ambiyansı sustursun. */
+    private boolean ambHold;
 
     private MediaPlayer music;
     /** Sönümlenip bırakılmayı bekleyen eski oynatıcılar (release sırasında sızmasın). */
@@ -104,10 +115,13 @@ public final class SoundManager {
 
     public void setMusicVolume(float v) { musicVolume = clamp(v); applyMusicVolume(); }
 
+    public void setAmbienceVolume(float v) { ambienceVolume = clamp(v); applyAmbienceVolume(); syncAmbience(); }
+
     /** Speaker konuşurken müziği kıs, bitince geri aç. */
     public void setSpeechDucking(boolean on) {
         speechDuck = on;
         applyMusicVolume();
+        applyAmbienceVolume();
     }
 
     /** Müzik şu an kısık mı (konuşma ya da sistem isteğiyle)? */
@@ -126,10 +140,12 @@ public final class SoundManager {
                 focusPaused = true;
                 focusDuck = false;
                 if (music != null) try { music.pause(); } catch (Exception ignored) { }
+                syncAmbience();
                 break;
             case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
                 focusDuck = true;
                 applyMusicVolume();
+                applyAmbienceVolume();
                 break;
             case AudioManager.AUDIOFOCUS_GAIN:
                 focusDuck = false;
@@ -138,6 +154,8 @@ public final class SoundManager {
                     if (!paused && music != null) try { music.start(); } catch (Exception ignored) { }
                 }
                 applyMusicVolume();
+                applyAmbienceVolume();
+                syncAmbience();
                 break;
             default:
                 break;
@@ -173,7 +191,7 @@ public final class SoundManager {
 
     // ------------------------------------------------------------------ istasyon sesleri (adım süresince)
     /** SoundPool çıkışı soyutlaması (testte yerine konabilir). */
-    interface Sink {
+    public interface Sink {
         /** Akış kimliği (0: çalınamadı). */
         int start(String name, float left, float right, float rate, int loop);
         void stop(int stream);
@@ -195,7 +213,8 @@ public final class SoundManager {
         }
     }
 
-    void setSinkForTest(Sink s) { sink = s; }
+    /** Ses çıkışını değiştirir (testlerde çalınan sesleri izlemek için). */
+    public void setSinkForTest(Sink s) { sink = s; }
 
     public static boolean isLooped(String name) {
         for (String n : LOOPED) if (n.equals(name)) return true;
@@ -215,9 +234,26 @@ public final class SoundManager {
         int stream;
         boolean running;
         Runnable pulse, stopper;
+        /** Sıralı ses planı (otomatik malzeme: domates, marul, sos...); null: döngü/darbe işi. */
+        List<Cue> cues;
+        long totalMs;
+        final List<Runnable> cueRunnables = new ArrayList<>();
 
         Job(String key, String name, float pan, float volume, long ms) {
             this.key = key; this.name = name; this.pan = pan; this.volume = volume; this.remainingMs = ms;
+        }
+    }
+
+    /** Sıralı ses planında bir vuruş: işin başından atMs sonra bir kez çalınır. */
+    public static final class Cue {
+        public final long atMs;
+        public final String name;
+        public final float rate;
+
+        public Cue(long atMs, String name, float rate) {
+            this.atMs = atMs;
+            this.name = name;
+            this.rate = rate;
         }
     }
 
@@ -240,12 +276,40 @@ public final class SoundManager {
         if (!loopsPaused) begin(j);
     }
 
+    /**
+     * Bir iş süresince sıralı vuruşlar çalar (her cue kendi zamanında bir kez). Otomatik malzeme eklemede her malzemenin
+     * kendi sesi (domates, marul, sos) ekleme süresine yayılarak çalınır. Duraklatılabilir; {@link #stopLoop} kalanları iptal eder.
+     */
+    public void startSequence(String key, List<Cue> cues, float pan, float volume, float seconds) {
+        if (key == null || cues == null || cues.isEmpty()) return;
+        stopLoop(key);
+        if (pool == null || sfxVolume <= 0f || seconds <= 0f) return;
+        Job j = new Job(key, cues.get(0).name, pan, volume, (long) (seconds * 1000f));
+        j.cues = new ArrayList<>(cues);
+        j.totalMs = j.remainingMs;
+        jobs.put(key, j);
+        if (!loopsPaused) begin(j);
+    }
+
     private void begin(final Job j) {
         j.running = true;
         j.endAt = SystemClock.uptimeMillis() + j.remainingMs;
         j.stopper = new Runnable() { @Override public void run() { stopLoop(j.key); } };
         loopHandler.postDelayed(j.stopper, j.remainingMs);
-        if (isLooped(j.name)) {
+        if (j.cues != null) {
+            long elapsed = j.totalMs - j.remainingMs;
+            for (final Cue c : j.cues) {
+                if (c.atMs < elapsed) continue;
+                Runnable r = new Runnable() {
+                    @Override public void run() {
+                        if (!j.running) return;
+                        sink.start(c.name, left(j.pan, j.volume), right(j.pan, j.volume), Math.max(0.5f, Math.min(2f, c.rate)), 0);
+                    }
+                };
+                j.cueRunnables.add(r);
+                loopHandler.postDelayed(r, c.atMs - elapsed);
+            }
+        } else if (isLooped(j.name)) {
             j.stream = sink.start(j.name, left(j.pan, j.volume), right(j.pan, j.volume), 1f, -1);
         } else {
             j.pulse = new Runnable() {
@@ -266,6 +330,8 @@ public final class SoundManager {
         j.running = false;
         if (j.stopper != null) loopHandler.removeCallbacks(j.stopper);
         if (j.pulse != null) loopHandler.removeCallbacks(j.pulse);
+        for (Runnable r : j.cueRunnables) loopHandler.removeCallbacks(r);
+        j.cueRunnables.clear();
         if (j.stream != 0) sink.stop(j.stream);
         j.stream = 0;
     }
@@ -401,9 +467,85 @@ public final class SoundManager {
         });
     }
 
+    // ------------------------------------------------------------------ ambiyans (v0.9)
+    /**
+     * Ambiyans döngüsünü ister ({@link #AMBIENCE_SHOP}); null durdurur. Dosya (res/raw) yoksa sessizce atlanır, istek yine
+     * kaydedilir. Ses düzeyi müzikten bağımsızdır ({@link #setAmbienceVolume}), konuşma/sistem kısmasında kısılır.
+     */
+    public void playAmbience(String name) {
+        if (name == null) { stopAmbience(); return; }
+        if (name.equals(ambWanted)) { syncAmbience(); return; }
+        releaseAmbience();
+        ambWanted = name;
+        int res = resId(name);
+        if (res == 0) return;
+        MediaPlayer mp = new MediaPlayer();
+        try {
+            AssetFileDescriptor afd = ctx.getResources().openRawResourceFd(res);
+            if (afd == null) { mp.release(); return; }
+            mp.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
+            afd.close();
+            mp.setAudioAttributes(new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_GAME)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build());
+            mp.setLooping(true);
+            mp.prepare();
+        } catch (Exception e) {
+            try { mp.release(); } catch (Exception ignored) { }
+            return;
+        }
+        amb = mp;
+        applyAmbienceVolume();
+        syncAmbience();
+    }
+
+    public void stopAmbience() {
+        ambWanted = null;
+        releaseAmbience();
+    }
+
+    private void releaseAmbience() {
+        MediaPlayer old = amb;
+        amb = null;
+        if (old == null) return;
+        try { old.stop(); } catch (Exception ignored) { }
+        try { old.release(); } catch (Exception ignored) { }
+    }
+
+    /** Oyun Duraklat paneli / ekran dışı: ambiyans susar (true) ya da devam eder (false). */
+    public void setAmbienceHold(boolean hold) {
+        ambHold = hold;
+        syncAmbience();
+    }
+
+    /** İstenen ambiyans adı (dosya olmasa da); istek yoksa null. */
+    public String currentAmbience() { return ambWanted; }
+
+    /** Ambiyans şu an çalıyor olmalı mı (istenmiş, duraklatılmamış, odak kaybı yok). */
+    public boolean ambienceShouldPlay() { return ambWanted != null && !paused && !ambHold && !focusPaused; }
+
+    /** Ambiyansın fiilen çalındığı ses düzeyi (0..1): ayar x (konuşma/sistem kısması). */
+    public float ambienceOutputVolume() { return ambienceVolume * (isDucked() ? DUCK_FACTOR : 1f); }
+
+    private void applyAmbienceVolume() {
+        if (amb == null) return;
+        float v = ambienceOutputVolume();
+        try { amb.setVolume(v, v); } catch (Exception ignored) { }
+    }
+
+    /** Oynatıcıyı istenen duruma getirir (çalmalıysa başlatır, aksi halde duraklatır). */
+    private void syncAmbience() {
+        if (amb == null) return;
+        try {
+            if (ambienceShouldPlay() && ambienceVolume > 0f) { if (!amb.isPlaying()) amb.start(); }
+            else if (amb.isPlaying()) amb.pause();
+        } catch (Exception ignored) { }
+    }
+
     // ------------------------------------------------------------------ yaşam döngüsü
     public void pause() {
         paused = true;
+        syncAmbience();
         sfxHandler.removeCallbacksAndMessages(null);
         pauseLoops();
         if (music != null) try { music.pause(); } catch (Exception ignored) { }
@@ -419,6 +561,7 @@ public final class SoundManager {
             try { music.start(); } catch (Exception ignored) { }
             fadeIn();
         }
+        syncAmbience();
         if (pool != null) try { pool.autoResume(); } catch (Exception ignored) { }
     }
 
@@ -428,6 +571,7 @@ public final class SoundManager {
         sfxHandler.removeCallbacksAndMessages(null);
         stopAllLoops();
         loopHandler.removeCallbacksAndMessages(null);
+        releaseAmbience();
         fadeToken++;
         for (MediaPlayer old : new java.util.ArrayList<>(retiring)) {
             try { old.stop(); } catch (Exception ignored) { }

@@ -51,6 +51,13 @@ public final class SettingsScreen extends Screen {
             String shown(double v) { return Texts.volumeText(v); }
             String spoken(double v) { return Texts.volumeSpoken(v); }
         });
+        // v0.9: dükkân ambiyansı (müzikten bağımsız; 0 = kapalı)
+        addStepper(body, new Value("Ambiyans sesi", 0, 1, 0.05) {
+            double get() { return s.ambienceVolume; }
+            void set(double v) { s.ambienceVolume = v; }
+            String shown(double v) { return Texts.volumeText(v); }
+            String spoken(double v) { return v <= 0.001 ? "kapalı" : Texts.volumeSpoken(v); }
+        });
 
         addSwitch(body, "Sesli anlatım", s.speechOn, new CompoundButton.OnCheckedChangeListener() {
             @Override public void onCheckedChanged(CompoundButton b, boolean on) {
@@ -87,7 +94,7 @@ public final class SettingsScreen extends Screen {
             String shown(double v) { return Texts.times(v); }
             String spoken(double v) { return Texts.times(v) + (v > 1.05 ? ", daha rahat" : (v < 0.95 ? ", daha hızlı" : ", normal")); }
         });
-        TextView note = Ui.label(ctx, "Tempo yükseldikçe işlemler yavaşlar ve müşteriler daha sabırlı olur. Düşük tempo daha hızlı ve zor bir oyun demektir.", 15, Theme.MUTED, false);
+        TextView note = Ui.label(ctx, "Tempo yükselince işlemler yavaşlar, müşteriler sabırlı olur.", 15, Theme.MUTED, false);
         note.setFocusable(true);
         body.addView(note, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 4, 0, 4, 8));
 
@@ -109,7 +116,7 @@ public final class SettingsScreen extends Screen {
                 a.speaker.announce(on ? "Çırak duyuruları açık" : "Çırak duyuruları kapalı", true);
             }
         });
-        TextView apprNote = Ui.label(ctx, "Açıkken çırağın yaptığı işler sesli duyurulur, örneğin çırak ayran dolduruyor. Çırak yine de çalışır ve ekranda görünür.", 15, Theme.MUTED, false);
+        TextView apprNote = Ui.label(ctx, "Açıkken çırağın işleri sesli duyurulur.", 15, Theme.MUTED, false);
         apprNote.setFocusable(true);
         body.addView(apprNote, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 4, 0, 4, 8));
 
@@ -127,7 +134,7 @@ public final class SettingsScreen extends Screen {
         Ui.heading(h);
         h.setPadding(dp(4), dp(4), dp(4), dp(2));
         body.addView(h);
-        TextView note = Ui.label(ctx, "Malzemelerin ve döner boyunun ne kadarını senin yapacağını seç. Oyun sırasında Duraklat menüsünden de değiştirebilirsin.", 15, Theme.MUTED, false);
+        TextView note = Ui.label(ctx, Texts.FLOW_NOTE, 15, Theme.MUTED, false);
         note.setFocusable(true);
         body.addView(note, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 4, 0, 4, 4));
         for (final FlowMode m : FlowMode.values()) {
@@ -167,8 +174,7 @@ public final class SettingsScreen extends Screen {
         a.saveNow();
         refreshTimePressure(s);
         a.sound.play("sfx_tap");
-        a.speaker.announce(s.timePressure ? "Süre baskısı açık. Gün süreli, müşteriler sabırsızlanır."
-                : "Süre baskısı kapalı. Süre sayacı yok, müşteri sabrı azalmaz, kimse gitmez.", true);
+        a.speaker.announce(s.timePressure ? "Süre baskısı açık." : "Süre baskısı kapalı, kimse gitmez.", true);
     }
 
     private void refreshTimePressure(SaveData s) {

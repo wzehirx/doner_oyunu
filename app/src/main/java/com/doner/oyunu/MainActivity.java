@@ -84,6 +84,7 @@ public class MainActivity extends Activity {
         s.vibration = old.vibration;
         s.musicVolume = old.musicVolume;
         s.sfxVolume = old.sfxVolume;
+        s.ambienceVolume = old.ambienceVolume;
         s.tutorialDone = old.tutorialDone;
         s.apprenticeAnnounce = old.apprenticeAnnounce;
         s.flowMode = old.flowMode; // oyun akışı bir ayardır: yeni oyunda korunur
@@ -100,6 +101,7 @@ public class MainActivity extends Activity {
     public void applySettings() {
         sound.setMusicVolume((float) save.musicVolume);
         sound.setSfxVolume((float) save.sfxVolume);
+        sound.setAmbienceVolume((float) save.ambienceVolume);
         speaker.setEnabled(save.speechOn);
         speaker.setRate((float) save.speechRate);
         haptics.setEnabled(save.vibration);
@@ -123,6 +125,8 @@ public class MainActivity extends Activity {
         v.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
         container.addView(v, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         sound.playMusic(next.music());
+        sound.setAmbienceHold(false);
+        sound.playAmbience(next.ambience()); // gün ekranı dışında null: ambiyans durur
 
         boolean anim = Ui.animationsOn(this);
         long dur = anim ? 260 : 0;

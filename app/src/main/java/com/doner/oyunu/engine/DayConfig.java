@@ -70,6 +70,15 @@ public final class DayConfig {
         return day <= 1 ? 0.0 : (day == 2 ? 0.20 : 0.45);
     }
 
+    /**
+     * Patatesli sipariş olasılığı (patates girebilen her kalem için): {@link Catalog#FRIES_OPEN_DAY}. günden açılır (%12),
+     * her gün +1,2 puan artar, en çok %50.
+     */
+    public static double friesChance(int day) {
+        if (day < Catalog.FRIES_OPEN_DAY) return 0.0;
+        return Math.min(0.50, 0.12 + 0.012 * (day - Catalog.FRIES_OPEN_DAY));
+    }
+
     /** Malzeme seçim panelinin önceden seçili gelip gelmediği: 1-3. gün varsayılan küme seçili, 4. günden itibaren boş. */
     public static boolean toppingsPreselected(int day) { return day <= 3; }
 

@@ -93,7 +93,7 @@ public final class ShopScreen extends Screen {
 
     private void refreshMoney() {
         moneyView.setText(Texts.money(a.save.money));
-        statGroup.setContentDescription("Kasada " + a.save.money + " lira. Gün " + a.save.day + ".");
+        statGroup.setContentDescription("Kasada " + a.save.money + " lira, gün " + a.save.day);
     }
 
     private void selectTab(int idx, boolean announce) {
@@ -106,7 +106,7 @@ public final class ShopScreen extends Screen {
             tabs[i].setSelected(sel);
             tabs[i].setBackground(sel ? Ui.buttonBg(ctx, Ui.GOLD) : Ui.buttonBg(ctx, Ui.SECONDARY));
             tabs[i].setTextColor(sel ? Theme.DARK : Theme.CREAM);
-            tabs[i].setContentDescription(names[i] + " sekmesi" + (sel ? ", seçili" : ". Açmak için çift dokun."));
+            tabs[i].setContentDescription(names[i] + " sekmesi" + (sel ? ", seçili" : ""));
         }
         if (idx == TAB_ING) buildIngredients(); else buildUpgrades(idx == TAB_KITCHEN ? Upgrade.Category.MUTFAK : Upgrade.Category.RESTORAN);
         refreshMoney();
@@ -239,8 +239,8 @@ public final class ShopScreen extends Screen {
                     status.setText(st);
                     infoBox.setContentDescription(Texts.upgradeInfo(u, s) + " " + st + ".");
                     buy.setText(Texts.upgradeButton(u, s));
-                    buy.setContentDescription(lv >= u.maxLevel() ? u.name + " en üst seviyede."
-                            : "Satın al: " + u.name + ", " + u.priceForNext(lv) + " lira. " + st + ".");
+                    buy.setContentDescription(lv >= u.maxLevel() ? u.name + ", en üst seviye"
+                            : "Satın al: " + u.name + ", " + u.priceForNext(lv) + " lira" + (can ? "" : ", " + st.toLowerCase(new java.util.Locale("tr"))));
                     buy.setBackground(Ui.buttonBg(ctx, can ? Ui.PRIMARY : Ui.SECONDARY));
                     buy.setTextColor(can ? Theme.DARK : Theme.CREAM);
                     Ui.dim(buy, !can);

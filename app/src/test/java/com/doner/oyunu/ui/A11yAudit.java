@@ -11,6 +11,13 @@ import java.util.regex.Pattern;
 
 /** Bir ekranın View ağacını erişilebilirlik kurallarına göre denetler. */
 final class A11yAudit {
+    /**
+     * v0.9 kısa etiket kuralı: düğme etiketi yalnızca ad + gerekli durumdur ("Domates ekle", "Döner makinesi, boş",
+     * "Sipariş 2, Ali, ayran ve döner"). Uzun açıklama cümlesi ve "…için dokun" ipuçları TalkBack'i yavaşlatır.
+     */
+    static final int MAX_LABEL = 60;
+    /** Sipariş kartı/kalemi etiketleri müşteri içeriğini (ad, ürünler, istekler) taşır; biraz daha uzun olabilir. */
+    static final int MAX_ORDER_LABEL = 110;
     static final float MIN_DP = 48f;
     static final float PREF_DP = 56f;
     /** Yaygın İngilizce yer tutucu/varsayılan etiketler (Türkçe oyunda bulunmamalı). */
@@ -19,6 +26,8 @@ final class A11yAudit {
     final List<String> errors = new ArrayList<>();
     final List<String> warnings = new ArrayList<>();
     int checkedInteractive;
+    /** Kısa etiket kuralı denetlenen düğme ve özel eylem sayısı (v0.9). */
+    int checkedShortLabels;
     /** Denetlenen TalkBack özel eylemi sayısı (istasyon / hazırlık düğmeleri). */
     int checkedActions;
     /** Denetlenen seçili-durumlu görünüm sayısı (v0.7 oyun akışı seçenekleri). */
@@ -77,6 +86,7 @@ final class A11yAudit {
                     if (!lab.toLowerCase(new java.util.Locale("tr")).contains("seçili")) a.errors.add(id + " seçili ama etiketi 'seçili' demiyor (renge bağımlı durum)");
                 }
                 if (ENGLISH.matcher(lab).find()) a.errors.add(id + " İngilizce etiket olabilir");
+                if (v.isClickable()) checkShort(lab, id, a);
                 // v0.8: aç/kapa düğmesi (Süre baskısı) durumunu etikette söylemeli: "açık" ya da "kapalı"
                 if (v.isClickable() && lab.startsWith("Süre baskısı")) {
                     a.checkedToggles++;
@@ -161,10 +171,20 @@ final class A11yAudit {
             a.checkedActions++;
             if (l.isEmpty()) a.errors.add(id + " özel eylem " + i + " etiketsiz");
             else if (ENGLISH.matcher(l).find()) a.errors.add(id + " özel eylem İngilizce olabilir: '" + shorten(l) + "'");
+            checkShort(l, id + " özel eylem", a);
             for (int j = i + 1; j < labels.size(); j++) {
                 if (labels.get(j).trim().equals(l)) a.errors.add(id + " aynı etiketli iki özel eylem: '" + shorten(l) + "'");
             }
         }
+    }
+
+    /** v0.9: etiket ≤ 60 karakter (sipariş etiketleri ≤ 110) ve "dokun" ipucu yok ("Emin misin" onayı hariç). */
+    static void checkShort(String lab, String id, A11yAudit a) {
+        a.checkedShortLabels++;
+        int max = lab.startsWith("Sipariş ") ? MAX_ORDER_LABEL : MAX_LABEL;
+        if (lab.length() > max) a.errors.add(id + " etiket uzun (" + lab.length() + " > " + max + "): '" + shorten(lab) + "'");
+        if (lab.toLowerCase(new java.util.Locale("tr")).contains("dokun") && !lab.startsWith("Emin misin"))
+            a.errors.add(id + " etiket 'dokun' ipucu içeriyor: '" + shorten(lab) + "'");
     }
 
     private static boolean isDecorative(View v) {

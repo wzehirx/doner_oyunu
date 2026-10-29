@@ -158,7 +158,7 @@ final class UiHarness {
         } catch (Exception e) { throw new AssertionError(e); }
     }
 
-    /** İstasyon düğmesini bulur (contentDescription "…istasyonu"). */
+    /** İstasyon düğmesini bulur (contentDescription "Ad, durum"). */
     View stationTile(Station st) {
         for (View v : visibleViews(root())) {
             if (v.isClickable() && label(v).startsWith(st.displayName)) return v;
@@ -168,7 +168,7 @@ final class UiHarness {
 
     View orderCard(Order o) {
         for (View v : visibleViews(root())) {
-            if (v.isClickable() && label(v).startsWith("Sipariş " + o.getPosition() + ": " + o.customer.name)) return v;
+            if (v.isClickable() && label(v).startsWith("Sipariş " + o.getPosition() + ", " + o.customer.name)) return v;
         }
         return null;
     }

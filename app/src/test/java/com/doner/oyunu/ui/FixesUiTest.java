@@ -242,6 +242,6 @@ public class FixesUiTest {
         assertFalse(d, d.contains("yalnızca"));
         h.act.save.money = 1;
         h.click("Restoran"); h.settle(); h.click("Malzeme"); h.settle();
-        assertTrue(UiHarness.label(h.findLabel("10 " + ing.name + " al")).contains("Paran yetmiyor"));
+        assertTrue(UiHarness.label(h.findLabel("10 " + ing.name + " al")).contains("paran yetmiyor"));
     }
 }

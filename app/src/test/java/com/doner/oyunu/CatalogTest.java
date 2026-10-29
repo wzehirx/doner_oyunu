@@ -32,7 +32,11 @@ public class CatalogTest {
 
     @Test public void everyIngredientIsUsed() {
         Set<String> used = new HashSet<>();
-        for (Product p : Catalog.products()) { used.addAll(p.totalNeeds().keySet()); used.addAll(p.toppingPool); }
+        for (Product p : Catalog.products()) {
+            used.addAll(p.totalNeeds().keySet());
+            used.addAll(p.friesVariant().totalNeeds().keySet()); // patates yalnızca "patatesli" çeşitte kullanılır
+            used.addAll(p.toppingPool);
+        }
         for (Ingredient i : Catalog.ingredients()) assertTrue(i.id + " kullanılmıyor", used.contains(i.id));
     }
 

@@ -133,7 +133,8 @@ public class FlowModeTest {
         assertNull("boy seçeneği yok", find(ops, "size:yarim"));
         StationOption step = find(ops, "step");
         assertNotNull(step);
-        assertTrue(step.label(), step.label().contains("yarım ekmek, boy otomatik"));
+        assertTrue(step.label(), step.label().contains("yarım ekmek"));
+        assertFalse("v0.9: etiket kısa, 'boy otomatik' ayrıntısı yok", step.label().contains("boy otomatik"));
         assertSame("tek dokunuş: panel açılmaz", step, StationOption.direct(ops));
         slice(e, o, "step");
         assertEquals(PortionSize.HALF, o.getLine(0).getChosenSize());
@@ -218,7 +219,7 @@ public class FlowModeTest {
         StationOption auto = find(ops, "auto");
         assertNotNull(auto);
         assertEquals("Varsayılan malzemeleri ekle", auto.name);
-        assertTrue(auto.label(), auto.label().contains("otomatik: domates, marul, soğan ve ketçap"));
+        assertEquals("v0.9: etiket yalnızca ad", "Varsayılan malzemeleri ekle", auto.label());
         assertSame(auto, StationOption.direct(ops));
         assertEquals(StartResult.STARTED, e.applyStationOption(o.id, -1, Station.SOS.id, "auto"));
         Flow.waitDone(e, o);
@@ -297,7 +298,7 @@ public class FlowModeTest {
         StationOption auto = find(ops, "auto");
         assertNotNull(auto);
         assertEquals("Standart malzemelerle bitir", auto.name);
-        assertTrue(auto.label(), auto.label().contains("çırak hazırladı"));
+        assertEquals("v0.9: etiket yalnızca ad", "Standart malzemelerle bitir", auto.label());
         assertNull("Gerçekçi: tüm el seçenekleri durur, panel açılır", StationOption.direct(ops));
         assertNotNull(find(ops, "add:domates"));
         assertEquals(StartResult.STARTED, g.applyStationOption(p.id, -1, Station.SOS.id, "auto"));

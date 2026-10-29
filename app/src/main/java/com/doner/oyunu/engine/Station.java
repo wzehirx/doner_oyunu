@@ -1,11 +1,11 @@
 package com.doner.oyunu.engine;
 
-/** Hazırlık istasyonları. */
+/** Hazırlık istasyonları. IZGARA enum adı kodda kalır; oyuncuya görünen adı "Ocak" (v0.9). */
 public enum Station {
     DONER(1, "Döner makinesi"),
     EKMEK(2, "Ekmek ısıtıcı"),
     SOS(3, "Sos ve salata tezgahı"),
-    IZGARA(4, "Izgara ve fırın"),
+    IZGARA(4, "Ocak"),
     PAKET(5, "Paketleme"),
     ICECEK(6, "İçecek dolabı"),
     TATLI(7, "Tatlı tezgahı");

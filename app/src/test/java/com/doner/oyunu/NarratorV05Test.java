@@ -35,21 +35,22 @@ public class NarratorV05Test {
         e.addListener(n);
         Order o = e.spawnOrder(Arrays.asList("ekmek_arasi", "ayran"), Collections.singletonList("soğansız"));
         String arrive = said.get(said.size() - 1);
-        assertTrue(arrive, arrive.startsWith("Yeni müşteri: " + o.customer.name + ", Ekmek arası döner ve Ayran istiyor. 2 kalem. İstek: soğansız."));
+        assertTrue(arrive, arrive.startsWith("Yeni müşteri: " + o.customer.name + ", Ekmek arası döner ve Ayran. İstek: soğansız."));
         assertTrue(arrive, arrive.endsWith("Sipariş " + o.getPosition() + "."));
         e.selectOrder(o.id);
-        assertTrue(said.toString(), said.contains("Önerilen: Ekmek arası döner: Ekmeği ısıt. Ekmek ısıtıcı istasyonuna dokun."));
+        assertTrue(said.toString(), said.contains("Önerilen: Ekmek arası döner: Ekmeği ısıt. Ekmek ısıtıcı."));
         assertTrue(e.selectItem(1));
         assertTrue(said.toString(), said.contains("Kalem 2 seçildi: Ayran."));
-        assertTrue(said.toString(), said.contains("Önerilen: Ayran: Ayranı doldur. İçecek dolabı istasyonuna dokun."));
+        assertTrue(said.toString(), said.contains("Önerilen: Ayran: Ayranı doldur. İçecek dolabı."));
         assertEquals(StartResult.STARTED, e.startStep(o.id, Station.ICECEK.id));
         assertTrue(said.get(said.size() - 1), said.get(said.size() - 1).startsWith("Ayran: Ayranı doldur başladı"));
         Flow.waitDone(e, o);
         String fin = null;
         for (String t : said) if (t.startsWith("Ayran: Ayranı doldur bitti.")) fin = t;
         assertNotNull(said.toString(), fin);
-        assertTrue(fin, fin.startsWith("Ayran: Ayranı doldur bitti. Önerilen: Ekmek arası döner: Ekmeği ısıt"));
+        assertEquals("v0.9: bitiş duyurusu kısa, sıradaki adım ayrı duyuru", "Ayran: Ayranı doldur bitti.", fin);
         assertFalse(fin.contains("Sıradaki"));
+        assertTrue(said.toString(), said.contains("Önerilen: Ekmek arası döner: Ekmeği ısıt. Ekmek ısıtıcı."));
     }
 
     @Test public void lockedAndPackAnnouncements() {
@@ -63,10 +64,10 @@ public class NarratorV05Test {
         e.startStep(o.id, Station.PAKET.id);
         assertEquals("Paketlemeden önce tüm kalemler hazır olmalı.", said.get(said.size() - 1));
         Flow.doItemStation(e, o, 0, Station.ICECEK);
-        assertTrue(said.toString(), said.contains("Ayranı doldur bitti. Önerilen: Siparişi paketle, Paketleme."));
-        assertTrue(said.toString(), said.contains("Önerilen: Siparişi paketle. Paketleme istasyonuna dokun."));
+        assertTrue(said.toString(), said.contains("Ayranı doldur bitti."));
+        assertTrue(said.toString(), said.contains("Önerilen: Siparişi paketle. Paketleme."));
         Flow.doItemStation(e, o, 0, Station.PAKET);
-        assertTrue(said.toString(), said.contains("Sipariş hazır: " + o.customer.name + ", Ayran. Teslim et."));
+        assertTrue(said.toString(), said.contains("Sipariş hazır: " + o.customer.name + ". Teslim et."));
         Order t = e.spawnOrder(Collections.singletonList("ekmek_arasi"), NONE);
         e.startStep(t.id, Station.SOS.id);
         assertTrue(said.get(said.size() - 1), said.get(said.size() - 1).startsWith("Malzeme eklemeden önce"));
@@ -77,16 +78,16 @@ public class NarratorV05Test {
         Narrator n = new Narrator(e);
         Order o = e.spawnOrder(Arrays.asList("ekmek_arasi", "ayran"), NONE);
         e.selectOrder(o.id);
-        assertEquals("Ekmek ısıtıcı istasyonu, boş, Ekmek arası döner Ekmeği ısıt için gerekli", n.stationLabel(Station.EKMEK));
-        assertEquals("İçecek dolabı istasyonu, boş, Ayran Ayranı doldur için gerekli", n.stationLabel(Station.ICECEK));
-        assertEquals("Paketleme istasyonu, boş", n.stationLabel(Station.PAKET));
+        assertEquals("Ekmek ısıtıcı, boş, sıradaki: Ekmeği ısıt", n.stationLabel(Station.EKMEK));
+        assertEquals("İçecek dolabı, boş, sıradaki: Ayranı doldur", n.stationLabel(Station.ICECEK));
+        assertEquals("Paketleme, boş", n.stationLabel(Station.PAKET));
         e.getSave().readyDrinks = 3;
         assertTrue(n.stationLabel(Station.ICECEK).endsWith("hazır 3 bardak ayran"));
         Flow.doItemStation(e, o, 0, Station.EKMEK);
         Flow.doItemStation(e, o, 0, Station.DONER);
         Flow.doItemStation(e, o, 0, Station.SOS);
         Flow.doItemStation(e, o, 1, Station.ICECEK);
-        assertEquals("Paketleme istasyonu, boş, Siparişi paketle için gerekli", n.stationLabel(Station.PAKET));
+        assertEquals("Paketleme, boş, sıradaki: Siparişi paketle", n.stationLabel(Station.PAKET));
         assertEquals("", new Narrator(null).readyStockText());
     }
 

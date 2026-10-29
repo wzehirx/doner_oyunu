@@ -55,13 +55,13 @@ public class StationOptionTest {
                 "undo", "finish", "read:added", "read:target", "prep:tray"), ids(l));
         StationOption dom = find(l, "add:domates");
         assertEquals("Domates ekle", dom.name);
-        assertEquals("Domates ekle, stokta " + s.inventory.get("domates"), dom.description);
+        assertEquals("v0.9: etiket yalnızca ad", "Domates ekle", dom.description);
         assertEquals(dom.description, dom.label());
         assertEquals("domates", dom.ingredientId);
         assertEquals(StationOption.Group.ADD, dom.group);
         assertTrue(dom.enabled);
         assertFalse(dom.outOfStock);
-        assertEquals("Ketçap ekle, stokta " + s.inventory.get("ketcap"), find(l, "add:ketcap").description);
+        assertEquals("Ketçap ekle", find(l, "add:ketcap").description);
         assertFalse("henüz bir şey eklenmedi: geri al kilitli", find(l, "undo").enabled);
         assertEquals("Henüz malzeme eklenmedi", find(l, "undo").lockReason);
         assertTrue(find(l, "finish").enabled);
@@ -82,7 +82,7 @@ public class StationOptionTest {
         List<StationOption> l = e.getStationOptions(o.id, 0, Station.SOS.id);
         StationOption bol = find(l, "add:domates");
         assertEquals("Domates bol ekle", bol.name);
-        assertTrue(bol.description, bol.description.contains("1 kez eklendi"));
+        assertEquals("Domates bol ekle, eklendi", bol.description);
         assertTrue(bol.enabled);
         assertTrue(find(l, "undo").enabled);
         assertEquals(StartResult.STARTED, e.applyStationOption(o.id, 0, Station.SOS.id, "add:domates"));
@@ -132,7 +132,7 @@ public class StationOptionTest {
         for (int i = 0; i < 60; i++) e.tick(0.1f);
         e.startDay();
         Order o = openTopping(e, "ekmek_arasi");
-        assertEquals("Domates ekle, hazır tepside 6", find(e.getStationOptions(o.id, 0, Station.SOS.id), "add:domates").description);
+        assertEquals("v0.9: tepsi bilgisi etikette yok", "Domates ekle", find(e.getStationOptions(o.id, 0, Station.SOS.id), "add:domates").description);
     }
 
     @Test public void readOptionsInformWithoutChangingState() {
@@ -176,7 +176,7 @@ public class StationOptionTest {
         StationOption pack = find(e.getStationOptions(o.id, -1, Station.PAKET.id), "step");
         assertEquals("Siparişi paketle", pack.name);
         assertTrue(pack.enabled);
-        assertEquals("Siparişi paketle, 2 saniye", pack.description);
+        assertEquals("Siparişi paketle", pack.description);
         assertEquals(StartResult.STARTED, e.applyStationOption(o.id, -1, Station.PAKET.id, "step"));
         assertEquals("Paketleme sürüyor", find(e.getStationOptions(o.id, -1, Station.PAKET.id), "step").lockReason);
         Flow.waitDone(e, o);
@@ -202,7 +202,7 @@ public class StationOptionTest {
         // ekmek istasyonu: çok kalemli siparişte kalem adı öneki
         StationOption bread = find(e.getStationOptions(o.id, -1, Station.EKMEK.id), "step");
         assertEquals("Ekmek arası döner: Ekmeği ısıt", bread.name);
-        assertEquals("Ekmek arası döner: Ekmeği ısıt, 4 saniye", bread.description);
+        assertEquals("Ekmek arası döner: Ekmeği ısıt", bread.description);
         assertTrue(bread.enabled);
         // içecek istasyonu: ayran adımı + hazırlık
         List<StationOption> ice = e.getStationOptions(o.id, -1, Station.ICECEK.id);

@@ -45,15 +45,14 @@ public final class MenuScreen extends Screen {
             Button cont = button("Devam et", Ui.PRIMARY, new Runnable() {
                 @Override public void run() { a.startBriefing(); }
             });
-            cont.setContentDescription("Devam et. Gün " + a.save.day + ", kasada " + a.save.money + " lira, yıldız "
-                    + com.doner.oyunu.engine.Narrator.fmtStars(a.save.stars) + ".");
+            cont.setContentDescription("Devam et, gün " + a.save.day);
             body.addView(cont, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 6, 0, 8));
         }
 
         newGameBtn = button("Yeni oyun", a.hasGame() ? Ui.SECONDARY : Ui.PRIMARY, new Runnable() {
             @Override public void run() { onNewGame(); }
         });
-        newGameBtn.setContentDescription(a.hasGame() ? "Yeni oyun. Kayıtlı oyun silinir. Onay için iki kez dokun." : "Yeni oyun");
+        newGameBtn.setContentDescription("Yeni oyun");
         body.addView(newGameBtn, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 6, 0, 8));
 
         body.addView(button("Nasıl oynanır", Ui.SECONDARY, new Runnable() {
@@ -64,7 +63,7 @@ public final class MenuScreen extends Screen {
             @Override public void run() { a.show(new SettingsScreen(a)); }
         }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 6, 0, 8));
 
-        TextView hint = Ui.label(ctx, "TalkBack açıkken ekranda gezinmek için sağa ve sola kaydır, seçmek için çift dokun.", 15, Theme.MUTED, false);
+        TextView hint = Ui.label(ctx, "TalkBack açıkken sağa sola kaydırarak gez, çift dokunarak seç.", 15, Theme.MUTED, false);
         hint.setFocusable(true);
         hint.setGravity(Gravity.CENTER);
         body.addView(hint, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 12, 0, 4));
@@ -75,8 +74,8 @@ public final class MenuScreen extends Screen {
         if (a.hasGame() && !confirmNew) {
             confirmNew = true;
             newGameBtn.setText("Emin misin? Tekrar dokun");
-            newGameBtn.setContentDescription("Emin misin? Kayıtlı oyun silinecek. Yeni oyun başlatmak için tekrar dokun.");
-            a.speaker.announce("Kayıtlı oyun silinecek. Onaylamak için Yeni oyun düğmesine tekrar dokun.", true);
+            newGameBtn.setContentDescription("Emin misin? Kayıt silinecek, tekrar dokun");
+            a.speaker.announce("Kayıtlı oyun silinecek. Onaylamak için tekrar dokun.", true);
             return;
         }
         a.newGame();
@@ -106,7 +105,7 @@ public final class MenuScreen extends Screen {
         if (confirmNew) {
             confirmNew = false;
             newGameBtn.setText("Yeni oyun");
-            newGameBtn.setContentDescription("Yeni oyun. Kayıtlı oyun silinir. Onay için iki kez dokun.");
+            newGameBtn.setContentDescription("Yeni oyun");
             return true;
         }
         return false;

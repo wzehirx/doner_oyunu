@@ -29,6 +29,9 @@ public abstract class Screen {
     /** Müzik adı (res/raw) ya da null. */
     public String music() { return "music_menu"; }
 
+    /** Ambiyans döngüsü adı (res/raw) ya da null: yalnızca gün ekranı dükkân ambiyansı çalar (v0.9). */
+    public String ambience() { return null; }
+
     /** Ekrana girişte odaklanacak görünüm (varsayılan: başlık). */
     public View focusTarget() { return titleView; }
 

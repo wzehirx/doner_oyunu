@@ -26,6 +26,7 @@ public final class GameEngine {
     private static final double WRONG_STATION_PENALTY = 0.02;
     private static final float READY_MEAT_SECONDS = 0.8f;
     private static final float READY_DRINK_SECONDS = 0.5f;
+    private static final float READY_FRIES_SECONDS = 0.8f;
     private static final float TOPPING_SECONDS_EACH = 0.3f;
     private static final float APPRENTICE_SLOWDOWN = 1.2f;
     private static final double MISTAKE_PENALTY_EACH = 0.05;
@@ -61,6 +62,12 @@ public final class GameEngine {
     private final Map<String, Integer> readyMeat = new LinkedHashMap<>();
     /** Açık yarım: stoktan düşülmüş bir porsiyon/ekmeğin kalan yarısı (0 veya 1 yarım birim), malzeme id -> yarım. Gün içi. */
     private final Map<String, Integer> halfOpen = new HashMap<>();
+    /** Hazır kızarmış patates (porsiyon). Gün sonunda atılır. */
+    private int readyFries;
+    /** Patatesli sipariş kararları için ayrı rastgele kaynak: ana müşteri akışının rastgeleliğini kaydırmaz. */
+    private final Random friesRng;
+    /** Oyuncu eylem sayacı: öğretici/öneri duyurularının bayatlığını denetlemek için (her oyuncu eyleminde artar). */
+    private int actionVersion;
     /** Hazır tepsi: malzeme id -> kalan kullanım. Gün sonunda atılır. */
     private final Map<String, Integer> trayUses = new LinkedHashMap<>();
     /** Son OUT_OF_STOCK'a düşen adım: sipariş id -> {kalem, adım, boy ordinal (-1: otomatik/istenen)}. */
@@ -101,6 +108,7 @@ public final class GameEngine {
         this.menu = Catalog.productsForDay(day);
         this.quota = cfg.quota(upgrades.arrivalMult());
         this.rng = new Random(seed);
+        this.friesRng = new Random(seed ^ 0x5DEECE66DL);
         this.nameCursor = rng.nextInt(Catalog.NAMES.length);
         summary.day = day;
         summary.startStars = save.stars;
@@ -220,6 +228,14 @@ public final class GameEngine {
     /** Toplam hazır döner, yarım porsiyon sayacı. */
     public int getReadyDonerHalves() { int t = 0; for (int v : readyMeat.values()) t += v; return t; }
     public int getReadyDrinks() { return save.readyDrinks; }
+    /** Hazır kızarmış patates (porsiyon). */
+    public int getReadyFries() { return readyFries; }
+    /**
+     * Oyuncu eylem sayacı: oyuncunun yaptığı her eylemde (adım/hazırlık/malzeme başlatma, sipariş ve kalem seçimi, teslim) artar.
+     * Konuşma sırası, bir duyuru yapıldığı andaki değeri saklayıp söylenmeden önce karşılaştırarak bayat ipucunu eler.
+     */
+    public int getActionVersion() { return actionVersion; }
+    private void playerAction() { actionVersion++; }
     /** Hazır tepsideki malzemenin kalan kullanımı. */
     public int getTrayUses(String ingredientId) { Integer v = trayUses.get(ingredientId); return v == null ? 0 : v; }
     public int getTrayTotal() { int t = 0; for (int v : trayUses.values()) t += v; return t; }
@@ -246,6 +262,13 @@ public final class GameEngine {
         List<Ingredient> out = new ArrayList<>();
         for (Ingredient i : Catalog.ingredients()) if (ids.contains(i.id)) out.add(i);
         return out;
+    }
+
+    /** Bugünün menüsünde patatesli sipariş olabilir mi (patates açık ve en az bir ürün patates alıyor). */
+    public boolean menuHasFries() {
+        if (day < Catalog.FRIES_OPEN_DAY) return false;
+        for (Product p : menu) if (p.friesOk()) return true;
+        return false;
     }
 
     /** Bugünün menüsünde ayran var mı. */
@@ -390,6 +413,7 @@ public final class GameEngine {
             String id = e.getKey();
             if (rm && id.equals(s.meatId())) continue;
             if (s.isDrinkFill() && id.equals(Catalog.AYRAN) && usesReadyDrink(s)) continue;
+            if (s.isFry() && id.equals(Catalog.PATATES) && usesReadyFries(s)) continue;
             if (scaled(s, id)) {
                 int raw = rawUnitsFor(id, e.getValue() * sz.halves);
                 if (raw > 0) m.put(id, raw);
@@ -405,6 +429,12 @@ public final class GameEngine {
         if (meat == null) return false;
         Integer need = s.needs.get(meat);
         return need != null && getReadyMeatHalves(meat) >= need * sz.halves;
+    }
+
+    private boolean usesReadyFries(Step s) {
+        if (!s.isFry()) return false;
+        Integer need = s.needs.get(Catalog.PATATES);
+        return need != null && readyFries >= need;
     }
 
     private boolean usesReadyDrink(Step s) {
@@ -442,6 +472,7 @@ public final class GameEngine {
         if (o == null) return false;
         selectedId = orderId;
         selectedItem = -1;
+        playerAction();
         for (GameListener l : snap()) l.onOrderSelected(o);
         hint(o);
         return true;
@@ -460,6 +491,7 @@ public final class GameEngine {
         Order o = getSelectedOrder();
         if (o == null || itemIndex < -1 || itemIndex >= o.lineCount()) return false;
         selectedItem = itemIndex;
+        playerAction();
         if (itemIndex >= 0) for (GameListener l : snap()) l.onItemSelected(o, itemIndex);
         hint(o);
         return true;
@@ -613,6 +645,7 @@ public final class GameEngine {
             if (getTrayUses(id) > 0) { trayUses.put(id, getTrayUses(id) - 1); covered++; }
             else save.inventory.add(id, -1);
         }
+        playerAction();
         double frac = ordered.isEmpty() ? 0.0 : covered / (double) ordered.size();
         double d = (step.baseSeconds + TOPPING_SECONDS_EACH * ordered.size()) * (1.0 - 0.5 * frac)
                 * upgrades.speedMult(step.station) * save.tempo;
@@ -699,6 +732,7 @@ public final class GameEngine {
         if (tray) trayUses.put(ingredientId, getTrayUses(ingredientId) - 1);
         else save.inventory.add(ingredientId, -1);
         line.recordAdd(ingredientId, tray);
+        playerAction();
         line.setRunning(ti, true);
         blocked.remove(o.id);
         float dur = addSeconds(ing, tray);
@@ -739,6 +773,7 @@ public final class GameEngine {
         if (line.isStepDone(ti) || line.addedTotal() == 0) return rejectOption(o, "undo", StartResult.NOTHING_TO_UNDO);
         if (line.isStepRunning(ti)) return rejectOption(o, "undo", StartResult.ORDER_BUSY);
         boolean[] wasTray = new boolean[1];
+        playerAction();
         String id = line.undoLast(wasTray);
         if (wasTray[0]) trayUses.put(id, getTrayUses(id) + 1);
         else save.inventory.add(id, 1);
@@ -780,6 +815,7 @@ public final class GameEngine {
         line.finishChosen();
         line.setDone(ti);
         blocked.remove(o.id);
+        playerAction();
         for (GameListener l : snap()) l.onToppingsFinished(o, li, line.getChosen());
         afterLineStep(o, line, step, 0, 0f);
         return StartResult.STARTED;
@@ -818,6 +854,7 @@ public final class GameEngine {
         if (ti < 0 || ing == null) return rejectOption(o, "remove:" + ingredientId, StartResult.INVALID);
         if (line.isStepDone(ti) || line.addedCount(ingredientId) == 0) return rejectOption(o, "remove:" + ingredientId, StartResult.NOTHING_TO_UNDO);
         if (line.isStepRunning(ti)) return rejectOption(o, "remove:" + ingredientId, StartResult.ORDER_BUSY);
+        playerAction();
         refund(ingredientId, line.removeAll(ingredientId));
         for (GameListener l : snap()) l.onToppingRemoved(o, li, ing, 0);
         return StartResult.STARTED;
@@ -944,6 +981,7 @@ public final class GameEngine {
         }
         float dur = (float) Math.max(MIN_ADD_SECONDS, d);
         if (mode != FlowMode.RAHAT) line.setAutoDone();
+        playerAction();
         line.setRunning(ti, true);
         blocked.remove(o.id);
         Step syn = new Step(autoName(mode), Station.SOS, dur,
@@ -1063,9 +1101,7 @@ public final class GameEngine {
         Step s = o.getPackStep();
         boolean ok = o.canPack() && slotFree();
         String reason = o.isPacking() ? "Paketleme sürüyor" : !o.allLinesDone() ? "Önce tüm kalemler hazır olmalı" : LOCK_SLOT;
-        float sec = (float) Math.max(MIN_STEP_SECONDS, s.baseSeconds * upgrades.speedMult(Station.PAKET) * save.tempo);
-        return new StationOption("step", StationOption.Group.STEP, s.name, s.name + ", " + Narrator.fmtSeconds(sec),
-                ok, reason, null, false);
+        return new StationOption("step", StationOption.Group.STEP, s.name, s.name, ok, reason, null, false);
     }
 
     private void lineOptions(List<StationOption> out, Order o, int li, Station st) {
@@ -1101,19 +1137,17 @@ public final class GameEngine {
         String reason = running ? "Çalışıyor" : locked ? "Önce kalemin önceki adımları bitmeli" : LOCK_SLOT;
         Map<String, Integer> need = effectiveNeeds(s, sz);
         boolean out = !save.inventory.hasAll(need);
-        float sec = previewSeconds(line, si, sz);
         String sizeText = "";
         if (s.isBreadStep() && sz != PortionSize.FULL) sizeText = ", " + sz.spoken();
-        else if (s.isSized() && line.hasSize() && PortionSize.HALF.isOpen(day)) sizeText = ", " + sz.spoken() + ", boy otomatik";
-        String desc = who + s.name + sizeText + ", " + Narrator.fmtSeconds(sec)
-                + (s.isSized() && usesReadyMeat(s, sz) ? ", hazır dilimden" : "") + (out ? ", malzeme yok" : "");
+        else if (s.isSized() && line.hasSize() && PortionSize.HALF.isOpen(day)) sizeText = ", " + sz.spoken();
+        String desc = who + s.name + sizeText + (out ? ", malzeme yok" : "");
         return new StationOption("step", StationOption.Group.STEP, who + s.name, desc, ok, reason, null, out);
     }
 
     /** Başlatılsaydı adımın süresi (sn) — hazır stok, boy ve hız dahil. */
     private float previewSeconds(OrderLine line, int si, PortionSize sz) {
         Step s = line.step(si);
-        return lineStepSeconds(s, usesReadyMeat(s, sz), usesReadyDrink(s), 0, sz);
+        return lineStepSeconds(s, usesReadyMeat(s, sz), usesReadyDrink(s), usesReadyFries(s), 0, sz);
     }
 
     private void sizeOptions(List<StationOption> out, Order o, OrderLine line, int si, String who) {
@@ -1129,9 +1163,7 @@ public final class GameEngine {
             String reason = !open ? sz.unlockDay + ". günde açılır" : running ? "Dilimleme sürüyor"
                     : locked ? "Önce kalemin önceki adımları bitmeli" : LOCK_SLOT;
             boolean oos = !save.inventory.hasAll(effectiveNeeds(s, sz));
-            String portions = PortionSize.halvesText(need * sz.halves) + " porsiyon";
-            String desc = who + sz.displayName + ", " + portions + ", " + Narrator.fmtSeconds(previewSeconds(line, si, sz))
-                    + (usesReadyMeat(s, sz) ? ", hazır dilimden" : "") + (oos ? ", malzeme yok" : "");
+            String desc = who + sz.displayName + (oos ? ", malzeme yok" : "");
             out.add(new StationOption("size:" + sz.id, StationOption.Group.SIZE, sz.displayName, desc, ok, reason, meat, oos));
         }
     }
@@ -1151,8 +1183,8 @@ public final class GameEngine {
             boolean oos = stock <= 0 && tray <= 0;
             boolean maxed = cnt >= MAX_ADD_PER_INGREDIENT;
             String name = ing.name + (cnt == 1 ? " bol ekle" : " ekle");
-            String state = oos ? ", stokta yok" : tray > 0 ? ", hazır tepside " + tray : ", stokta " + stock;
-            String added = cnt == 1 ? ", 1 kez eklendi" : cnt >= 2 ? ", bol eklendi" : "";
+            String state = oos ? ", stokta yok" : "";
+            String added = cnt == 1 ? ", eklendi" : cnt >= 2 ? ", bol eklendi" : "";
             boolean ok = !locked && !running && slot && !maxed;
             String reason = locked ? lockedReason : running ? "Ekleme sürüyor" : maxed ? "En fazla bol, iki kez eklenir" : LOCK_SLOT;
             out.add(new StationOption("add:" + id, StationOption.Group.ADD, who + name, who + name + added + state,
@@ -1160,14 +1192,14 @@ public final class GameEngine {
         }
         boolean none = line.addedTotal() == 0;
         out.add(new StationOption("undo", StationOption.Group.CONTROL, "Son ekleneni geri al",
-                "Son ekleneni geri al" + (none ? ", henüz bir şey eklenmedi" : ""),
+                "Son ekleneni geri al",
                 !none && !running, none ? "Henüz malzeme eklenmedi" : "Ekleme sürüyor", null, false));
         out.add(new StationOption("finish", StationOption.Group.CONTROL, "Malzemeleri bitir",
-                who + "Malzemeleri bitir, " + line.addedTotal() + " ekleme",
+                who + "Malzemeleri bitir",
                 !locked && !running, locked ? lockedReason : "Ekleme sürüyor", null, false));
         out.add(new StationOption("read:added", StationOption.Group.READ, "Eklenenleri oku", "Eklenenleri oku",
                 true, null, null, false));
-        out.add(new StationOption("read:target", StationOption.Group.READ, "Hedefi oku", "Hedefi oku, müşterinin istediği malzemeler",
+        out.add(new StationOption("read:target", StationOption.Group.READ, "Hedefi oku", "Hedefi oku",
                 true, null, null, false));
     }
 
@@ -1191,19 +1223,19 @@ public final class GameEngine {
                 int stock = save.inventory.get(id);
                 int tray = getTrayUses(id);
                 boolean oos = stock <= 0 && tray <= 0;
-                String state = oos ? ", stokta yok" : tray > 0 ? ", hazır tepside " + tray : ", stokta " + stock;
+                String state = oos ? ", stokta yok" : "";
                 String name = ing.name + " ekle";
                 boolean ok = !locked && !running && slot;
                 String reason = locked ? lockedReason : running ? "Ekleme sürüyor" : LOCK_SLOT;
                 out.add(new StationOption("add:" + id, StationOption.Group.ADD, who + name, who + name + state, ok, reason, id, oos));
             }
             out.add(new StationOption("finish", StationOption.Group.CONTROL, "Malzemeleri bitir",
-                    who + "Malzemeleri bitir, " + line.addedTotal() + " ekleme",
+                    who + "Malzemeleri bitir",
                     !locked && !running, locked ? lockedReason : "Ekleme sürüyor", null, false));
             out.add(new StationOption("read:added", StationOption.Group.READ, "Eklenenleri oku", "Eklenenleri oku",
                     true, null, null, false));
         }
-        out.add(new StationOption("read:target", StationOption.Group.READ, "Hedefi oku", "Hedefi oku, müşterinin istediği malzemeler",
+        out.add(new StationOption("read:target", StationOption.Group.READ, "Hedefi oku", "Hedefi oku",
                 true, null, null, false));
     }
 
@@ -1214,7 +1246,7 @@ public final class GameEngine {
             Ingredient ing = Catalog.ingredient(id);
             String name = ing.name + " çıkar";
             out.add(new StationOption("remove:" + id, StationOption.Group.REMOVE, who + name,
-                    who + name + (line.addedCount(id) >= 2 ? ", bol eklendi" : ", eklendi") + ", stoğa döner",
+                    who + name,
                     !locked && !running, locked ? lockedReason : "Ekleme sürüyor", id, false));
         }
     }
@@ -1230,15 +1262,9 @@ public final class GameEngine {
 
     private StationOption autoOption(OrderLine line, String who, boolean locked, boolean running, boolean slot, String lockedReason) {
         FlowMode m = getFlowMode();
-        List<String> add = autoAddList(line);
-        List<String> rem = autoRemoveList(line);
         boolean oos = !save.inventory.hasAll(autoNeeds(line));
         String name = autoName(m);
-        StringBuilder d = new StringBuilder(who).append(name).append(m == FlowMode.GERCEKCI ? ", çırak hazırladı" : ", otomatik");
-        if (!add.isEmpty()) d.append(": ").append(Narrator.joinNames(add));
-        else if (rem.isEmpty()) d.append(", eklenecek malzeme yok");
-        if (!rem.isEmpty()) d.append(", çıkarılacak: ").append(Narrator.joinNames(rem));
-        d.append(", ").append(Narrator.fmtSeconds(autoPreviewSeconds(add)));
+        StringBuilder d = new StringBuilder(who).append(name);
         if (oos) d.append(", malzeme yok");
         String reason = locked ? lockedReason : running ? "Ekleme sürüyor" : LOCK_SLOT;
         return new StationOption("auto", StationOption.Group.STEP, who + name, d.toString(),
@@ -1259,9 +1285,7 @@ public final class GameEngine {
                     boolean full = getReadyMeatHalves(m.id) + 2 * pendingPrep(PrepKind.DONER, m.id) + 2 * n > cap;
                     boolean lack = !save.inventory.has(m.id, n);
                     String reason = full ? "Hazır stok dolu" : lack ? "Malzeme yetmiyor: " + m.name : LOCK_SLOT;
-                    String desc = name + ", hazırlık, " + Narrator.fmtSeconds(prepSeconds(PrepKind.DONER, n))
-                            + ", hazır döner " + PortionSize.halvesText(getReadyMeatHalves(m.id)) + " porsiyon";
-                    out.add(new StationOption("prep:doner:" + m.id + ":" + n, StationOption.Group.PREP, name, desc,
+                    out.add(new StationOption("prep:doner:" + m.id + ":" + n, StationOption.Group.PREP, name, name,
                             slot && !full && !lack, reason, m.id, false));
                 }
             }
@@ -1271,15 +1295,21 @@ public final class GameEngine {
             boolean lack = !save.inventory.has(Catalog.AYRAN, PrepKind.DRINK.batch);
             String reason = full ? "Hazır stok dolu" : lack ? "Malzeme yetmiyor: Ayran şişesi" : LOCK_SLOT;
             String name = PrepKind.DRINK.batch + " bardak ayran doldur";
-            out.add(new StationOption("prep:drink", StationOption.Group.PREP, name,
-                    name + ", hazırlık, " + Narrator.fmtSeconds(prepSeconds(PrepKind.DRINK, PrepKind.DRINK.batch)) + ", hazır ayran " + save.readyDrinks,
+            out.add(new StationOption("prep:drink", StationOption.Group.PREP, name, name,
                     slot && !full && !lack, reason, Catalog.AYRAN, false));
+        } else if (st == Station.IZGARA && menuHasFries()) {
+            int cap = upgrades.readyCapacity(PrepKind.FRIES);
+            boolean full = readyFries + pendingPrep(PrepKind.FRIES, null) + PrepKind.FRIES.batch > cap;
+            boolean lack = !save.inventory.has(Catalog.PATATES, PrepKind.FRIES.batch);
+            String reason = full ? "Hazır stok dolu" : lack ? "Malzeme yetmiyor: Patates" : LOCK_SLOT;
+            String name = PrepKind.FRIES.batch + " porsiyon patates kızart";
+            out.add(new StationOption("prep:fries", StationOption.Group.PREP, name, name,
+                    slot && !full && !lack, reason, Catalog.PATATES, false));
         } else if (st == Station.SOS) {
             Set<String> pick = trayPick(false);
             boolean enough = pick.size() >= 2;
             String name = "Salata ve sos tepsisi hazırla";
-            out.add(new StationOption("prep:tray", StationOption.Group.PREP, name,
-                    name + ", hazırlık, " + (enough ? Narrator.joinNames(pick) : "yeterli malzeme yok"),
+            out.add(new StationOption("prep:tray", StationOption.Group.PREP, name, name,
                     slot && enough, enough ? LOCK_SLOT : "Yeterli malzeme yok", null, false));
         }
     }
@@ -1371,6 +1401,8 @@ public final class GameEngine {
                 r = startPrepDoner(p[2], n);
             } else if (p.length == 2 && p[1].equals("drink")) {
                 r = startPrepDrink();
+            } else if (p.length == 2 && p[1].equals("fries")) {
+                r = startPrepFries();
             } else if (p.length == 2 && p[1].equals("tray")) {
                 Set<String> pick = trayPick(false);
                 r = startPrepTray(pick);
@@ -1423,6 +1455,14 @@ public final class GameEngine {
 
     public PrepResult startPrepDrink() { return startPrep(PrepKind.DRINK, Collections.<String>emptyList()); }
 
+    /** Hazır patates: 4 porsiyon kızartır (Ocak, ~5 sn); gün sonunda atılır. Menüde patates yoksa (3. günden önce) INVALID. */
+    public PrepResult startPrepFries() {
+        if (state == State.FINISHED || state == State.FAILED) return PrepResult.NOT_ALLOWED;
+        if (state == State.READY) beginPrep();
+        if (!menuHasFries()) return reject(PrepKind.FRIES, PrepResult.INVALID, null);
+        return startPrep(PrepKind.FRIES, Collections.<String>emptyList());
+    }
+
     public PrepResult startPrepTray(Collection<String> ingredientIds) { return startPrep(PrepKind.TRAY, ingredientIds); }
 
     /** Devam eden hazırlıklarla üretilecek miktar (döner: porsiyon, içecek: bardak, tepsi: malzeme başına kullanım). */
@@ -1430,7 +1470,7 @@ public final class GameEngine {
         int n = 0;
         for (ActiveStep a : active) {
             if (a.prep != kind) continue;
-            if (kind == PrepKind.DRINK || (a.ids != null && a.ids.contains(id))) n += a.amount;
+            if (kind == PrepKind.DRINK || kind == PrepKind.FRIES || (a.ids != null && a.ids.contains(id))) n += a.amount;
         }
         return n;
     }
@@ -1440,6 +1480,7 @@ public final class GameEngine {
         switch (kind) {
             case DONER: for (String id : ids) m.put(id, amount); break;
             case DRINK: m.put(Catalog.AYRAN, amount); break;
+            case FRIES: m.put(Catalog.PATATES, amount); break;
             default: for (String id : ids) m.put(id, amount); break;
         }
         return m;
@@ -1476,6 +1517,9 @@ public final class GameEngine {
             case DRINK:
                 if (save.readyDrinks + pendingPrep(kind, null) + kind.batch > cap) return reject(kind, PrepResult.FULL, null);
                 break;
+            case FRIES:
+                if (readyFries + pendingPrep(kind, null) + kind.batch > cap) return reject(kind, PrepResult.FULL, null);
+                break;
             default:
                 for (String id : ids) {
                     if (getTrayUses(id) + pendingPrep(kind, id) + kind.batch > cap) return reject(kind, PrepResult.FULL, null);
@@ -1489,6 +1533,7 @@ public final class GameEngine {
             }
         }
         save.inventory.consumeAll(need);
+        if (worker == 0) playerAction();
         double d = prepSeconds(kind, amount) * (worker > 0 ? APPRENTICE_SLOWDOWN : 1f);
         float dur = (float) Math.max(MIN_STEP_SECONDS, d);
         Step syn = new Step(kind.displayName, kind.station, dur, Collections.<String, Integer>emptyMap());
@@ -1543,6 +1588,7 @@ public final class GameEngine {
         double flowTip = v06Balance ? 1.0 : getFlowMode().tipMult;
         int tip = (int) Math.round(price * tipRate * o.customer.type.tipMult * upgrades.tipMult() * flowTip
                 * (timed ? 1.0 : UNTIMED_TIP_MULT));
+        playerAction();
         save.money += price + tip;
         summary.revenue += price;
         summary.tips += tip;
@@ -1696,11 +1742,12 @@ public final class GameEngine {
         return false;
     }
 
-    private float lineStepSeconds(Step step, boolean readyMeat, boolean readyDrink, int worker, PortionSize sz) {
+    private float lineStepSeconds(Step step, boolean readyMeat, boolean readyDrink, boolean readyFry, int worker, PortionSize sz) {
         double d;
         float min = MIN_STEP_SECONDS;
         if (readyMeat) { d = READY_MEAT_SECONDS * sz.timeMult; min = MIN_READY_SECONDS; }
         else if (readyDrink) { d = READY_DRINK_SECONDS; min = MIN_READY_SECONDS; }
+        else if (readyFry) { d = READY_FRIES_SECONDS; min = MIN_READY_SECONDS; }
         else {
             d = step.baseSeconds * upgrades.speedMult(step.station);
             if (step.isSized() || step.isBreadStep()) d *= sz.timeMult;
@@ -1720,6 +1767,8 @@ public final class GameEngine {
         PortionSize sz = needSize(line, step, meatChoice);
         boolean rm = usesReadyMeat(step, sz);
         boolean rd = usesReadyDrink(step);
+        boolean rf = usesReadyFries(step);
+        if (rf) readyFries -= step.needs.get(Catalog.PATATES);
         if (rm) {
             String m = step.meatId();
             readyMeat.put(m, getReadyMeatHalves(m) - step.needs.get(m) * sz.halves);
@@ -1729,11 +1778,13 @@ public final class GameEngine {
             String id = e.getKey();
             if (rm && id.equals(step.meatId())) continue;
             if (rd && id.equals(Catalog.AYRAN)) continue;
+            if (rf && id.equals(Catalog.PATATES)) continue;
             if (scaled(step, id)) consumeHalves(id, e.getValue() * sz.halves);
             else save.inventory.add(id, -e.getValue());
         }
         if (step.isSized()) line.setChosenSize(sz);
-        float dur = lineStepSeconds(step, rm, rd, worker, sz);
+        float dur = lineStepSeconds(step, rm, rd, rf, worker, sz);
+        if (worker == 0) playerAction();
         line.setRunning(si, true);
         blocked.remove(o.id);
         int slot = worker == 0 ? freeSlot() : -1;
@@ -1755,6 +1806,7 @@ public final class GameEngine {
         float dur = (float) Math.max(MIN_STEP_SECONDS, d);
         o.packing = true;
         blocked.remove(o.id);
+        if (worker == 0) playerAction();
         int slot = worker == 0 ? freeSlot() : -1;
         ActiveStep a = new ActiveStep(o, -1, -1, step, dur, slot, worker, null, null, true);
         active.add(a);
@@ -1838,6 +1890,7 @@ public final class GameEngine {
                 break;
             }
             case DRINK: save.readyDrinks += amount; break;
+            case FRIES: readyFries += amount; break;
             default:
                 for (String id : a.ids) trayUses.put(id, getTrayUses(id) + amount);
                 break;
@@ -1982,11 +2035,21 @@ public final class GameEngine {
         int n = 1;
         while (n < cfg.maxItems && rng.nextDouble() < cfg.multiItemChance + type.extraItemChance * 0.5f) n++;
         List<Product> items = new ArrayList<>();
-        for (int k = 0; k < n; k++) items.add(pickProduct(menu, type));
+        for (int k = 0; k < n; k++) items.add(maybeFries(pickProduct(menu, type)));
         List<PortionSize> sizes = rollSizes(items, type);
         String name = Catalog.NAMES[nameCursor++ % Catalog.NAMES.length];
         arrived++;
         addOrder(name, type, items, rollRequests(items), sizes);
+    }
+
+    /**
+     * Patates girebilen üründe müşteri "patatesli" isteyebilir ({@link DayConfig#friesChance}, 3. günden açık, günle artar).
+     * Karar ayrı rastgele kaynaktan gelir: 3. günden önce hiç rastgele sayı tüketilmez.
+     */
+    private Product maybeFries(Product p) {
+        double chance = DayConfig.friesChance(day);
+        if (chance <= 0 || !p.friesOk()) return p;
+        return friesRng.nextDouble() < chance ? p.friesVariant() : p;
     }
 
     /** Döner içeren kalemler için boy: 1. gün yalnızca tam; 2. günden yarım; 4. günden duble (müşteri tipine göre olasılık). */
@@ -2036,9 +2099,10 @@ public final class GameEngine {
         if (state != State.RUNNING) return null;
         List<Product> items = new ArrayList<>();
         for (String id : productIds) {
-            Product p = Catalog.product(id);
-            if (p == null) return null;
-            items.add(p);
+            boolean fries = id.endsWith("+patates"); // senaryo/test: "ekmek_arasi+patates" = patatesli çeşit
+            Product p = Catalog.product(fries ? id.substring(0, id.length() - "+patates".length()) : id);
+            if (p == null || (fries && !p.friesOk())) return null;
+            items.add(fries ? p.friesVariant() : p);
         }
         List<Request> reqs = new ArrayList<>();
         for (String t : requestTexts) {
@@ -2113,8 +2177,18 @@ public final class GameEngine {
             portions += e.getValue();
             cost += e.getValue() * Catalog.ingredient(e.getKey()).price;
         }
+        // hazır patates gün sonunda soğur, atılır
+        if (readyFries > 0) {
+            portions += readyFries;
+            cost += readyFries * Catalog.ingredient(Catalog.PATATES).price;
+        }
         // yarım kalan hazırlıkların tükettiği malzeme de boşa gider
         for (ActiveStep a : active) {
+            if (a.prep == PrepKind.FRIES) {
+                portions += a.amount;
+                cost += a.amount * Catalog.ingredient(Catalog.PATATES).price;
+                continue;
+            }
             if (a.prep == null || a.prep == PrepKind.DRINK) continue;
             for (String id : a.ids) {
                 portions += a.amount;
@@ -2124,6 +2198,7 @@ public final class GameEngine {
         readyMeat.clear();
         halfOpen.clear();
         trayUses.clear();
+        readyFries = 0;
         summary.wastedPortions = portions;
         summary.wastedCost = cost;
     }
@@ -2168,6 +2243,7 @@ public final class GameEngine {
         readyMeat.clear();
         halfOpen.clear();
         trayUses.clear();
+        readyFries = 0;
         selectedId = -1;
         selectedItem = -1;
         // Para ve stok kaybı yok: gün başı durumuna dön; yıldız en az 1.5.

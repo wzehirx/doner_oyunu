@@ -79,6 +79,16 @@ public final class Shop {
                 demand.put(t, (d == null ? 0 : d) + 0.25 * items / menu.size());
             }
         }
+        // patatesli siparişler: patates alan ürünlerin payı x patatesli olasılığı
+        double friesChance = DayConfig.friesChance(save.day);
+        if (friesChance > 0) {
+            int friesProducts = 0;
+            for (Product p : menu) if (p.friesOk()) friesProducts++;
+            if (friesProducts > 0) {
+                Double d = demand.get(Catalog.PATATES);
+                demand.put(Catalog.PATATES, (d == null ? 0 : d) + items * friesProducts / (double) menu.size() * friesChance * 1.2);
+            }
+        }
         int cap = up.stockCap();
         Map<String, Integer> out = new LinkedHashMap<>();
         for (Map.Entry<String, Double> e : demand.entrySet()) {

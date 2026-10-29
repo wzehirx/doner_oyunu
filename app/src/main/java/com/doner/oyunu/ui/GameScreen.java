@@ -16,6 +16,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import com.doner.oyunu.MainActivity;
+import com.doner.oyunu.audio.SoundManager;
 import com.doner.oyunu.engine.ActiveStep;
 import com.doner.oyunu.engine.ApprenticeAction;
 import com.doner.oyunu.engine.DayConfig;
@@ -37,6 +38,7 @@ import com.doner.oyunu.engine.StartResult;
 import com.doner.oyunu.engine.Station;
 import com.doner.oyunu.engine.Step;
 import com.doner.oyunu.engine.ToppingCheck;
+import com.doner.oyunu.engine.ToppingSfx;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -127,6 +129,9 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     @Override public String title() { return "Gün " + a.save.day + ", oyun ekranı"; }
 
     @Override public String music() { return "music_day_calm"; }
+
+    /** Dükkân ambiyansı: gün ekranında (hazırlık ve gün) düşük sesle çalar; dosya yoksa sessiz. */
+    @Override public String ambience() { return SoundManager.AMBIENCE_SHOP; }
 
     // ================================================================== oluşturma
     @Override public View create() {
@@ -275,11 +280,11 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         openBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
         openBtn.setMinHeight(dp(68));
         openBtn.setMinimumHeight(dp(68));
-        openBtn.setContentDescription("Dükkânı aç. Hazırlık bitti, müşteriler gelmeye başlar ve süre akar.");
+        openBtn.setContentDescription("Dükkânı aç");
         tap(openBtn, new Runnable() { @Override public void run() { onOpenShop(); } });
         openBar.addView(openBtn, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 0, 0, 6));
         skipBtn = Ui.button(ctx, "Hazırlık yapmadan aç", Ui.SECONDARY);
-        skipBtn.setContentDescription("Hazırlık yapmadan aç. Hazırlığı atla, müşteriler hemen gelmeye başlar.");
+        skipBtn.setContentDescription("Hazırlık yapmadan aç");
         tap(skipBtn, new Runnable() { @Override public void run() { onOpenShop(); } });
         openBar.addView(skipBtn, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 0, 0, 6));
         bar.addView(openBar);
@@ -303,9 +308,9 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         tap(nextBtn, new Runnable() { @Override public void run() { onNext(); } });
         tap(pauseBtn, new Runnable() { @Override public void run() { pauseGame(); } });
         tap(readBtn, new Runnable() { @Override public void run() { a.speaker.force(narrator.statusText()); } });
-        nextBtn.setContentDescription("Sonraki siparişi seç");
-        pauseBtn.setContentDescription("Duraklat. Oyunu durdurur.");
-        readBtn.setContentDescription("Durumu oku. Para, yıldız, süre, seçili sipariş ve hazır stok.");
+        nextBtn.setContentDescription("Sonraki sipariş");
+        pauseBtn.setContentDescription("Duraklat");
+        readBtn.setContentDescription("Durumu oku");
         row.addView(nextBtn, Ui.lp(ctx, 0, Ui.WRAP, 1f, 0, 0, 3, 0));
         row.addView(pauseBtn, Ui.lp(ctx, 0, Ui.WRAP, 1f, 3, 0, 3, 0));
         row.addView(readBtn, Ui.lp(ctx, 0, Ui.WRAP, 1f, 3, 0, 0, 0));
@@ -413,6 +418,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         Choreographer.getInstance().removeFrameCallback(this);
         frameQueued = false;
         a.sound.pauseLoops();
+        a.sound.setAmbienceHold(true); // Duraklat: ambiyans da susar
         if (!quiet) a.haptics.tap();
         showOverlay(quiet);
     }
@@ -426,6 +432,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         dirty = true;
         queueFrame();
         a.sound.resumeLoops();
+        a.sound.setAmbienceHold(false);
         a.sound.play("sfx_tap");
         a.speaker.announce("Oyun devam ediyor.", true);
         a.focusOn(panel != null ? panel.titleView : pauseBtn);
@@ -449,7 +456,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         overlayTitle = Ui.label(ctx, "Duraklatıldı", 30, Theme.GOLD, true);
         Ui.heading(overlayTitle);
         pnl.addView(overlayTitle);
-        TextView info = Ui.label(ctx, "Oyun durdu. Müşteriler beklemeye devam etmiyor.", 18, Theme.CREAM, false);
+        TextView info = Ui.label(ctx, "Oyun durdu.", 18, Theme.CREAM, false);
         info.setFocusable(true);
         info.setPadding(0, dp(6), 0, dp(10));
         pnl.addView(info);
@@ -532,8 +539,8 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         if (!confirmQuit) {
             confirmQuit = true;
             quitBtn.setText("Emin misin? Tekrar dokun");
-            quitBtn.setContentDescription("Emin misin? Bugünün ilerlemesi kaybolur. Ana menüye dönmek için tekrar dokun.");
-            a.speaker.announce("Bugünün ilerlemesi kaybolur. Çıkmak için düğmeye tekrar dokun.", true);
+            quitBtn.setContentDescription("Emin misin? Günün ilerlemesi kaybolur, tekrar dokun");
+            a.speaker.announce("Günün ilerlemesi kaybolur. Çıkmak için tekrar dokun.", true);
             return;
         }
         a.show(new MenuScreen(a));
@@ -752,7 +759,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         openPanel(p, origin);
         if (tutorialActive && hasSize && !tutSizeShown) {
             tutSizeShown = true;
-            a.speaker.say("Öğretici. " + Texts.tutSize(engine.getFlowMode()), false);
+            a.speaker.say("Öğretici. " + Texts.tutSize(engine.getFlowMode()), false, Narrator.CAT_TUTORIAL, narrator.freshSinceNow());
         }
     }
 
@@ -919,8 +926,6 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         moneyTv.setText(Texts.money(engine.getMoney()));
         starsTv.setText(Narrator.fmtStars(engine.getStars()));
         starsView.setValue(engine.getStars());
-        readBtn.setContentDescription(engine.isTimed() || prepUi ? "Durumu oku. Para, yıldız, süre, seçili sipariş ve hazır stok."
-                : "Durumu oku. Para, yıldız, kalan müşteri sayısı, seçili sipariş ve hazır stok.");
         if (prepUi) { timeTv.setText("Hazırlık"); setTimeCaption("Süre"); }
         else if (!engine.isTimed()) { timeTv.setText(String.valueOf(engine.getRemainingCustomers())); setTimeCaption("Kalan müşteri"); }
         else { timeTv.setText(engine.isOvertime() ? "Mesai" : Texts.clock(engine.getTimeLeft())); setTimeCaption("Süre"); }
@@ -1032,7 +1037,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         int bucket = !timedDay ? 1000 + engine.getRemainingCustomers() : (engine.isOvertime() ? -1 : (int) (left / 10f));
         String key = engine.getMoney() + "|" + Narrator.fmtStars(engine.getStars()) + "|" + pending + "|"
                 + (selected == null ? -1 : selected.id) + "|" + (selected == null ? 0 : selected.getNextStepIndex()) + "|" + bucket
-                + "|" + prepUi + "|" + engine.getReadyDonerHalves() + "|" + engine.getReadyDrinks() + "|" + engine.getTrayTotal();
+                + "|" + prepUi + "|" + engine.getReadyDonerHalves() + "|" + engine.getReadyDrinks() + "|" + engine.getTrayTotal() + "|" + engine.getReadyFries();
         if (key.equals(statusKey)) return;
         statusKey = key;
         // Canlı duyuru yalnızca süre eşiklerinde: 60, 30, 10 sn kala ve mesai başında.
@@ -1041,7 +1046,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         boolean announce = threshold != lastAnnounceBucket;
         lastAnnounceBucket = threshold;
         if (threshold == Integer.MAX_VALUE || prepUi) announce = false;
-        Ui.liveUpdate(statusBar, narrator.statusText(), announce);
+        Ui.liveUpdate(statusBar, narrator.statusShort(), announce);
     }
 
     private void updateMusic(int pending) {
@@ -1102,10 +1107,15 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     }
 
     // ================================================================== öğretici
+    /**
+     * Öğretici aşaması. Metin boşsa aşama yalnızca ilerler (sessiz aşama). Konuşan ipucu "şunu yap" der; söylenmeden önce
+     * oyuncunun o sırada başka eylem yapıp yapmadığı denetlenir (yaptıysa susar), bayat ipucu okunmaz.
+     */
     private void tutorial(int stage, String text) {
         if (!tutorialActive || stage <= tutorialStage) return;
         tutorialStage = stage;
-        a.speaker.say("Öğretici. " + text, false);
+        if (text == null || text.isEmpty()) return;
+        a.speaker.say("Öğretici. " + text, false, Narrator.CAT_TUTORIAL, narrator.freshSinceNow());
     }
 
     // ================================================================== geri bildirim
@@ -1124,6 +1134,15 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             case IZGARA: return 0.7f;
             default: return 0.8f;
         }
+    }
+
+    /** Adımın istasyon sesi: kızartma adımı sfx_fry (döngü), diğerleri istasyonun sesi. */
+    static String sfxForStep(Step s) {
+        return s != null && s.isFry() ? "sfx_fry" : sfxForStation(s == null ? Station.IZGARA : s.station);
+    }
+
+    static String sfxForPrep(PrepKind k) {
+        return k == PrepKind.FRIES ? "sfx_fry" : sfxForStation(k.station);
     }
 
     static String sfxForStation(Station s) {
@@ -1195,9 +1214,9 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         @Override public void onStepStarted(Order o, Step step, int slot, float seconds) {
             if (step.isSized() && tutorialActive && !tutSizeShown) { // otomatik boyda panel açılmaz: öğretici burada
                 tutSizeShown = true;
-                a.speaker.say("Öğretici. " + Texts.tutSize(engine.getFlowMode()), false);
+                a.speaker.say("Öğretici. " + Texts.tutSize(engine.getFlowMode()), false, Narrator.CAT_TUTORIAL, narrator.freshSinceNow());
             }
-            a.sound.startLoop(playerKey(o, step), sfxForStation(step.station), panForStation(step.station), 1f, seconds);
+            a.sound.startLoop(playerKey(o, step), sfxForStep(step), panForStation(step.station), 1f, seconds);
             a.haptics.stepStart();
             tutorial(6, Texts.TUT_STEP);
             dirty = true;
@@ -1252,7 +1271,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         // ---- tek tek malzeme ekleme (kısa işler: onStepStarted/ses döngüsü YOK, tek atış ses)
         @Override public void onToppingAddStarted(Order o, int itemIndex, Ingredient ing, int count, float seconds) {
             boolean salad = ing.category == Ingredient.Category.SALATA;
-            String sfx = !salad ? "sfx_sauce" : "domates".equals(ing.id) ? "sfx_veg_tomato" : "sfx_veg_lettuce";
+            String sfx = ToppingSfx.sfxFor(ing);
             // domates: ıslak dilim; marul/soğan: çıtır yaprak; sos: alçak, yumuşak; hafif rastgele perde
             float rate = (salad ? 1.0f : 0.9f) + (fx.nextFloat() - 0.5f) * 0.1f;
             float pan = panForStation(Station.SOS);
@@ -1286,8 +1305,17 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         }
 
         // ---- v0.7 otomatik malzeme ve oyun akışı
+        /**
+         * Otomatik malzeme: HER malzeme kendi sesini sırayla (zamanlı) çalar; tek bir sos döngüsü değil. Domates = ıslak dilim,
+         * marul/soğan = çıtır yaprak, sos = yumuşak; ekleme süresine yayılır, duraklatmada durur.
+         */
         @Override public void onAutoToppingsStarted(Order o, int itemIndex, List<Ingredient> adding, float seconds) {
-            a.sound.startLoop(autoKey(o, itemIndex), sfxForStation(Station.SOS), panForStation(Station.SOS), 1f, seconds);
+            List<SoundManager.Cue> cues = new ArrayList<>();
+            for (ToppingSfx.Cue c : ToppingSfx.plan(adding, seconds)) {
+                boolean sauce = ToppingSfx.SAUCE.equals(c.sfx);
+                cues.add(new SoundManager.Cue(c.offsetMs, c.sfx, (sauce ? 0.9f : 1.0f) + (fx.nextFloat() - 0.5f) * 0.1f));
+            }
+            if (!cues.isEmpty()) a.sound.startSequence(autoKey(o, itemIndex), cues, panForStation(Station.SOS), 0.9f, seconds);
             a.haptics.stepStart();
             dirty = true;
         }
@@ -1355,7 +1383,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
         @Override public void onPrepStarted(PrepKind kind, boolean byApprentice, float seconds) {
             if (!byApprentice) {
-                a.sound.startLoop(prepKey(kind), sfxForStation(kind.station), panForStation(kind.station), 1f, seconds);
+                a.sound.startLoop(prepKey(kind), sfxForPrep(kind), panForStation(kind.station), 1f, seconds);
                 a.haptics.stepStart();
             }
             dirty = true;
@@ -1381,7 +1409,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         @Override public void onApprenticeAction(ApprenticeAction act) {
             String key = apprenticeKey(act.worker);
             if (act.started) {
-                a.sound.startLoop(key, sfxForStation(act.step.station), 0f, APPRENTICE_VOLUME, act.seconds);
+                a.sound.startLoop(key, act.prep == PrepKind.FRIES ? "sfx_fry" : sfxForStep(act.step), 0f, APPRENTICE_VOLUME, act.seconds);
             } else {
                 a.sound.stopLoop(key);
                 a.sound.play("sfx_step_done", 0f, APPRENTICE_VOLUME);
@@ -1523,10 +1551,10 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     // ================================================================== hazırlık bölümü
     /** Hazır stok göstergeleri + hazırlık düğmeleri (hazırlık aşamasında ve gün içinde). */
     private final class PrepBox extends LinearLayout {
-        private final TextView[] cells = new TextView[3];
+        private final TextView[] cells = new TextView[4];
         private final List<Button> doners = new ArrayList<>();
         private final List<Ingredient> meats = new ArrayList<>();
-        private Button drinkBtn;
+        private Button drinkBtn, friesBtn;
         Button trayBtn;
         private final Button readStockBtn;
 
@@ -1537,8 +1565,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
             LinearLayout stockRow = new LinearLayout(ctx);
             stockRow.setOrientation(HORIZONTAL);
-            PrepKind[] kinds = PrepKind.values();
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < 4; i++) {
                 TextView c = Ui.label(ctx, "", 15, Theme.CREAM, true);
                 c.setGravity(Gravity.CENTER);
                 c.setFocusable(true);
@@ -1546,7 +1573,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
                 c.setPadding(dp(4), dp(6), dp(4), dp(6));
                 c.setBackground(Ui.round(ctx, Theme.CARD, Theme.STROKE, 1.5f, 14));
                 cells[i] = c;
-                stockRow.addView(c, Ui.lp(ctx, 0, Ui.WRAP, 1f, i == 0 ? 0 : 3, 0, i == 2 ? 0 : 3, 0));
+                stockRow.addView(c, Ui.lp(ctx, 0, Ui.WRAP, 1f, i == 0 ? 0 : 3, 0, i == 3 ? 0 : 3, 0));
             }
             addView(stockRow, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 2, 0, 4));
 
@@ -1570,6 +1597,13 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
                 attachMenu(drinkBtn, new StationSource(Station.ICECEK, -1, null), Station.ICECEK, false);
                 addView(drinkBtn, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 3, 0, 3));
             }
+            if (engine.menuHasFries()) {
+                friesBtn = Ui.button(ctx, "", Ui.SECONDARY);
+                friesBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+                tap(friesBtn, new Runnable() { @Override public void run() { onPrep(Station.IZGARA, null, friesBtn, "Patates kızart"); } });
+                attachMenu(friesBtn, new StationSource(Station.IZGARA, -1, null), Station.IZGARA, false);
+                addView(friesBtn, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 3, 0, 3));
+            }
             trayBtn = Ui.button(ctx, "", Ui.SECONDARY);
             trayBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
             tap(trayBtn, new Runnable() { @Override public void run() { onPrep(Station.SOS, null, trayBtn, "Salata ve sos tepsisi"); } });
@@ -1578,7 +1612,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
             readStockBtn = Ui.button(ctx, "Hazır stoğu oku", Ui.SECONDARY);
             readStockBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-            readStockBtn.setContentDescription("Hazır stoğu oku. Hazır döner, ayran ve tepsi sayılarını söyler.");
+            readStockBtn.setContentDescription("Hazır stoğu oku");
             tap(readStockBtn, new Runnable() {
                 @Override public void run() {
                     String t = narrator.readyStockText();
@@ -1600,6 +1634,16 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             }
             cells[2].setText("Hazır tepsi\n" + engine.getTrayTotal());
             Ui.setDesc(cells[2], Texts.stockCellDescription(engine, PrepKind.TRAY));
+            if (friesBtn != null) {
+                cells[3].setVisibility(View.VISIBLE);
+                cells[3].setText("Hazır patates\n" + engine.getReadyFries() + " / " + engine.getReadyCapacity(PrepKind.FRIES));
+                Ui.setDesc(cells[3], Texts.stockCellDescription(engine, PrepKind.FRIES));
+                friesBtn.setText(Texts.prepButtonLabel(engine, PrepKind.FRIES, null));
+                Ui.setDesc(friesBtn, Texts.prepButtonDescription(engine, PrepKind.FRIES, null));
+                refreshActions(friesBtn);
+            } else {
+                cells[3].setVisibility(View.GONE);
+            }
             for (int i = 0; i < doners.size(); i++) {
                 Ingredient m = meats.get(i);
                 Button b = doners.get(i);

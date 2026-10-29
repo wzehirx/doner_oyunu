@@ -54,12 +54,22 @@ public final class OrderLine {
     public boolean sizeMismatch() { return hasSize() && chosenSize != null && chosenSize != size; }
 
     /** Boya göre fiyat (TL). */
-    public int price() { return hasSize() ? (int) Math.round(product.price * size.priceMult) : product.price; }
+    public int price() {
+        int base = hasSize() ? (int) Math.round(product.price * size.priceMult) : product.price;
+        return base + (isFries() ? Product.FRIES_PRICE : 0);
+    }
 
-    /** "Ekmek arası döner" / "Ekmek arası döner (yarım ekmek)" / "(duble)". Tam ekmek ayrıca belirtilmez. */
+    /** Kalem patatesli mi (adımlarda "Patates kızart" var). */
+    public boolean isFries() { return product.isFries(); }
+
+    /**
+     * "Ekmek arası döner" / "Ekmek arası döner (yarım ekmek)" / "(duble)" / "Ekmek arası döner (patatesli)" /
+     * "Ekmek arası döner (duble, patatesli)". Tam ekmek ayrıca belirtilmez.
+     */
     public String displayName() {
-        if (hasSize() && size != PortionSize.FULL) return product.name + " (" + size.spoken() + ")";
-        return product.name;
+        boolean sz = hasSize() && size != PortionSize.FULL;
+        if (!sz && !isFries()) return product.name;
+        return product.name + " (" + (sz ? size.spoken() : "") + (sz && isFries() ? ", " : "") + (isFries() ? "patatesli" : "") + ")";
     }
 
     // ---- tek tek ekleme durumu

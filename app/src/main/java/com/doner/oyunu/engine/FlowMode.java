@@ -13,13 +13,13 @@ package com.doner.oyunu.engine;
  */
 public enum FlowMode {
     RAHAT("rahat", "Rahat",
-            "Malzemeler ve döner boyu otomatik. Müşteri isteklerini de sistem uygular; her istasyona bir kez dokunman yeter.",
+            "Malzemeler ve boy otomatik; her istasyona bir kez dokunursun.",
             1.0, 1.0, 1.0),
     DENGELI("dengeli", "Dengeli",
-            "Varsayılan malzemeler ve tam ekmek otomatik. Müşteri isteği varsa farkı sen yaparsın, örneğin soğan çıkar ya da acı sos ekle; yarım ekmek ya da duble istenince boyu sen seçersin.",
+            "Standart olan otomatik; müşteri isteği, yarım ekmek ya da duble varsa farkı sen yaparsın.",
             1.0, 1.0, 1.0),
     GERCEKCI("gercekci", "Gerçekçi",
-            "Her malzemeyi tek tek eklersin ve her dilimlemede boyu sen seçersin. En çok emek isteyen akış; müşteriler el emeğine saygıyla biraz daha sabırlı ve seyrek gelir, bahşişler yüzde on beş fazla.",
+            "Her malzemeyi ve boyu sen seçersin; müşteriler biraz daha sabırlı, bahşişler yüzde on beş fazla.",
             1.15, 1.15, 0.9); // sabır ve geliş çarpanları: v0.7 yumuşatma, denge testleriyle ayarlandı
 
     public static final FlowMode DEFAULT = DENGELI;

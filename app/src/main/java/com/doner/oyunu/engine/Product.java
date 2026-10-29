@@ -23,12 +23,27 @@ public final class Product {
     /** Seçilebilir topping havuzu (4-8 malzeme). Boş: malzeme seçimi yok. */
     public final List<String> toppingPool;
 
+    /** Patatesli kalemin fiyat farkı (TL; boyla ölçeklenmez). */
+    public static final int FRIES_PRICE = 40;
+
+    /** Patatesle sipariş edilebilir (patates ürüne girer; müşteri isteğiyle "patatesli" olur). */
+    private boolean friesOk;
+    /** Bu nesne bir ürünün "patatesli" çeşidi mi (adımlarda "Patates kızart" vardır). */
+    private final boolean friesVariant;
+    private Product variant;
+
     public Product(String id, String name, int openDay, int price, List<Step> steps) {
         this(id, name, openDay, price, steps, new ArrayList<String>(), new ArrayList<String>());
     }
 
     public Product(String id, String name, int openDay, int price, List<Step> steps,
                    List<String> defaultToppings, List<String> toppingPool) {
+        this(id, name, openDay, price, steps, defaultToppings, toppingPool, false);
+    }
+
+    private Product(String id, String name, int openDay, int price, List<Step> steps,
+                    List<String> defaultToppings, List<String> toppingPool, boolean friesVariant) {
+        this.friesVariant = friesVariant;
         this.id = id;
         this.name = name;
         this.openDay = openDay;
@@ -37,6 +52,36 @@ public final class Product {
         this.defaultToppings = Collections.unmodifiableSet(new LinkedHashSet<>(defaultToppings));
         this.toppingPool = Collections.unmodifiableList(new ArrayList<>(toppingPool));
     }
+
+    /** Katalog kurulumu: bu ürün patatesli sipariş edilebilir. */
+    void setFriesOk() { friesOk = true; }
+
+    /** Patatesle sipariş edilebilir mi (ürün düzeyi; patatesli çeşidin kendisi için de true). */
+    public boolean friesOk() { return friesOk || friesVariant; }
+
+    /** Bu bir "patatesli" çeşit mi. */
+    public boolean isFries() { return friesVariant; }
+
+    /**
+     * Ürünün patatesli çeşidi (aynı id ve ad; adımlara malzeme seçiminden hemen önce "Patates kızart" eklenir).
+     * Patates kabul etmeyen üründe ya da çeşidin kendisinde kendisini döner.
+     */
+    public Product friesVariant() {
+        if (friesVariant || !friesOk) return this;
+        if (variant == null) {
+            List<Step> st = new ArrayList<>(steps);
+            int at = toppingStepIndex();
+            if (at < 0) at = st.size();
+            st.add(at, Catalog.FRY_STEP);
+            Product v = new Product(id, name, openDay, price, st, new ArrayList<>(defaultToppings), toppingPool, true);
+            v.friesOk = true;
+            variant = v;
+        }
+        return variant;
+    }
+
+    /** Patatesli çeşit mi aynı ürünün sade hali mi: id eşleşmesi (çeşitler aynı id'yi taşır). */
+    public boolean sameProduct(Product o) { return o != null && o.id.equals(id); }
 
     /** Gün N'de açık olan varsayılan topping'ler (sıralı). Henüz açılmamış malzemeler kümede yer almaz. */
     public Set<String> defaultToppings(int day) {

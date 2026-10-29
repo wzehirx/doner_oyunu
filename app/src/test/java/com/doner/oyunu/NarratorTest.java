@@ -39,9 +39,9 @@ public class NarratorTest {
         assertTrue(said.get(0).startsWith("Gün 1 başladı"));
         assertTrue(said.get(0).contains("Yeni ürün: Ekmek arası döner"));
         String arrive = said.get(1);
-        assertTrue(arrive, arrive.startsWith("Yeni müşteri: " + o.customer.name + ", Ekmek arası döner istiyor."));
+        assertTrue(arrive, arrive.startsWith("Yeni müşteri: " + o.customer.name + ", Ekmek arası döner."));
         e.selectOrder(o.id);
-        assertTrue(said.toString(), anySaid(said, "Önerilen: Ekmeği ısıt. Ekmek ısıtıcı istasyonuna dokun."));
+        assertTrue(said.toString(), anySaid(said, "Önerilen: Ekmeği ısıt. Ekmek ısıtıcı."));
         e.startStep(o.id, Station.ICECEK.id);
         assertTrue(said.toString(), anySaid(said, "Yanlış istasyon. Bu sipariş için şimdi Ekmek ısıtıcı gerekli."));
         e.startStep(o.id, Station.EKMEK.id);
@@ -54,7 +54,8 @@ public class NarratorTest {
         StringBuilder all = new StringBuilder();
         for (String t : said) all.append(t).append('\n');
         String text = all.toString();
-        assertTrue(text, text.contains("Ekmeği ısıt bitti. Önerilen: Döneri dilimle"));
+        assertTrue(text, text.contains("Ekmeği ısıt bitti."));
+        assertTrue("sıradaki adım ayrı (bayatlık denetimli) duyuru", text.contains("Önerilen: Döneri dilimle"));
         assertTrue(text, text.contains("sabırsızlanıyor"));
         assertTrue(text, text.contains("gitmek üzere"));
         assertTrue(text, text.contains("sabrı tükendi ve gitti"));
@@ -88,9 +89,9 @@ public class NarratorTest {
         Narrator n = new Narrator(e);
         for (int i = 0; i < 300 && e.getOrders().isEmpty(); i++) e.tick(0.1f);
         Order o = e.getOrders().get(0);
-        assertEquals("Ekmek ısıtıcı istasyonu, boş", n.stationLabel(Station.EKMEK));
+        assertEquals("Ekmek ısıtıcı, boş", n.stationLabel(Station.EKMEK));
         e.selectOrder(o.id);
-        assertEquals("Ekmek ısıtıcı istasyonu, boş, Ekmeği ısıt için gerekli", n.stationLabel(Station.EKMEK));
+        assertEquals("Ekmek ısıtıcı, boş, sıradaki: Ekmeği ısıt", n.stationLabel(Station.EKMEK));
         e.startStep(o.id, Station.EKMEK.id);
         assertTrue(n.stationLabel(Station.EKMEK).contains("çalışıyor"));
         assertEquals("", n.startResultText(StartResult.STARTED));

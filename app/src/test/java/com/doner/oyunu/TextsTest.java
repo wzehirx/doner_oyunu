@@ -47,13 +47,13 @@ public class TextsTest {
         e.selectOrder(o.id);
         String d = Texts.orderDescription(o, true, null);
         assertTrue(d, d.contains(o.customer.name));
-        assertTrue(d, d.contains("Seçili"));
-        assertTrue(d, d.contains(o.nextStep().name));
-        assertTrue(d, d.contains(o.nextStep().station.displayName));
-        assertTrue(d, d.contains("sabır"));
+        assertTrue(d, d.contains("seçili"));
+        assertTrue(d, d.startsWith("Sipariş " + o.getPosition() + ", " + o.customer.name + ", " + o.itemsText()));
+        assertTrue("v0.9: kısa etiket", d.length() <= 60 + 20);
+        assertFalse("v0.9: 'çift dokun' ipucu yok", d.contains("dokun"));
         String d2 = Texts.orderDescription(o, false, null);
-        assertTrue(d2, d2.contains("Seçmek için"));
-        assertFalse(d2.contains("Seçili."));
+        assertFalse(d2.contains("seçili"));
+        assertFalse(d2, d2.contains("dokun"));
     }
 
     @Test public void stationDescriptionShowsStateAndNeed() {
@@ -64,14 +64,15 @@ public class TextsTest {
         Station need = o.nextStep().station;
         String d = Texts.stationDescription(n, e, need, true);
         assertTrue(d, d.contains("boş"));
-        assertTrue(d, d.contains("için gerekli"));
+        assertTrue(d, d.contains("sıradaki: " + o.nextStep().name));
+        assertFalse("v0.9: ipucu cümlesi yok", d.contains("Dokununca"));
         assertEquals("Şimdi bu", Texts.stationVisualStatus(e, need));
         assertEquals(StartResult.STARTED, e.startStep(o.id, need.id));
         String d2 = Texts.stationDescription(n, e, need, true);
         assertTrue(d2, d2.contains("çalışıyor"));
         assertEquals("Çalışıyor", Texts.stationVisualStatus(e, need));
         String unused = Texts.stationDescription(n, e, Station.TATLI, false);
-        assertTrue(unused, unused.contains("kullanılmıyor"));
+        assertTrue(unused, unused.contains("menüde yok"));
     }
 
     @Test public void deliverDescriptionNamesReadyOrders() {
@@ -105,7 +106,7 @@ public class TextsTest {
         SaveData s = SaveData.newGame();
         s.inventory = new Inventory();
         String d = Texts.recommendedDescription(s);
-        assertTrue(d, d.contains("Tahmini maliyet"));
+        assertTrue(d, d.matches("Önerilen malzemeleri al, \\d+ lira.*"));
         Shop.buyRecommended(s);
         s.money = 100000;
         Shop.buyRecommended(s);
@@ -198,21 +199,18 @@ public class TextsTest {
         s.inventory.add("ayran", 5);
         OrderLine l0 = o.getLine(0), l1 = o.getLine(1);
         String d0 = Texts.lineDescription(e, o, l0, false);
-        assertTrue(d0, d0.contains("Sipariş " + o.getPosition() + ", kalem 1 / 2: Ekmek arası döner"));
-        assertTrue(d0, d0.contains("Ekmeği ısıt bekliyor, Ekmek ısıtıcı"));
-        assertTrue(d0, d0.contains("Malzemeleri ekle kilitli, önce kalemin diğer adımları bitmeli"));
-        assertTrue(d0, d0.contains("seçmek için çift dokun"));
-        assertTrue(Texts.lineDescription(e, o, l0, true).contains("Bu kalem seçili"));
+        assertEquals("Sipariş " + o.getPosition() + ", kalem 1, Ekmek arası döner, 0/3 adım", d0);
+        assertEquals("Sipariş " + o.getPosition() + ", kalem 1, Ekmek arası döner, 0/3 adım, seçili", Texts.lineDescription(e, o, l0, true));
         assertTrue(Texts.lineSteps(e, o, l0).contains("– Malzemeleri ekle  (kilitli)"));
-        assertTrue(Texts.packDescription(o).contains("kilitli"));
+        assertEquals("Siparişi paketle, kilitli", Texts.packDescription(o));
         assertTrue(Texts.packText(o).contains("2 kalem bekliyor"));
         assertEquals(StartResult.STARTED, e.startStep(o.id, 1, Station.ICECEK.id));
-        assertTrue(Texts.lineDescription(e, o, l1, false).contains("Ayranı doldur sürüyor"));
+        assertEquals("Sipariş " + o.getPosition() + ", kalem 2, Ayran, 0/1 adım, Ayranı doldur sürüyor", Texts.lineDescription(e, o, l1, false));
         assertTrue(Texts.lineSteps(e, o, l1).startsWith("▶ Ayranı doldur"));
         for (int i = 0; i < 40; i++) e.tick(0.1f);
-        assertTrue(Texts.lineDescription(e, o, l1, false).contains("Kalem hazır"));
-        assertTrue(Texts.orderDescription(o, true, null).contains("İstek: soğansız"));
-        assertTrue(Texts.orderDescription(o, true, null).contains("2 kalem"));
+        assertEquals("Sipariş " + o.getPosition() + ", kalem 2, Ayran, hazır", Texts.lineDescription(e, o, l1, false));
+        assertTrue(Texts.orderDescription(o, true, null).contains(", soğansız"));
+        assertTrue(Texts.orderDescription(o, true, null).contains("ayran") || Texts.orderDescription(o, true, null).contains("Ayran"));
     }
 
     @Test public void jobLabelsNameWhoDoesWhat() {
@@ -263,7 +261,7 @@ public class TextsTest {
         assertTrue(Texts.TUT_SIZE.contains("boyunu sen seçersin"));
         assertTrue(Texts.TUT_TOPPING.contains("tek tek"));
         assertTrue(Texts.TUT_TOPPING.contains("Malzemeleri bitir"));
-        assertTrue(Texts.TUT_SELECTED.contains("Eylemler menüsünden"));
+        assertFalse("v0.9: öğretici kısa, Eylemler yardımda", Texts.TUT_SELECTED.contains("Eylemler"));
         assertTrue(Texts.quickHelp().contains("Eylemler menüsünden"));
         boolean actions = false, size = false, adding = false;
         for (String[] sec : Texts.helpSections()) {
@@ -283,7 +281,7 @@ public class TextsTest {
                 java.util.Arrays.asList(com.doner.oyunu.engine.PortionSize.HALF));
         OrderLine l = o.getLine(0);
         String d = Texts.lineDescription(e, o, l, false);
-        assertTrue(d, d.contains("Ekmek arası döner (yarım ekmek), " + l.price() + " lira"));
+        assertTrue(d, d.startsWith("Sipariş " + o.getPosition() + ", kalem 1, Ekmek arası döner (yarım ekmek)"));
         assertEquals("", Texts.addedLine(l));
         assertEquals("Henüz malzeme eklenmedi.", Texts.addedStatus(l));
         // adımları bitir, tek tek ekle
@@ -298,7 +296,7 @@ public class TextsTest {
         assertEquals("Eklenen: domates bol", Texts.addedLine(l));
         assertEquals("Eklenenler: domates bol.", Texts.addedStatus(l));
         assertTrue(Texts.lineSteps(e, o, l).contains("Eklenen: domates bol"));
-        assertTrue(Texts.lineDescription(e, o, l, false).contains("Eklenenler: domates bol."));
+        assertTrue(Texts.lineDescription(e, o, l, false), Texts.lineDescription(e, o, l, false).contains("eklenenler: domates bol"));
         assertTrue(Texts.menuInfo(o).contains("Müşteri isteği: soğansız"));
         assertEquals("Hazırlık seçenekleri.", Texts.menuInfo(null));
     }

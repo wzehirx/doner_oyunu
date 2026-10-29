@@ -113,7 +113,7 @@ public class PrepToppingUiTest {
         assertEquals(4, e.getReadyDoner());
         assertEquals("hazırlıkta gün saati akmaz", 0f, e.getElapsed(), 1e-6f);
         assertNotNull(h.findText("Hazır döner: 4 porsiyon"));
-        assertTrue(UiHarness.label(h.findLabel("Döner dilimle")).contains("Hazır 4 / 8 porsiyon"));
+        assertTrue(UiHarness.label(h.findLabel("Döner dilimle")).contains("hazır 4 / 8"));
         // hazır stoğu oku düğmesi çökmeden çalışır
         h.click("Hazır stoğu oku");
         // durumu oku hazırlığı ve hazır stoğu içerir
@@ -263,7 +263,7 @@ public class PrepToppingUiTest {
                 if (ev.getEventType() == AccessibilityEvent.TYPE_ANNOUNCEMENT && !ev.getText().isEmpty()
                         && ev.getText().get(0).toString().startsWith("Çırak")) spoke = true;
             }
-            h.idle(15000);
+            h.run(15000); // motor ilerlesin: bayat olan başlangıç duyurusu atılır, bitiş duyurusu ("Çırak döner dilimledi") söylenir
             all = new ArrayList<>(sam.getSentAccessibilityEvents());
             for (AccessibilityEvent ev : all.subList(Math.min(base, all.size()), all.size())) {
                 if (ev.getEventType() == AccessibilityEvent.TYPE_ANNOUNCEMENT && !ev.getText().isEmpty()
@@ -284,23 +284,21 @@ public class PrepToppingUiTest {
         View k1 = itemRow(h, 1), k2 = itemRow(h, 2);
         assertNotNull(k1); assertNotNull(k2);
         String d1 = UiHarness.label(k1);
-        assertTrue(d1, d1.contains("Ekmek arası döner"));
-        assertTrue(d1, d1.contains("Malzemeleri ekle kilitli"));
-        assertTrue(d1, d1.contains("Ekmeği ısıt bekliyor"));
+        assertEquals("Sipariş 1, kalem 1, Ekmek arası döner, 0/3 adım", d1);
         String pack = UiHarness.label(h.findLabel("Siparişi paketle"));
         assertTrue(pack, pack.contains("kilitli"));
         // kalem seç
         k2.performClick(); h.run(100);
         assertEquals(1, e.getSelectedItem());
         assertEquals(o.id, e.getSelectedOrderId());
-        assertTrue(UiHarness.label(itemRow(h, 2)).contains("Bu kalem seçili"));
+        assertTrue(UiHarness.label(itemRow(h, 2)).endsWith(", seçili"));
         // istasyon dokunuşu seçili kalemi yapar (ayran)
         h.stationTile(Station.ICECEK).performClick(); h.run(200);
         assertTrue(o.getLine(1).isStepRunning(0));
         assertTrue(UiHarness.label(itemRow(h, 2)).contains("Ayranı doldur sürüyor"));
         h.run(3000);
         assertTrue(o.getLine(1).isDone());
-        assertTrue(UiHarness.label(itemRow(h, 2)).contains("Kalem hazır"));
+        assertTrue(UiHarness.label(itemRow(h, 2)).contains(", hazır"));
         // serbest sıra: şimdi döner kalemini yap
         itemRow(h, 1).performClick(); h.run(100);
         h.stationTile(Station.DONER).performClick(); h.run(100);
@@ -697,6 +695,6 @@ public class PrepToppingUiTest {
         String d = UiHarness.label(info);
         assertTrue(d, d.contains("Seviye 1:") && d.contains("Seviye 2:") && d.contains("Seviye 3:"));
         assertTrue(d, d.contains("paketler") && d.contains("hazırlık") || d.contains("tepsi"));
-        assertTrue(d, d.contains("Boy seçimi ve malzeme ekleme her zaman sende"));
+        assertTrue(d, d.contains("Boy ve malzemeyi sen seçersin"));
     }
 }

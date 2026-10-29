@@ -13,8 +13,8 @@ import android.view.View;
 import android.view.accessibility.AccessibilityManager;
 
 import com.doner.oyunu.engine.Narrator;
+import com.doner.oyunu.engine.SpeechQueue;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -26,8 +26,6 @@ import java.util.Set;
  * sıralanır); KAPALIYSA kendi TextToSpeech (tr-TR) motorunu kullanır.
  */
 public final class Speaker implements Narrator.Output {
-    private static final int MAX_QUEUE = 4;
-
     /** Konuşma başladı/bitti (müzik kısma gibi tepkiler için). */
     public interface SpeechListener { void onSpeaking(boolean active); }
 
@@ -42,11 +40,16 @@ public final class Speaker implements Narrator.Output {
     private boolean enabled = true;
     private float rate = 1f;
 
-    // TalkBack yolu
-    private final ArrayDeque<String> queue = new ArrayDeque<>();
-    private long busyUntil;
-    private boolean pumpScheduled;
-    private boolean noDrop;
+    /**
+     * Konuşma sırası (v0.9): bayat duyuruyu atar, aynı kategoriyi birleştirir/aralıklar, acil olanı öne alır, ipucunu
+     * söylemeden önce yeniden denetler. TalkBack ve TTS yolları aynı sırayı kullanır; tek seferde bir duyuru verilir,
+     * böylece announceForAccessibility kuyruğu şişmez.
+     */
+    private final SpeechQueue queue = new SpeechQueue(new SpeechQueue.Clock() {
+        @Override public long now() { return SystemClock.uptimeMillis(); }
+    }, new SpeechQueue.Player() {
+        @Override public long play(String text, boolean interrupt) { return playNow(text, interrupt); }
+    });
 
     // TTS yolu
     private TextToSpeech tts;
@@ -104,9 +107,13 @@ public final class Speaker implements Narrator.Output {
 
     // ------------------------------------------------------------------ Narrator.Output
     /** Oyun anlatımı: "Sesli anlatım" ayarına bağlıdır. */
-    @Override public void say(String text, boolean urgent) {
+    @Override public void say(String text, boolean urgent) { say(text, urgent, null, null); }
+
+    /** Oyun anlatımı (kategorili, bayatlık denetimli): "Sesli anlatım" ayarına bağlıdır. */
+    @Override public void say(String text, boolean urgent, String category, Narrator.Fresh fresh) {
         if (!enabled || text == null || text.isEmpty()) return;
-        route(text, urgent);
+        queue.say(text, urgent, category, fresh);
+        kick();
     }
 
     /**
@@ -115,35 +122,35 @@ public final class Speaker implements Narrator.Output {
      */
     public void announce(String text, boolean urgent) {
         if (text == null || text.isEmpty()) return;
-        if (isTalkBackOn() || enabled) route(text, urgent);
+        if (isTalkBackOn() || enabled) { queue.say(text, urgent); kick(); }
     }
 
     /** Kullanıcı açıkça istedi (Durumu oku vb.): ayardan bağımsız konuşur. */
     public void force(String text) {
         if (text == null || text.isEmpty()) return;
-        route(text, true);
+        queue.say(text, true);
+        kick();
     }
 
-    /** Uzun metin (yardım): kuyruk sınırı olmadan sıraya ekler; flush ise öncekileri keser. */
+    /** Uzun metin (yardım): bayatlamaz, sıraya eklenir; flush ise öncekileri keser. */
     public void speakLong(String text, boolean flush) {
         if (text == null || text.isEmpty()) return;
-        noDrop = true;
-        try { route(text, flush); } finally { noDrop = false; }
+        queue.sayLong(text, flush);
+        kick();
     }
 
     /** Ekran değişti: TalkBack odak olayıyla başlığı okur; TTS modunda biz okuruz. */
     public void screenChanged(String title) {
-        if (!isTalkBackOn() && enabled) route(title, true);
+        if (!isTalkBackOn() && enabled && title != null && !title.isEmpty()) { queue.say(title, true); kick(); }
     }
 
     public boolean isBusy() {
-        if (isTalkBackOn()) return SystemClock.uptimeMillis() < busyUntil || !queue.isEmpty();
-        return !utterances.isEmpty() || !pendingBeforeReady.isEmpty();
+        return queue.isBusy(SystemClock.uptimeMillis()) || isTtsActive();
     }
 
     public void stop() {
         queue.clear();
-        busyUntil = 0;
+        handler.removeCallbacks(pumper);
         pendingBeforeReady.clear();
         utterances.clear();
         if (tts != null) try { tts.stop(); } catch (Exception ignored) { }
@@ -162,55 +169,31 @@ public final class Speaker implements Narrator.Output {
         }
     }
 
-    // ------------------------------------------------------------------ yönlendirme
-    private void route(String text, boolean urgent) {
-        if (isTalkBackOn() && anchor != null) {
-            enqueueAnnounce(text, urgent);
-        } else {
-            speakTts(text, urgent);
-        }
-    }
-
+    // ------------------------------------------------------------------ sıra çalıştırma
     private static long estimateMs(String t) { return 450 + (long) t.length() * 62; }
 
-    private void enqueueAnnounce(String text, boolean urgent) {
-        if (urgent) {
-            queue.clear();
-            announceNow(text);
-            return;
-        }
-        if (!noDrop && queue.size() >= MAX_QUEUE) queue.pollFirst(); // en eskiyi at
-        queue.addLast(text);
-        pump();
-    }
-
-    private void announceNow(String text) {
-        beginSpeech();
-        busyUntil = SystemClock.uptimeMillis() + estimateMs(text);
-        try { if (anchor != null) anchor.announceForAccessibility(text); } catch (Exception ignored) { }
-        schedulePump(estimateMs(text));
-    }
-
-    private void schedulePump(long delay) {
-        if (pumpScheduled) handler.removeCallbacks(pumper);
-        pumpScheduled = true;
-        handler.postDelayed(pumper, delay);
-    }
-
     private final Runnable pumper = new Runnable() {
-        @Override public void run() { pumpScheduled = false; pump(); }
+        @Override public void run() { kick(); }
     };
 
-    private void pump() {
+    /** Sırayı ilerletir ve bir sonraki uyanmayı kurar; konuşma bittiyse ses odağını bırakır. */
+    private void kick() {
         long now = SystemClock.uptimeMillis();
-        if (queue.isEmpty()) {
-            if (speaking && !isTtsActive()) {
-                if (now >= busyUntil) endSpeech(); else schedulePump(busyUntil - now + 20);
-            }
-            return;
+        queue.pump(now);
+        handler.removeCallbacks(pumper);
+        long w = queue.nextWakeup(now);
+        if (w >= 0) handler.postDelayed(pumper, w + 15);
+        else if (speaking && !isTtsActive()) endSpeech();
+    }
+
+    /** SpeechQueue oynatıcısı: bir duyuruyu hemen söyler, beklenen süreyi (ms) döner. */
+    private long playNow(String text, boolean interrupt) {
+        if (isTalkBackOn() && anchor != null) {
+            beginSpeech();
+            try { anchor.announceForAccessibility(text); } catch (Exception ignored) { }
+            return estimateMs(text);
         }
-        if (now < busyUntil) { schedulePump(busyUntil - now + 20); return; }
-        announceNow(queue.pollFirst());
+        return speakTtsNow(text, interrupt);
     }
 
     private boolean isTtsActive() { return !utterances.isEmpty() || !pendingBeforeReady.isEmpty(); }
@@ -242,7 +225,7 @@ public final class Speaker implements Narrator.Output {
                     ttsReady = true;
                     List<String[]> p = new ArrayList<>(pendingBeforeReady);
                     pendingBeforeReady.clear();
-                    for (String[] m : p) speakTts(m[0], "1".equals(m[1]));
+                    for (String[] m : p) speakTtsNow(m[0], false);
                 }
             });
         } catch (Exception e) {
@@ -254,30 +237,33 @@ public final class Speaker implements Narrator.Output {
         handler.post(new Runnable() {
             @Override public void run() {
                 utterances.remove(id);
-                if (!isTtsActive() && queue.isEmpty()) endSpeech();
+                if (!isTtsActive()) queue.finished(SystemClock.uptimeMillis());
+                kick();
             }
         });
     }
 
-    private void speakTts(String text, boolean urgent) {
+    /** TTS ile söyler; beklenen süreyi döner (bitiş geri çağrısı sırayı erken açar). */
+    private long speakTtsNow(String text, boolean interrupt) {
         ensureTts();
-        if (tts == null) return;
+        long est = (long) (estimateMs(text) / Math.max(0.5f, rate)) + 800;
+        if (tts == null) return 0;
         if (!ttsReady) {
-            if (urgent) pendingBeforeReady.clear();
-            if (noDrop || pendingBeforeReady.size() < MAX_QUEUE) pendingBeforeReady.add(new String[]{text, urgent ? "1" : "0"});
-            return;
+            if (interrupt) pendingBeforeReady.clear();
+            pendingBeforeReady.add(new String[]{text, interrupt ? "1" : "0"});
+            return est;
         }
-        if (!urgent && !noDrop && utterances.size() >= MAX_QUEUE) return; // kuyruk şişmesin
         String id = "u" + (++utteranceCounter);
         try {
-            if (urgent) utterances.clear();
+            if (interrupt) utterances.clear();
             utterances.add(id);
             beginSpeech();
             Bundle params = new Bundle();
-            tts.speak(text, urgent ? TextToSpeech.QUEUE_FLUSH : TextToSpeech.QUEUE_ADD, params, id);
+            tts.speak(text, interrupt ? TextToSpeech.QUEUE_FLUSH : TextToSpeech.QUEUE_ADD, params, id);
         } catch (Exception e) {
             utterances.remove(id);
-            if (!isTtsActive()) endSpeech();
+            return 0;
         }
+        return est;
     }
 }

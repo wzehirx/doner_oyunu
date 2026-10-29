@@ -24,6 +24,12 @@ public final class Catalog {
     private Catalog() {}
 
     public static final String AYRAN = "ayran";
+    public static final String PATATES = "patates";
+    /** Patatesin açıldığı gün (market satar, müşteri "patatesli" ister). */
+    public static final int FRIES_OPEN_DAY = 3;
+    /** "Patates kızart": Ocak istasyonu, 4 sn, 1 porsiyon patates; hazır patates varsa 0,8 sn. */
+    public static final Step FRY_STEP = new Step("Patates kızart", Station.IZGARA, 4.0f,
+            java.util.Collections.singletonMap(PATATES, 1));
 
     private static void ing(String id, String name, String unit, int price, Ingredient.Category cat) {
         INGREDIENTS.put(id, new Ingredient(id, name, unit, price, cat));
@@ -109,6 +115,7 @@ public final class Catalog {
         ing("sarimsakli_yogurt", "Sarımsaklı yoğurt sos", "porsiyon", 4, SOSC, 13);
         ing("limon", "Limon", "porsiyon", 2, SAL, 14);
         ing("kozlenmis", "Közlenmiş biber ve domates", "porsiyon", 4, SAL, 15);
+        ing(PATATES, "Patates", "porsiyon", 4, DIG, FRIES_OPEN_DAY);
 
         prod("ekmek_arasi", "Ekmek arası döner", 1, 240,
                 l("domates", "marul", "sogan", "ketcap"),
@@ -138,7 +145,7 @@ public final class Catalog {
                 l("sogan", "domates", "tursu", "aci_sos", "nar_eksisi", "marul", "biber", "sumak"),
                 st("Lavaşı ısıt", EKMEK, 3.0, "lavas", 1),
                 st("Harç ve döner ekle", DONER, 4.0, "lahmacun_harci", 1, "et_doner", 1),
-                st("Izgarada mühürle", IZGARA, 3.5),
+                st("Ocakta mühürle", IZGARA, 3.5),
                 top("Malzemeleri ekle", 2.0));
         prod("tavuk_ekmek", "Ekmek arası tavuk döner", 7, 190,
                 l("marul", "domates", "mayonez"),
@@ -169,13 +176,16 @@ public final class Catalog {
                 l("sogan", "domates", "limon"),
                 l("sogan", "domates", "limon", "marul", "tursu", "aci_sos", "sumak"),
                 st("Harcı lavaşa yay", SOS, 3.0, "lavas", 1, "lahmacun_harci", 1),
-                seq("Fırına ver", IZGARA, 6.0),
+                seq("Ocakta pişir", IZGARA, 6.0),
                 top("Malzemeleri ekle", 1.8));
         prod("kunefe", "Künefe", 16, 240,
                 st("Kadayıfı tereyağıyla yoğur", TATLI, 3.5, "kadayif", 1, "tereyagi", 2),
                 seq("Peyniri ser", TATLI, 3.0, "peynir", 1),
-                seq("Fırında pişir", IZGARA, 8.0),
+                seq("Ocakta pişir", IZGARA, 8.0),
                 seq("Çevir ve servis et", TATLI, 3.0));
+
+        // Patates dürümlere ve ekmek arası ürünlere girer: müşteri "patatesli" isterse kalemde "Patates kızart" adımı olur.
+        for (String pid : new String[]{"ekmek_arasi", "tavuk_ekmek", "tavuk_durum", "hatay_durum", "zurna_durum"}) PRODUCTS.get(pid).setFriesOk();
 
         // Yükseltmeler (fiyat/etki araştırma notundan; 'cirak' motor tasarımı).
         up("cirak", "Çırak", MUTFAK, "Kendi başına çalışan yardımcı: boşta hazırlık yapar, paketler, içecek doldurur. Seviye 2 ekmek ısıtır, seviye 3 döner dilimler ve ızgara yapar.",

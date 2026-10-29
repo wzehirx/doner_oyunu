@@ -39,9 +39,9 @@ public class NarratorV06Test {
         Order o = e.spawnOrder(Arrays.asList("ekmek_arasi", "ayran"), Collections.singletonList("soğansız"),
                 Arrays.asList(PortionSize.HALF, PortionSize.FULL));
         String t = last();
-        assertTrue(t, t.startsWith("Yeni müşteri: " + o.customer.name + ", Ekmek arası döner (yarım ekmek) ve Ayran istiyor. 2 kalem. İstek: soğansız."));
+        assertTrue(t, t.startsWith("Yeni müşteri: " + o.customer.name + ", Ekmek arası döner (yarım ekmek) ve Ayran. İstek: soğansız."));
         Order d = e.spawnOrder(Collections.singletonList("ekmek_arasi"), NONE, Collections.singletonList(PortionSize.DOUBLE));
-        assertTrue(last(), last().contains("Ekmek arası döner (duble) istiyor."));
+        assertTrue(last(), last().contains("Ekmek arası döner (duble)."));
         Order f = e.spawnOrder(Collections.singletonList("ekmek_arasi"), NONE);
         assertFalse("tam ekmek ayrıca söylenmez", last().contains("ekmek)") || last().contains("(tam"));
         assertEquals("Ekmek arası döner (yarım ekmek) ve Ayran", o.itemsText());
@@ -57,7 +57,7 @@ public class NarratorV06Test {
         GameEngine e = engine(5);
         Order o = e.spawnOrder(Collections.singletonList("ekmek_arasi"), NONE, Collections.singletonList(PortionSize.HALF));
         e.selectOrder(o.id);
-        assertEquals("Önerilen: Ekmeği ısıt, yarım ekmek. Ekmek ısıtıcı istasyonuna dokun.", last());
+        assertEquals("Önerilen: Ekmeği ısıt, yarım ekmek. Ekmek ısıtıcı.", last());
         Flow.doItemStation(e, o, 0, Station.EKMEK);
         said.clear();
         assertEquals(StartResult.STARTED, e.applyStationOption(o.id, 0, Station.DONER.id, "size:duble"));
@@ -106,7 +106,8 @@ public class NarratorV06Test {
         Flow.waitDone(e, o);
         said.clear();
         e.finishToppings(o.id, 0);
-        assertTrue(said.toString(), said.get(0).startsWith("Malzemeleri ekle bitti. Önerilen: Siparişi paketle"));
+        assertTrue(said.toString(), said.get(0).startsWith("Malzemeleri ekle bitti."));
+        assertFalse("v0.9: bitiş duyurusu sıradaki adımı tekrarlamaz", said.get(0).contains("Önerilen"));
         Narrator n = new Narrator(e);
         assertEquals("Ekmek arası döner malzemeleri tamam. Eklenen: marul.", n.toppingsFinished(o, 0, o.getLine(0).getChosen()));
         assertEquals("Ekmek arası döner malzemeleri tamam. Hiç malzeme eklenmedi.", n.toppingsFinished(o, 0, Collections.<String>emptyList()));
@@ -163,7 +164,7 @@ public class NarratorV06Test {
         e.selectOrder(o.id);
         Narrator n = new Narrator(e);
         String l = n.stationLabel(Station.DONER);
-        assertTrue(l, l.contains("Döneri dilimle için gerekli, yarım ekmek"));
+        assertTrue(l, l.contains("sıradaki: Döneri dilimle, yarım ekmek"));
         assertEquals("", n.readyStockText());
         e.beginPrep();
         e.startPrepDoner("et_doner", 2);

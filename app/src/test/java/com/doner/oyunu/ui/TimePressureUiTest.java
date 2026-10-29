@@ -93,7 +93,7 @@ public class TimePressureUiTest {
         View off = h.findLabel("Süre baskısı: kapalı");
         assertNotNull("kapalı durumu etikette", off);
         assertEquals("Süre baskısı: Kapalı", ((android.widget.Button) off).getText().toString());
-        assertTrue(UiHarness.label(off).contains("Açmak için dokun"));
+        assertEquals("v0.9: etiket yalnızca ad ve durum", "Süre baskısı: kapalı", UiHarness.label(off));
         audit(h, "Ayarlar (süre baskısı kapalı)");
         h.act.reloadSave();
         assertFalse("kayıtta kalıcı", h.act.save.timePressure);

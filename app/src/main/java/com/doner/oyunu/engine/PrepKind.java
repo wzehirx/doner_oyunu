@@ -7,7 +7,9 @@ public enum PrepKind {
     /** Doldurulmuş içecek (ayran): 4 bardak; gün sonunda atılmaz, ertesi güne kalır. */
     DRINK("İçecek doldurma", Station.ICECEK, 4, 4f),
     /** Hazır salata/sos tepsisi: seçilen malzemelerden 6'şar kullanım; topping seçimini hızlandırır. */
-    TRAY("Salata ve sos tepsisi", Station.SOS, 6, 5f);
+    TRAY("Salata ve sos tepsisi", Station.SOS, 6, 5f),
+    /** Hazır kızarmış patates (v0.9): 4 porsiyon, Ocak istasyonu; "Patates kızart" adımı ~0,8 sn olur. Gün sonunda atılır (israf). */
+    FRIES("Patates kızartma", Station.IZGARA, 4, 5f);
 
     public final String displayName;
     public final Station station;

@@ -59,6 +59,9 @@ public final class Step {
         return false;
     }
 
+    /** "Patates kızart": OCAK istasyonunda patates tüketen adım. */
+    public boolean isFry() { return station == Station.IZGARA && needs.containsKey(Catalog.PATATES); }
+
     /** "Ayranı doldur" gibi hazır içecek ile hızlanabilen adım mı. */
     public boolean isDrinkFill() { return station == Station.ICECEK && needs.containsKey(Catalog.AYRAN); }
 }

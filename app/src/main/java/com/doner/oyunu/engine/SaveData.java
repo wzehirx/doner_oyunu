@@ -22,6 +22,9 @@ public final class SaveData {
     public boolean vibration = true;
     public double musicVolume = 0.7;
     public double sfxVolume = 1.0;
+    /** Dükkân ambiyansı ses düzeyi (v0.9; müzikten bağımsız, 0 = kapalı). Eski kayıtlarda yoksa varsayılan. */
+    public static final double DEFAULT_AMBIENCE = 0.35;
+    public double ambienceVolume = DEFAULT_AMBIENCE;
     public boolean tutorialDone = false;
     /** Çırak duyuruları (ayar). */
     public boolean apprenticeAnnounce = true;
@@ -78,6 +81,7 @@ public final class SaveData {
         sb.append("vibration=").append(vibration ? 1 : 0).append('\n');
         sb.append("music=").append(musicVolume).append('\n');
         sb.append("sfx=").append(sfxVolume).append('\n');
+        sb.append("ambience=").append(ambienceVolume).append('\n');
         sb.append("tutorial=").append(tutorialDone ? 1 : 0).append('\n');
         sb.append("apprenticeAnnounce=").append(apprenticeAnnounce ? 1 : 0).append('\n');
         sb.append("readyDrinks=").append(readyDrinks).append('\n');
@@ -122,6 +126,7 @@ public final class SaveData {
                 else if (k.equals("vibration")) s.vibration = v.equals("1");
                 else if (k.equals("music")) s.musicVolume = Math.max(0, Math.min(1, num(v)));
                 else if (k.equals("sfx")) s.sfxVolume = Math.max(0, Math.min(1, num(v)));
+                else if (k.equals("ambience")) s.ambienceVolume = Math.max(0, Math.min(1, num(v)));
                 else if (k.equals("tutorial")) s.tutorialDone = v.equals("1");
                 else if (k.equals("apprenticeAnnounce")) s.apprenticeAnnounce = v.equals("1");
                 else if (k.equals("flow")) { FlowMode m = FlowMode.byId(v); if (m != null) s.flowMode = m; }

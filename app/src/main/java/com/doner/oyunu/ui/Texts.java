@@ -86,20 +86,19 @@ public final class Texts {
 
     public static String orderDescription(Order o, boolean selected, ActiveStep act) { return orderDescription(o, selected, act, true); }
 
-    /** timed=false (süresiz gün): sabır cümlesi yoktur (sabır azalmaz, müşteri gitmez). */
+    /**
+     * Sipariş kartı etiketi (v0.9, kısa): "Sipariş 2, Ali, ayran ve ekmek arası döner, soğansız, seçili". Durum yalnızca
+     * gerektiğinde eklenir (hazır, paketleniyor, sabır azalıyor/kritik). timed=false: sabır yoktur.
+     */
     public static String orderDescription(Order o, boolean selected, ActiveStep act, boolean timed) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(orderTitle(o)).append(". ").append(o.itemsText()).append(". ");
-        if (o.hasRequests()) sb.append("İstek: ").append(o.requestsText()).append(". ");
-        if (o.lineCount() > 1) sb.append(o.lineCount()).append(" kalem. ");
-        if (selected) sb.append("Seçili. ");
-        sb.append(orderStatus(o, act, true)).append(". ").append(orderProgress(o)).append(". ");
-        if (timed) {
-            sb.append(patienceWord(o.customer.patienceFraction()));
-            sb.append(", en fazla ").append(roundedSeconds(o.customer.getPatienceLeft())).append(" saniye kaldı. ");
-        }
-        sb.append(selected ? "" : "Seçmek için çift dokun.");
-        return sb.toString().trim();
+        StringBuilder sb = new StringBuilder("Sipariş ").append(o.getPosition()).append(", ").append(o.customer.name)
+                .append(", ").append(o.itemsText());
+        if (o.hasRequests()) sb.append(", ").append(o.requestsText());
+        if (o.isReady()) sb.append(", hazır");
+        else if (o.isPacking()) sb.append(", paketleniyor");
+        if (timed && !o.isReady()) sb.append(", ").append(patienceWord(o.customer.patienceFraction()));
+        if (selected) sb.append(", seçili");
+        return sb.toString();
     }
 
     // ------------------------------------------------------------------ kalem
@@ -169,35 +168,24 @@ public final class Texts {
         return "Eklenenler: " + addedNames(l) + ".";
     }
 
-    /** Kalemin sesli açıklaması: durum + adımlar + kilit nedenleri. */
+    /** Kalem etiketi (v0.9, kısa): "Sipariş 2, kalem 1, ekmek arası döner, 2/3 adım" / "…, hazır" / sürüyorsa çalışan adım; seçiliyse "seçili". */
     public static String lineDescription(GameEngine e, Order o, OrderLine l, boolean selectedItem) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("Sipariş ").append(o.getPosition()).append(", kalem ").append(l.index + 1).append(" / ").append(o.lineCount())
-                .append(": ").append(l.displayName()).append(", ").append(l.price()).append(" lira. ");
-        if (l.isDone()) sb.append("Kalem hazır. ");
+        StringBuilder sb = new StringBuilder("Sipariş ").append(o.getPosition()).append(", kalem ").append(l.index + 1).append(", ").append(l.displayName());
+        if (l.isDone()) sb.append(", hazır");
         else {
-            List<String> parts = new ArrayList<>();
+            sb.append(", ").append(l.doneCount()).append('/').append(l.stepCount()).append(" adım");
             for (int i = 0; i < l.stepCount(); i++) {
-                Step s = l.step(i);
-                if (l.isStepDone(i)) parts.add(s.name + " tamam");
-                else if (l.isStepRunning(i)) {
+                if (l.isStepRunning(i)) {
                     ActiveStep j = jobOf(e, o, l, i);
-                    parts.add(s.name + (j != null && j.isApprentice() ? " sürüyor, çırak yapıyor" : " sürüyor"));
-                } else if (l.isStepUnlocked(i)) {
-                    String hint = s.station.displayName;
-                    if (s.meatId() != null && e.getReadyMeat(s.meatId()) > 0) hint += ", hazır döner var, hızlı";
-                    else if (s.isDrinkFill() && e.getReadyDrinks() > 0) hint += ", hazır içecek var, hızlı";
-                    else if (s.isTopping() && e.getTrayTotal() > 0) hint += ", hazır tepsi var, hızlı";
-                    parts.add(s.name + " bekliyor, " + hint);
-                } else parts.add(s.name + " kilitli, " + lockReason(l, i));
+                    sb.append(", ").append(l.step(i).name).append(j != null && j.isApprentice() ? " sürüyor, çırak" : " sürüyor");
+                    break;
+                }
             }
-            sb.append(join(parts)).append(". ");
         }
         String added = addedStatus(l);
-        if (!added.isEmpty() && (l.addedTotal() > 0 || l.isStepDone(l.product.toppingStepIndex()))) sb.append(added).append(' ');
-        if (selectedItem) sb.append("Bu kalem seçili. ");
-        else if (!l.isDone()) sb.append("Önce bu kalem yapılsın diye seçmek için çift dokun.");
-        return sb.toString().trim();
+        if (!added.isEmpty() && l.addedTotal() > 0) sb.append(", ").append(Character.toLowerCase(added.charAt(0))).append(added.substring(1, added.length() - 1));
+        if (selectedItem) sb.append(", seçili");
+        return sb.toString();
     }
 
     /** Ortak "Siparişi paketle" adımının görsel metni. */
@@ -211,13 +199,11 @@ public final class Texts {
     }
 
     public static String packDescription(Order o) {
-        String p = "Sipariş " + o.getPosition() + ", Siparişi paketle: ";
-        if (o.isReady()) return p + "tamam. Sipariş teslime hazır.";
-        if (o.isPacking()) return p + "sürüyor.";
-        if (o.canPack()) return p + "hazır. Çift dokununca " + Station.PAKET.displayName + " paketlemeyi başlatır.";
-        int left = 0;
-        for (OrderLine l : o.getLines()) if (!l.isDone()) left++;
-        return p + "kilitli, önce tüm kalemler hazır olmalı. " + left + " kalem bekliyor.";
+        String p = "Siparişi paketle, ";
+        if (o.isReady()) return p + "tamam";
+        if (o.isPacking()) return p + "sürüyor";
+        if (o.canPack()) return p + "hazır";
+        return p + "kilitli";
     }
 
     // ------------------------------------------------------------------ istasyon
@@ -244,17 +230,13 @@ public final class Texts {
         return "Boş";
     }
 
+    /** İstasyon düğmesi etiketi (v0.9, kısa): ad + durum; menüde kullanılmıyorsa sonuna eklenir. */
     public static String stationDescription(Narrator n, GameEngine e, Station st, boolean inUse) {
         StringBuilder sb = new StringBuilder(n.stationLabel(st));
         for (ActiveStep a : e.getActiveSteps()) {
-            if (a.step.station != st) continue;
-            sb.append(", ").append(a.step.name).append(" yapılıyor");
-            if (a.order != null) sb.append(", ").append(a.order.customer.name);
-            if (a.isApprentice()) sb.append(", çırak");
-            break;
+            if (a.step.station == st && a.isApprentice()) { sb.append(", çırak"); break; }
         }
-        if (!inUse) sb.append(", bugünkü menüde kullanılmıyor");
-        sb.append(". Dokununca işlem başlar ya da seçenekler açılır. Eylemler menüsünde de aynı seçenekler var.");
+        if (!inUse) sb.append(", menüde yok");
         return sb.toString();
     }
 
@@ -263,6 +245,7 @@ public final class Texts {
         switch (k) {
             case DONER: return "döner dilimleme";
             case DRINK: return "ayran doldurma";
+            case FRIES: return "patates kızartma";
             default: return "salata ve sos tepsisi hazırlama";
         }
     }
@@ -273,7 +256,8 @@ public final class Texts {
         String what;
         if (a.isPrep()) {
             if (a.isApprentice()) {
-                what = a.prep == PrepKind.DONER ? "döner dilimliyor" : a.prep == PrepKind.DRINK ? "ayran dolduruyor" : "salata ve sos tepsisi hazırlıyor";
+                what = a.prep == PrepKind.DONER ? "döner dilimliyor" : a.prep == PrepKind.DRINK ? "ayran dolduruyor"
+                        : a.prep == PrepKind.FRIES ? "patates kızartıyor" : "salata ve sos tepsisi hazırlıyor";
             } else what = prepKindName(a.prep);
         } else if (a.isPack()) {
             what = a.order.getPosition() + " numaralı siparişi paketliyor";
@@ -283,32 +267,24 @@ public final class Texts {
         return who + ": " + what;
     }
 
+    /** Hazır stok hücresi etiketi (v0.9, kısa): "Hazır döner: 3,5 porsiyon". */
     public static String stockCellDescription(GameEngine e, PrepKind k) {
-        int cap = e.getReadyCapacity(k);
         switch (k) {
-            case DONER:
-                return "Hazır döner: " + PortionSize.halvesText(e.getReadyDonerHalves()) + " porsiyon. Yarım ekmek yarım porsiyon alır. Her döner türü için en fazla " + cap + ".";
-            case DRINK:
-                return "Hazır ayran: " + e.getReadyDrinks() + " bardak. En fazla " + cap + ". Gün sonunda atılmaz.";
-            default:
-                return "Hazır salata ve sos tepsisi: " + e.getTrayTotal() + " kullanım. Her malzeme için en fazla " + cap + ".";
+            case DONER: return "Hazır döner: " + PortionSize.halvesText(e.getReadyDonerHalves()) + " porsiyon";
+            case DRINK: return "Hazır ayran: " + e.getReadyDrinks() + " bardak";
+            case FRIES: return "Hazır patates: " + e.getReadyFries() + " porsiyon";
+            default: return "Hazır salata ve sos tepsisi: " + e.getTrayTotal() + " kullanım";
         }
     }
 
+    /** Hazırlık düğmesi etiketi (v0.9, kısa): ad + hazır stok. */
     public static String prepButtonDescription(GameEngine e, PrepKind k, Ingredient meat) {
         int cap = e.getReadyCapacity(k);
         switch (k) {
-            case DONER: {
-                return "Döner dilimle: " + meat.name + ". Dörder ya da ikişer porsiyon hazırlanır, " + k.batch + " porsiyon için " + k.batch + " " + meat.unit + " " + meat.name
-                        + " harcar, yaklaşık " + Math.round(k.baseSeconds) + " saniye. Hazır " + PortionSize.halvesText(e.getReadyMeatHalves(meat.id)) + " / " + cap
-                        + " porsiyon. Dokununca 4 porsiyon ve 2 porsiyon seçenekleri açılır; Eylemler menüsünde de aynı seçenekler var.";
-            }
-            case DRINK:
-                return "Ayran doldur. " + k.batch + " bardak hazırlar, " + k.batch + " ayran harcar, yaklaşık " + Math.round(k.baseSeconds)
-                        + " saniye. Hazır " + e.getReadyDrinks() + " / " + cap + " bardak. Gün sonunda atılmaz.";
-            default:
-                return "Salata ve sos tepsisi hazırla. Menünün sık kullanılan malzemeleri seçilir, her biri için " + k.batch + " kullanım hazırlanır, "
-                        + "yaklaşık " + Math.round(k.baseSeconds) + " saniye. Hazır tepsi " + e.getTrayTotal() + " kullanım.";
+            case DONER: return "Döner dilimle: " + meat.name + ", hazır " + PortionSize.halvesText(e.getReadyMeatHalves(meat.id)) + " / " + cap;
+            case DRINK: return "Ayran doldur, hazır " + e.getReadyDrinks() + " / " + cap;
+            case FRIES: return "Patates kızart, hazır " + e.getReadyFries() + " / " + cap;
+            default: return "Salata ve sos tepsisi hazırla, hazır " + e.getTrayTotal();
         }
     }
 
@@ -317,19 +293,20 @@ public final class Texts {
         switch (k) {
             case DONER: return "Döner dilimle: " + meat.name + "\n4 ya da 2 porsiyon · hazır " + PortionSize.halvesText(e.getReadyMeatHalves(meat.id)) + " / " + cap;
             case DRINK: return "Ayran doldur\n" + k.batch + " bardak · hazır " + e.getReadyDrinks() + " / " + cap;
+            case FRIES: return "Patates kızart\n" + k.batch + " porsiyon · hazır " + e.getReadyFries() + " / " + cap;
             default: return "Salata ve sos tepsisi hazırla\nÖnerilen malzemeler · hazır " + e.getTrayTotal() + " kullanım";
         }
     }
 
     public static String slotsText(GameEngine e) {
-        return "Boş işlem yuvası: " + e.getFreeSlots() + " / " + e.getSlotCount();
+        return "Boş yuva " + e.getFreeSlots() + " / " + e.getSlotCount();
     }
 
     public static String deliverDescription(GameEngine e) {
         List<String> names = new ArrayList<>();
         for (Order o : e.getOrders()) if (o.isReady()) names.add(o.customer.name);
-        if (names.isEmpty()) return "Teslim et. Şu an hazır sipariş yok.";
-        return "Teslim et. Hazır sipariş: " + join(names) + ".";
+        if (names.isEmpty()) return "Teslim et, hazır sipariş yok";
+        return "Teslim et, hazır: " + join(names);
     }
 
     public static String join(List<String> l) {
@@ -343,19 +320,17 @@ public final class Texts {
 
     // ------------------------------------------------------------------ market
     public static String ingredientInfo(Ingredient i, int stock, int cap) {
-        return i.name + ": stok " + stock + " / " + cap + " " + i.unit + ", birim " + i.price + " lira";
+        return i.name + ", stok " + stock + " / " + cap + ", birim " + i.price + " lira";
     }
 
     /** Stok kapasitesini ve parayı gözeterek GERÇEKTE alınacak miktarı ve ödenecek tutarı söyler. */
     public static String buyDescription(Ingredient i, int qty, SaveData save) {
         int real = Shop.purchasableQty(save, i.id, qty);
         String head = qty + " " + i.name + " al";
-        if (real <= 0) return head + ": stok dolu, hiçbir şey alınmaz, ödeme yok";
+        if (real <= 0) return head + ", stok dolu";
         int cost = real * i.price;
-        String t = real < qty
-                ? head + ", ama stok kapasitesi nedeniyle yalnızca " + real + " " + i.unit + " alınır, " + cost + " lira ödenir"
-                : head + ", " + cost + " lira";
-        if (save.money < cost) t += ". Paran yetmiyor";
+        String t = real < qty ? head + ", yalnızca " + real + " alınır, " + cost + " lira" : head + ", " + cost + " lira";
+        if (save.money < cost) t += ", paran yetmiyor";
         return t;
     }
 
@@ -366,9 +341,7 @@ public final class Texts {
 
     /** Acil al düğmesi erişilebilirlik açıklaması: malzeme adları ve toplam fiyat. */
     public static String emergencyDescription(List<Ingredient> missing, int cost) {
-        String t = "Acil al: " + names(missing) + ", toplam " + cost + " lira. ";
-        t += missing.size() > 1 ? "Eksik malzemelerin hepsi tek dokunuşla alınır. " : "";
-        return t + "Normalden yüzde elli pahalı.";
+        return "Acil al: " + names(missing) + ", " + cost + " lira";
     }
 
     private static String names(List<Ingredient> l) {
@@ -379,9 +352,9 @@ public final class Texts {
 
     public static String recommendedDescription(SaveData save) {
         int cost = Shop.recommendedCost(save);
-        if (cost <= 0) return "Önerilen malzemeleri al. Stok zaten yeterli.";
-        String t = "Önerilen malzemeleri al. Tahmini maliyet " + cost + " lira.";
-        if (cost > save.money) t += " Paran tamamına yetmiyor, yettiği kadarı alınır.";
+        if (cost <= 0) return "Önerilen malzemeleri al, stok yeterli";
+        String t = "Önerilen malzemeleri al, " + cost + " lira";
+        if (cost > save.money) t += ", paran yetmiyor";
         return t;
     }
 
@@ -461,15 +434,12 @@ public final class Texts {
         int rec = Shop.recommendedCost(save);
         if (rec > 0) l.add("Stoğun bugün için yetersiz olabilir. Önerilen malzemelerin maliyeti " + rec + " lira. Markete uğramanı öneririm.");
         else l.add("Stoğun bugün için yeterli görünüyor.");
-        l.add("Güne başlayınca önce hazırlık aşaması gelir: döner dilimle, ayran doldur, salata ve sos tepsisi hazırla. Süre akmaz; hazır olunca Dükkânı aç ya da Hazırlık yapmadan aç. "
-                + "Dükkân açılınca hazırlık düğmeleri ekrandan kalkar; gün içinde hazırlığı istasyon düğmesinin Eylemler menüsünden ya da seçenekler panelinden yaparsın.");
+        l.add("Önce hazırlık aşaması gelir, süre akmaz. Hazır olunca Dükkânı aç ya da Hazırlık yapmadan aç. "
+                + "Gün içinde hazırlığı istasyonun Eylemler menüsünden yaparsın.");
         l.add(flowBriefingLine(save));
         l.add(timePressureBriefingLine(save));
-        l.add("Her istasyon düğmesinin seçenekleri vardır: TalkBack Eylemleri menüsünden seç ya da düğmeye dokununca açılan seçenekler panelinden seç. "
-                + (save.flowMode == FlowMode.RAHAT ? "Tek işlem varsa dokununca hemen başlar."
-                : "Döner boyunu ve eklenecek malzemeleri bu seçeneklerle belirlersin."));
-        if (save.day == 1 && !save.tutorialDone) l.add("Öğretici açık: hazırlık yapmayı, sipariş seçmeyi, istasyon seçeneklerini ve TalkBack Eylemlerini, "
-                + tutorialFlowPart(save.flowMode) + " ve teslim etmeyi adım adım sesle öğreneceksin.");
+        l.add("İstasyon seçeneklerini TalkBack Eylemleri menüsünden ya da düğmeye dokununca açılan panelden seçersin.");
+        if (save.day == 1 && !save.tutorialDone) l.add("Öğretici açık: kısa sesli ipuçlarıyla ilk siparişi hazırlarsın.");
         return l;
     }
 
@@ -485,26 +455,20 @@ public final class Texts {
     /** Duraklat menüsü düğmesi: "Süre baskısı: Açık". */
     public static String timePressureButtonLabel(boolean timed) { return "Süre baskısı: " + (timed ? "Açık" : "Kapalı"); }
 
-    /** Düğme contentDescription: durum + ne yapar. */
+    /** Düğme etiketi (v0.9, kısa): yalnızca durum. */
     public static String timePressureButtonDescription(boolean timed) {
-        return "Süre baskısı: " + (timed ? "açık" : "kapalı") + ". Dokununca " + (timed ? "kapatır" : "açar") + ". "
-                + (timed ? "Kapatınca süre sayacı gider, müşteri sabrı azalmaz, kimse gitmez; kota kadar müşteri gelip hepsi teslim edilince gün biter."
-                : "Açınca gün süreli olur ve müşteriler sabırsızlanır.");
+        return "Süre baskısı: " + (timed ? "açık" : "kapalı");
     }
 
     /** Ayarlardaki büyük aç/kapa düğmesi. */
     public static String timePressureSettingLabel(boolean timed) { return "Süre baskısı: " + (timed ? "Açık" : "Kapalı"); }
 
     public static String timePressureSettingDescription(boolean timed) {
-        return "Süre baskısı: " + (timed ? "açık" : "kapalı") + ". " + (timed ? "Kapatmak için dokun. " : "Açmak için dokun. ")
-                + (timed
-                ? "Açıkken gün süreli geçer, müşterilerin sabrı azalır ve hızlı teslim ek bahşiş ve yıldız verir."
-                : "Kapalıyken süre sayacı yoktur, müşteri sabrı azalmaz ve kimse gitmez. Her gün belli sayıda müşteri gelir, hepsi teslim edilince gün biter. Hız bonusu yoktur ve bahşişler biraz daha azdır.");
+        return "Süre baskısı: " + (timed ? "açık" : "kapalı");
     }
 
     /** Tek cümlelik açıklama notu (Ayarlar). */
-    public static final String TIME_PRESSURE_NOTE = "Zorlanıyorsan süre baskısını kapat: süre sayacı gider, müşteriler beklemekten gitmez ve her gün belli sayıda müşteri gelir. "
-            + "Hız bonusu olmaz ve bahşişler biraz azalır. Oyun sırasında Duraklat menüsünden de değiştirebilirsin.";
+    public static final String TIME_PRESSURE_NOTE = "Kapalıyken süre sayacı yok, müşteriler beklemekten gitmez; bahşişler biraz azalır.";
 
     // ------------------------------------------------------------------ oyun akışı (v0.7)
     /** Brifing satırı: "Oyun akışı: Dengeli. <açıklama> Oyun akışı düğmesiyle ya da Ayarlardan değiştirebilirsin." */
@@ -517,41 +481,33 @@ public final class Texts {
     /** "Oyun akışı: Dengeli" düğmesi etiketi (sıradaki akışa geçer). */
     public static String flowButtonLabel(FlowMode m) { return "Oyun akışı: " + m.displayName; }
 
-    /** Düğme contentDescription: durum + ne yapar. */
+    /** Düğme etiketi (v0.9, kısa): yalnızca durum. */
     public static String flowButtonDescription(FlowMode m) {
-        return "Oyun akışı: " + m.displayName + ". Dokununca " + m.next().displayName + " akışına geçer. " + m.description;
+        return "Oyun akışı: " + m.displayName;
     }
 
     /** Ayarlardaki seçenek düğmesi: "Dengeli, seçili. <açıklama>" */
     public static String flowOptionDescription(FlowMode m, boolean selected) {
-        return m.displayName + (selected ? ", seçili. " : ", seçmek için dokun. ") + m.description
-                + (m == FlowMode.DEFAULT ? " Önerilen." : "");
+        return m.displayName + (selected ? ", seçili" : "") + (m == FlowMode.DEFAULT ? ", önerilen" : "");
     }
 
-    private static String tutorialFlowPart(FlowMode m) {
-        switch (m) {
-            case RAHAT: return "malzemelerin ve boyun otomatik eklendiğini";
-            case DENGELI: return "varsayılan malzemeleri tek dokunuşla eklemeyi, istek farkını yapmayı";
-            default: return "boy seçmeyi, malzemeleri tek tek eklemeyi";
-        }
-    }
+    /** Ayarlar > Oyun akışı altında okunan tek paragraf (düğmeler kısa kalır). */
+    public static final String FLOW_NOTE = "Rahat: boy ve malzemeler otomatik. Dengeli: standart olan otomatik, farklı olanı sen yaparsın. Gerçekçi: her şeyi sen yaparsın.";
 
-    /** Akışa göre döner boyu öğretici metni (Gerçekçi = {@link #TUT_SIZE}). */
+    /** Akışa göre döner boyu öğretici metni (tek kısa cümle; Gerçekçi = {@link #TUT_SIZE}). */
     public static String tutSize(FlowMode m) {
         switch (m) {
-            case RAHAT: return "Rahat akışta döner boyunu sistem seçer: müşterinin istediği boy otomatik dilimlenir. Döner makinesine bir kez dokunman yeter.";
-            case DENGELI: return "Dengeli akışta tam ekmek otomatik dilimlenir; döner makinesine bir kez dokunman yeter. "
-                    + "Müşteri yarım ekmek ya da duble isterse seçenekler açılır ve boyu sen seçersin. Yanlış boy hatalı sipariş sayılır.";
+            case RAHAT: return "Döner boyu otomatik, makineye bir kez dokun.";
+            case DENGELI: return "Tam ekmek otomatik; yarım ekmek ya da duble istenirse boyu sen seç.";
             default: return TUT_SIZE;
         }
     }
 
-    /** Akışa göre malzeme öğretici metni (Gerçekçi = {@link #TUT_TOPPING}). */
+    /** Akışa göre malzeme öğretici metni (tek kısa cümle; Gerçekçi = {@link #TUT_TOPPING}). */
     public static String tutTopping(FlowMode m) {
         switch (m) {
-            case RAHAT: return "Malzeme ekleme zamanı. Sos ve salata tezgahına bir kez dokun: malzemeler, müşteri istekleri dahil, otomatik eklenir ve sana söylenir.";
-            case DENGELI: return "Malzeme ekleme zamanı. Sos ve salata tezgahına dokun: varsayılan malzemeler tek dokunuşla eklenir. "
-                    + "Müşterinin isteği yoksa iş biter. İstek varsa, örneğin soğansız, seçenekler açılır: Soğan çıkar ya da Acı sos ekle gibi farkı yap, sonra Malzemeleri bitir seçeneğini seç.";
+            case RAHAT: return "Sos tezgahına dokun, malzemeler otomatik eklenir.";
+            case DENGELI: return "Sos tezgahına dokun; varsayılanlar eklenir. İstek varsa farkı yap, sonra Malzemeleri bitir.";
             default: return TUT_TOPPING;
         }
     }
@@ -562,17 +518,16 @@ public final class Texts {
     /** Akışa ve süre baskısına göre kısa yardım. */
     public static String quickHelp(FlowMode m, boolean timed) {
         String base = quickHelpFlow(m);
-        return timed ? base : base.replace(" Acele et, sabır tükenirse müşteri gider.", " Süre baskısı kapalı: acele etmene gerek yok, müşteri gitmez; kalan müşteri sayısı durum çubuğunda.");
+        return timed ? base : base.replace(" Acele et, sabır tükenirse müşteri gider.", " Süre baskısı kapalı: acele yok, müşteri gitmez.");
     }
 
     private static String quickHelpFlow(FlowMode m) {
         if (m == FlowMode.GERCEKCI) return quickHelp();
         String mid = m == FlowMode.RAHAT
-                ? "Rahat akışta döner boyu ve malzemeler, müşteri istekleri dahil, otomatik; her istasyona bir kez dokun. "
-                : "Dengeli akışta tam ekmek ve varsayılan malzemeler tek dokunuşla; yarım ekmek, duble ya da müşteri isteğinde farkı sen yap, sonra Malzemeleri bitir. Hedefi oku ile kontrol edebilirsin. ";
-        return "Hazırlık aşamasında önceden döner dilimle, ayran doldur, tepsi hazırla; sonra Dükkânı aç. Gün içinde hazırlık için istasyon düğmesinin Eylemler menüsünü ya da panelini kullan. "
-                + "Siparişe dokunarak seç, önerilen istasyonun düğmesine dokun. Birden çok seçenek varsa panel açılır; TalkBack kullanıyorsan Eylemler menüsünden de seçebilirsin. "
-                + mid + "Tüm kalemler bitince siparişi paketle, sonra Teslim et. Oyun akışını ve süre baskısını Duraklat menüsünden değiştirebilirsin. Durumu oku düğmesi bilgi verir. Acele et, sabır tükenirse müşteri gider.";
+                ? "Rahat akışta boy ve malzemeler otomatik; her istasyona bir kez dokun. "
+                : "Dengeli akışta standart olan otomatik; istek ya da yarım ekmek, duble varsa farkı yap, sonra Malzemeleri bitir. Hedefi oku ile kontrol et. ";
+        return "Hazırlıkta önceden döner dilimle, ayran doldur; sonra Dükkânı aç. Siparişi seç, önerilen istasyona dokun; seçenekleri Eylemler menüsünden de seçebilirsin. "
+                + mid + "Kalemler bitince siparişi paketle, sonra Teslim et. Acele et, sabır tükenirse müşteri gider.";
     }
 
     // ------------------------------------------------------------------ gün sonu
@@ -616,102 +571,76 @@ public final class Texts {
     public static List<String[]> helpSections() {
         List<String[]> l = new ArrayList<>();
         l.add(new String[]{"Amaç",
-                "Bir döner dükkanı işletiyorsun. Gelen müşterilerin siparişlerini hazırlayıp sabırları tükenmeden teslim et. "
-                        + "Yıldızın 1,0'ın altına düşerse gün başarısız olur, aynı günü paran kaybolmadan tekrar denersin."});
+                "Döner dükkanı işletirsin. Müşterilerin siparişini sabırları bitmeden hazırlayıp teslim et. "
+                        + "Yıldızın 1,0'ın altına düşerse gün başarısız olur; aynı günü paran kaybolmadan tekrar denersin."});
         l.add(new String[]{"Gün öncesi hazırlık",
-                "Markete uğradıktan sonra hazırlık aşamasına girersin. Bu aşamada müşteri gelmez ve süre akmaz. "
-                        + "Döner dilimle (4 ya da 2 porsiyon), ayran doldur ve salata ve sos tepsisi hazırla düğmeleriyle önceden hazırlık yaparsın. Bu düğmelerin de Eylemler menüsü vardır. "
-                        + "Hazır döner dilimleme adımını, hazır ayran doldurmayı, hazır tepsi malzeme eklemeyi hızlandırır. "
-                        + "Hazır stok sayıları ekranda ve sesli okunur. Hazırlığı bitirince Dükkânı aç düğmesine dokun; istersen Hazırlık yapmadan aç diyerek geçebilirsin. "
-                        + "Gün sonunda artan hazır döner ve tepsi israf olur ve özette görünür. Hazır ayran ertesi güne kalır. "
-                        + "Dükkân açılınca hazırlık düğmeleri ve hazır stok göstergeleri ekrandan kalkar. Gün içinde boş anında da hazırlık yapabilirsin: ilgili istasyon düğmesinin Eylemler menüsünde ya da seçenekler panelinde hazırlık seçenekleri vardır, örneğin döner makinesinde 4 porsiyon dilimle, içecek dolabında ayran doldur, sos tezgahında tepsi hazırla. "
-                        + "Hazır stok, Durumu oku düğmesinde ve istasyon düğmesinin adında yazar, örneğin Döner makinesi, hazır 3,5 porsiyon."});
+                "Markete uğradıktan sonra hazırlık aşamasına girersin: müşteri gelmez, süre akmaz. "
+                        + "Döner dilimle, ayran doldur, patates kızart ve salata ve sos tepsisi hazırla düğmeleriyle önceden hazırlık yaparsın. Hazır stok ilgili adımı hızlandırır. "
+                        + "Bitince Dükkânı aç; istersen Hazırlık yapmadan aç. Gün sonunda artan hazır döner, patates ve tepsi israf olur; hazır ayran ertesi güne kalır. "
+                        + "Dükkân açılınca hazırlık düğmeleri ve hazır stok göstergeleri ekrandan kalkar; gün içinde hazırlığı istasyonun Eylemler menüsünden ya da panelinden yaparsın."});
         l.add(new String[]{"Oyun ekranı",
-                "En üstte durum çubuğu var: para, yıldız, kalan süre ve bekleyen sipariş sayısı. Süre baskısı kapalıysa süre yerine kalan müşteri sayısı yazar. Ortada siparişler listelenir. "
-                        + "Altında istasyonlar var: döner makinesi, ekmek ısıtıcı, sos ve salata tezgahı, ızgara ve fırın, paketleme, içecek dolabı, tatlı tezgahı. "
+                "Üstte durum çubuğu var: para, yıldız, kalan süre ve bekleyen sipariş. Ortada siparişler, altında istasyonlar: "
+                        + "döner makinesi, ekmek ısıtıcı, sos ve salata tezgahı, Ocak, paketleme, içecek dolabı, tatlı tezgahı. "
                         + "En altta Teslim et, Sonraki sipariş, Duraklat ve Durumu oku düğmeleri bulunur."});
         l.add(new String[]{"Sipariş hazırlama",
-                "Bir siparişe dokunarak seç. Siparişin her ürünü bir kalemdir ve kalemleri istediğin sırayla yapabilirsin. "
-                        + "İstersen bir kaleme dokunarak önce onu seç. Sistem önerilen adımı söyler; ilgili istasyonun düğmesine dokun. "
-                        + "Tek bir işlem varsa hemen başlar; birden çok seçenek varsa seçenekler paneli açılır. "
-                        + "Malzeme ekleme adımı, kalemin ısıtma ve dilimleme gibi diğer adımları bitince açılır; erken dokunursan sistem nedenini söyler ve yıldız düşmez. "
-                        + "Tüm kalemler hazır olunca tek bir Siparişi paketle adımı açılır: Paketleme istasyonuna ya da kartın paketle satırına dokun. "
-                        + "Paketleme bitince Teslim et düğmesine dokun."});
+                "Siparişe dokunarak seç. Her ürün bir kalemdir; istediğin sırayla yaparsın, istersen kalemi seçersin. "
+                        + "Sistem önerilen adımı söyler, ilgili istasyona dokun. Tek işlem varsa hemen başlar, birden çok seçenek varsa panel açılır. "
+                        + "Malzeme ekleme, kalemin diğer adımları bitince açılır. Tüm kalemler hazır olunca Siparişi paketle, sonra Teslim et."});
         l.add(new String[]{"Seçenekler ve TalkBack Eylemleri",
-                "Her istasyon düğmesinin ve hazırlık düğmesinin bir eylem menüsü vardır. İki yolla kullanılır ve ikisi de aynı sonucu verir. "
-                        + "Birincisi TalkBack Eylemleri: düğmeye odaklan, TalkBack'in Eylemler menüsünü aç ve seçeneği seç; seçenek hemen uygulanır, panel açılmaz. "
-                        + "Seçenek adları durumu söyler, örneğin Ketçap ekle, stokta 5. Kilitli seçeneğin nedeni adında yazar. "
-                        + "İkincisi seçenekler paneli: düğmeye dokununca ya da TalkBack açıkken çift dokununca büyük düğmelerden oluşan panel açılır. "
-                        + "Gruplar başlıklıdır: Boy seç, Malzeme ekle, Kontrol, Oku, Hazırlık. Bir seçeneğe tek dokun, Kapat düğmesiyle vazgeç. "
-                        + "Yalnızca tek işlem varsa, örneğin Siparişi paketle, panel açılmadan doğrudan uygulanır."});
+                "İstasyon düğmelerinin seçenekleri iki yolla kullanılır, ikisi de aynı sonucu verir. "
+                        + "TalkBack Eylemleri: düğmeye odaklan, Eylemler menüsünü aç, seçeneği seç; hemen uygulanır. "
+                        + "Panel: düğmeye dokununca büyük düğmeli bir panel açılır. Gruplar: Boy seç, Malzeme ekle, Kontrol, Oku, Hazırlık. Kapat ile vazgeçersin."});
         l.add(new String[]{"Oyun akışı",
-                "Ayarlardan, gün brifinginden ya da oyun sırasında Duraklat menüsünden üç akıştan birini seçersin; seçim kaydedilir ve istediğin an değişir. "
-                        + "Rahat: döner boyu ve malzemeler, müşteri istekleri dahil, otomatik eklenir; her istasyona bir kez dokunman yeter. "
-                        + "Dengeli, önerilen: tam ekmek ve varsayılan malzemeler tek dokunuşla eklenir; müşteri yarım ekmek ya da duble isterse ya da soğansız, acılı gibi bir istek varsa farkı sen yaparsın. "
-                        + "Gerçekçi: her malzemeyi tek tek ekler, her dilimlemede boyu seçersin; müşteriler biraz daha sabırlıdır ve bahşişler yüzde on beş fazladır. "
-                        + "Gerçekçi akışta çırak ikinci seviyeye çıkınca Standart malzemelerle bitir kısayolu açılır; istek olan siparişte bu kısayolu kullanma. "
-                        + "Otomatik eklenen malzemeler ve boy kısaca söylenir, örneğin Varsayılan malzemeler eklendi: domates, marul. Otomatik işler de süre alır ve stoktan düşer; stok yoksa Acil al düğmesi çıkar."});
+                "Ayarlardan, brifingden ya da Duraklat menüsünden seçersin; istediğin an değişir. "
+                        + "Rahat: boy ve malzemeler, müşteri istekleri dahil, otomatik. "
+                        + "Dengeli, önerilen: standart olan otomatik; yarım ekmek, duble ya da istek varsa farkı sen yaparsın. "
+                        + "Gerçekçi: her malzemeyi ve boyu sen seçersin; bahşişler yüzde on beş fazladır. "
+                        + "Gerçekçi akışta çırak ikinci seviyedeyken Standart malzemelerle bitir kısayolu açılır; istek varsa kullanma. "
+                        + "Otomatik eklenenler kısaca söylenir, örneğin Varsayılan malzemeler eklendi: domates, marul. Stok yoksa Acil al çıkar."});
         l.add(new String[]{"Döner boyu",
-                "Döner makinesinde dilimleme boyunu sen seçersin: yarım ekmek, tam ekmek ya da duble. Müşterinin istediği boy sipariş kartında yazar; tam ekmek ayrıca söylenmez. "
-                        + "Yarım ekmek ürün fiyatının yüzde altmışıdır, yarım porsiyon et ve daha kısa süre alır. Duble yüzde yetmiş fazla öder, iki porsiyon et ve daha uzun süre alır. "
-                        + "Yarım boy ikinci günden, duble dördüncü günden itibaren istenir. Yanlış boyda dilimlersen sipariş hatalı sayılır: yıldız düşer, bahşiş yarıya iner. "
-                        + "Hazır dilimlenmiş döner yarım porsiyon hassasiyetiyle sayılır, örneğin 3,5 porsiyon. "
-                        + "Bu Gerçekçi akıştır; Rahat akışta boy hep otomatik, Dengeli akışta tam ekmek otomatik seçilir."});
+                "Müşterinin istediği boy sipariş kartında yazar: yarım ekmek, tam ekmek ya da duble. Yanlış boy hatalı sipariş sayılır: yıldız düşer, bahşiş yarıya iner. "
+                        + "Yarım boy ikinci günden, duble dördüncü günden gelir. Gerçekçi akışta boyu sen seçersin; Rahat'ta otomatik, Dengeli'de tam ekmek otomatik."});
         l.add(new String[]{"Malzeme ekleme",
-                "Sos ve salata tezgahında malzemeleri tek tek eklersin. Seçenekler panelinde ya da Eylemler menüsünde her malzeme ayrı bir seçenektir, örneğin Domates ekle. "
-                        + "Her ekleme kısa sürer ve malzemeyi stoktan düşer. Aynı malzemeyi ikinci kez eklersen bol olur; en fazla iki kez eklenir. "
-                        + "Son ekleneni geri al, malzemeyi stoğa iade eder. Eklenenleri oku, ne eklediğini söyler. Hedefi oku, müşterinin istediği malzemeleri ve isteklerini söyler. "
-                        + "İşin bitince Malzemeleri bitir seçeneğini seç. Hiç malzeme eklemeden bitirmek sosuz demektir. "
-                        + "Sipariş kartı eklenen malzemeleri ve müşteri isteklerini gösterir. "
-                        + "Malzemeler teslimde kontrol edilir: eksik ya da fazla malzeme yıldızı düşürür ve bahşişi yarıya indirir, tam doğru sipariş küçük bir ödül verir. "
-                        + "Stokta olmayan malzemeyi eklemeye çalışırsan Acil al düğmesi çıkar. Sos ve salata malzemeleri gün gün açılır; yeni malzeme brifingde duyurulur. "
-                        + "Bu Gerçekçi akıştır. Dengeli akışta Varsayılan malzemeleri ekle tek dokunuştur; istek varsa Soğan çıkar ya da Acı sos ekle gibi farkı yapıp Malzemeleri bitir dersin. Rahat akışta Malzemeleri ekle her şeyi kendisi yapar."});
+                "Sos ve salata tezgahında her malzeme ayrı seçenektir, örneğin Domates ekle. Aynı malzemeyi iki kez eklersen bol olur. "
+                        + "Son ekleneni geri al malzemeyi iade eder; Eklenenleri oku ve Hedefi oku bilgi verir. İşin bitince Malzemeleri bitir. "
+                        + "Malzemeler teslimde kontrol edilir: eksik ya da fazla malzeme yıldızı düşürür. Stok bittiyse Acil al çıkar. "
+                        + "Dengeli akışta Varsayılan malzemeleri ekle tek dokunuştur; Rahat'ta Malzemeleri ekle her şeyi yapar."});
+        l.add(new String[]{"Ocak ve patates",
+                "Ocak istasyonunda pilav, mühürleme ve pişirme işleri yapılır. Üçüncü günden müşteri patatesli dürüm ya da ekmek arası isteyebilir: "
+                        + "Ocakta Patates kızart adımı çıkar ve sipariş biraz daha pahalıdır. Önceden patates kızartırsan adım çok kısalır."});
         l.add(new String[]{"Süre baskısı",
-                "Ayarlardan ya da oyun sırasında Duraklat menüsünden Süre baskısını açıp kapatabilirsin; seçim kaydedilir. Gün brifingi durumu söyler. "
-                        + "Açıkken gün süreli geçer: sayaç işler, müşterilerin sabrı azalır, sabır bitince müşteri gider ve yıldız düşer; hızlı teslim ek bahşiş ve yıldız verir. "
-                        + "Kapalıyken süre yoktur: durum çubuğunda kalan müşteri sayısı yazar, müşteri sabrı azalmaz, kimse gitmez ve sabır uyarısı gelmez. "
-                        + "Her gün belli sayıda müşteri gelir, sıra boşaldıkça yenisi gelir ve bekleyen sipariş sayısı sınırlıdır; kota kadar müşteri geldikten ve tüm siparişler teslim edilince gün biter. "
-                        + "Hız bonusu olmaz: her teslim standart memnuniyet verir ve bahşişler biraz daha azdır. Hatalı sipariş ve yanlış istasyon cezaları aynen sürer; yıldızın yalnızca hatalardan 1,0'ın altına düşerse gün başarısız olur. "
-                        + "Çırak, hazırlık ve oyun akışları iki durumda da aynı çalışır."});
+                "Ayarlardan ya da Duraklat menüsünden açıp kapatırsın. Açıkken sayaç işler, sabır azalır, sabır bitince müşteri gider. "
+                        + "Kapalıyken süre yoktur: durum çubuğunda kalan müşteri yazar, kimse gitmez; kota kadar müşteri gelip hepsi teslim edilince gün biter. "
+                        + "Kapalıyken hız bonusu yoktur ve bahşişler biraz azdır; hatalar yine yıldız düşürür."});
         l.add(new String[]{"Çırak",
-                "Markette çırak alabilirsin. Çırak kendi başına çalışan yardımcıdır ve yeni yuva eklemez. Seviye 1: siparişleri paketler, içecek doldurur; boştayken ayran doldurur ve döner dilimler. "
-                        + "Seviye 2: ayrıca ekmek ve lavaş ısıtır, salata ve sos tepsisi hazırlar. Seviye 3: ayrıca döner dilimler, ızgara, tatlı ve harç işlerini yapar. "
-                        + "Seviye sayısı kadar çırak aynı anda çalışır. Çırak senden yüzde yirmi yavaştır ama hata yapmaz; en sabırsız siparişe öncelik verir ve seçili siparişine dokunmaz. "
-                        + "Boy seçimini ve malzeme eklemeyi her zaman sen yaparsın. Yaptığı işler ekranda Çırak diye yazar; ayarlardan çırak duyurularını kapatabilirsin."});
+                "Markette çırak alırsın; kendi başına çalışır. Seviye 1: paketler, içecek doldurur. Seviye 2: ekmek ve lavaş ısıtır, tepsi hazırlar. "
+                        + "Seviye 3: döner dilimler, Ocak ve tatlı işlerini yapar. Senden yüzde yirmi yavaştır, hata yapmaz. "
+                        + "Boy ve malzemeyi her zaman sen seçersin. Ayarlardan çırak duyurularını kapatabilirsin."});
         l.add(new String[]{"Hatalar ve eksik malzeme",
-                "Yanlış istasyona dokunursan hata sesi gelir ve yıldızın çok az düşer. Malzeme biterse Acil al düğmesi görünür; acil alım yüzde elli daha pahalıdır. "
-                        + "Boş yuva yoksa bir işlemin bitmesini beklemelisin."});
-        l.add(new String[]{"Sesler ve titreşim",
-                "Her olayın kendine özgü sesi ve titreşimi vardır. Yeni müşteri kapı zili ve sipariş sesiyle gelir. Sipariş sesleri stereo çalar: birinci sipariş solda, üçüncü sipariş sağda duyulur. "
-                        + "İstasyon sesleri işlem süresince sürer: kızartma, içecek dökme ve paketleme sesleri kesintisiz, dilimleme, sos ve ekmek sesleri tekrar tekrar duyulur. Çırak sesleri kısık ve ortadadır. "
-                        + "Sabır azalınca uyarı sesi, sabır bitince müşteri gider ve yıldız düşer. Teslimde para sesi duyarsın."});
+                "Yanlış istasyona dokunursan hata sesi gelir, yıldız çok az düşer. Malzeme biterse Acil al düğmesi çıkar; yüzde elli pahalıdır. "
+                        + "Boş yuva yoksa bir işlemin bitmesini bekle."});
+        l.add(new String[]{"Sesler",
+                "Her olayın kendi sesi ve titreşimi vardır. Siparişler stereo çalar: birinci sipariş solda, üçüncü sağda. "
+                        + "İşlem sesleri işlem süresince sürer. Gün boyunca dükkân ambiyansı kısık çalar; Ayarlardan ambiyans, müzik ve efekt sesini ayrı ayarlarsın."});
         l.add(new String[]{"Market",
-                "Her günün başında markete uğra. Önerilen malzemeleri al düğmesi günün tahmini ihtiyacını tek dokunuşla alır. "
-                        + "Mutfak aletleri işlemleri hızlandırır, çırak senin yerine iş yapar, buzdolabı stok ve hazır stok kapasitesini büyütür. "
-                        + "Restoran öğeleri müşteri sayısını, sabrı ve bahşişi artırır."});
-        l.add(new String[]{"Gün sonu",
-                "Gün bitince satış, bahşiş, kira, israf ve hatalı sipariş özetini dinlersin. Kayıt otomatik yapılır. Sonraki gün yeni ürünler açılabilir; menü birikimlidir."});
-        l.add(new String[]{"Kolaylıklar",
-                "Her ekranda Nasıl oynanır yardımına ulaşabilirsin. Oyun sırasında Durumu oku düğmesi para, yıldız, süre, seçili sipariş ve hazır stoğu söyler. "
-                        + "Duraklat düğmesi oyunu durdurur; uygulama arka plana gidince oyun kendiliğinden durur. "
-                        + "Ayarlardan oyun akışını, süre baskısını, müzik ve efekt sesini, anlatım hızını, oyun temposunu, titreşimi ve çırak duyurularını değiştirebilirsin. Tüm eylemler tek dokunuşla yapılır."});
+                "Her günün başında markete uğra. Önerilen malzemeleri al, günün tahmini ihtiyacını alır. "
+                        + "Mutfak aletleri işleri hızlandırır, buzdolabı stoku büyütür, restoran öğeleri müşteri, sabır ve bahşişi artırır."});
+        l.add(new String[]{"Gün sonu ve kolaylıklar",
+                "Gün bitince satış, bahşiş, kira, israf ve hatalar dinletilir; kayıt otomatiktir. Her ekranda Nasıl oynanır vardır. "
+                        + "Durumu oku düğmesi para, yıldız, süre, seçili sipariş ve hazır stoğu söyler. Uygulama arka plana giderse oyun durur. Tüm eylemler tek dokunuşludur."});
         return l;
     }
 
     public static String quickHelp() {
-        return "Hazırlık aşamasında önceden döner dilimle, ayran doldur, tepsi hazırla; sonra Dükkânı aç. Gün içinde hazırlık için istasyon düğmesinin Eylemler menüsünü ya da panelini kullan. "
-                + "Siparişe dokunarak seç, istersen bir kalemini seç, önerilen istasyonun düğmesine dokun. Birden çok seçenek varsa panel açılır; TalkBack kullanıyorsan Eylemler menüsünden de seçebilirsin. "
+        return "Hazırlıkta önceden döner dilimle, ayran doldur; sonra Dükkânı aç. Siparişi seç, önerilen istasyona dokun; seçenekleri Eylemler menüsünden de seçebilirsin. "
                 + "Döner makinesinde boyu sen seç. Sos tezgahında malzemeleri tek tek ekle, Hedefi oku ile kontrol et, bitince Malzemeleri bitir. "
-                + "Tüm kalemler bitince siparişi paketle, sonra Teslim et. Durumu oku düğmesi bilgi verir. Acele et, sabır tükenirse müşteri gider.";
+                + "Kalemler bitince siparişi paketle, sonra Teslim et. Acele et, sabır tükenirse müşteri gider.";
     }
 
     // ------------------------------------------------------------------ çırak (market)
     public static String apprenticeLevelsText(int currentLevel) {
-        String t = "Seviye 1: siparişleri paketler, ayran doldurur ve dolaptan içecek alır; boştayken ayran doldurur, döner dilimler. "
-                + "Seviye 2: ayrıca ekmek ve lavaş ısıtır; boştayken salata ve sos tepsisi hazırlar. "
-                + "Seviye 3: ayrıca döner dilimler, ızgara, tatlı ve harç işlerini yapar. "
-                + "Seviye sayısı kadar çırak aynı anda çalışır, yeni yuva eklemez. Senden yüzde yirmi yavaştır, hata yapmaz, en sabırsız siparişe öncelik verir ve seçili siparişine dokunmaz. "
-                + "Boy seçimi ve malzeme ekleme her zaman sende. Gerçekçi akışta seviye 2 çırak standart malzemeleri hazır tutar: Standart malzemelerle bitir kısayolu açılır.";
+        String t = "Seviye 1: paketler, içecek doldurur. Seviye 2: ekmek ve lavaş ısıtır, tepsi hazırlar. Seviye 3: döner dilimler, Ocak ve tatlı işlerini yapar. "
+                + "Senden yüzde yirmi yavaştır, hata yapmaz. Boy ve malzemeyi sen seçersin; Gerçekçi akışta seviye 2 ile Standart malzemelerle bitir kısayolu açılır.";
         if (currentLevel > 0) t += " Şu an seviye " + currentLevel + ".";
         return t;
     }
@@ -723,27 +652,20 @@ public final class Texts {
     }
 
     // ------------------------------------------------------------------ öğretici
-    public static final String TUT_PREP = "Hazırlık aşamasındasın. Burada müşteri yok ve süre akmıyor. "
-            + "Döner dilimle düğmesine dokun; hazır döner sonra dilimleme adımını hızlandırır. Bitince Dükkânı aç düğmesine dokun. "
-            + "İstersen Hazırlık yapmadan aç diyerek de geçebilirsin.";
-    public static final String TUT_PREP_DONE = "Hazırlık bitti, hazır stok arttı. Başka hazırlık da yapabilirsin. Hazır olunca Dükkânı aç düğmesine dokun.";
-    public static final String TUT_OPEN = "Dükkân açıldı. Müşteri gelince sipariş listesinde görünür. Sana adım adım yol göstereceğim. "
-            + "Hazırlık düğmeleri kalktı; gün içinde hazırlık için istasyon düğmesinin Eylemler menüsünü ya da panelini kullanabilirsin.";
-    public static final String TUT_CUSTOMER = "Bir müşteri geldi. Siparişi seçmek için sipariş kartına çift dokun, ya da Sonraki sipariş düğmesini kullan.";
-    public static final String TUT_SELECTED = "Şimdi önerilen istasyonun düğmesine dokun. Siparişin her ürünü bir kalemdir; kalemleri istediğin sırayla yapabilirsin. "
-            + "Birden çok seçenek varsa bir panel açılır. TalkBack kullanıyorsan düğmenin Eylemler menüsünden de seçenek seçebilirsin.";
-    public static final String TUT_STEP = "İşlem sürerken bekle. Bitince bir ses duyacaksın ve sıradaki adımı söyleyeceğim.";
-    public static final String TUT_SIZE = "Döner makinesinde dilimleme boyunu sen seçersin. Sipariş kartında müşterinin istediği boy yazar; tam ekmek ayrıca söylenmez. "
-            + "Bugün yalnızca tam ekmek açık. Yarım ekmek ikinci günden, duble dördüncü günden itibaren gelir. Yanlış boy hatalı sipariş sayılır.";
-    public static final String TUT_TOPPING = "Malzeme ekleme zamanı. Sos ve salata tezgahına dokununca seçenekler açılır; her malzeme ayrı bir seçenektir ve tek tek eklenir. "
-            + "Aynı malzemeyi iki kez eklersen bol olur. Hedefi oku müşterinin istediği malzemeleri söyler, Eklenenleri oku ne eklediğini söyler, Son ekleneni geri al yanlışı düzeltir. "
-            + "Bitince Malzemeleri bitir seçeneğini seç.";
-    public static final String TUT_PACK = "Tüm kalemler hazır. Şimdi Paketleme istasyonuna dokunarak siparişi paketle.";
-    public static final String TUT_READY = "Sipariş paketlendi. Teslim et düğmesine dokun.";
-    public static final String TUT_END = "Harika, ilk siparişini teslim ettin! Malzemeler teslimde kontrol edilir. Sabır azalınca uyarı sesi gelir. "
-            + "Durumu oku düğmesiyle istediğin an bilgi alabilirsin. Öğretici bitti.";
+    // v0.9: en az adım, her adım tek kısa cümle. Sessiz aşamalar (hazırlık bitti, dükkân açıldı, işlem sürüyor, paketle)
+    // yalnızca aşamayı ilerletir; ilgili duyuru ("Önerilen: …", "Sipariş hazır") zaten Narrator'dan gelir.
+    public static final String TUT_PREP = "Hazırlık aşaması. Hazır olunca Dükkânı aç düğmesine dokun.";
+    public static final String TUT_PREP_DONE = "";
+    public static final String TUT_OPEN = "";
+    public static final String TUT_CUSTOMER = "Müşteri geldi. Siparişe dokunarak seç.";
+    public static final String TUT_SELECTED = "Önerilen istasyona dokun.";
+    public static final String TUT_STEP = "";
+    public static final String TUT_SIZE = "Döner boyunu sen seçersin.";
+    public static final String TUT_TOPPING = "Sos tezgahına dokun, malzemeleri tek tek ekle, sonra Malzemeleri bitir.";
+    public static final String TUT_PACK = "";
+    public static final String TUT_READY = "Sipariş hazır. Teslim et düğmesine dokun.";
+    public static final String TUT_END = "Öğretici bitti. Durumu oku düğmesi her an bilgi verir.";
     /** Süre baskısı kapalıyken öğretici sonu (sabır uyarısı yok). */
-    public static final String TUT_END_UNTIMED = "Harika, ilk siparişini teslim ettin! Malzemeler teslimde kontrol edilir. Süre baskısı kapalı: acele etmene gerek yok, müşteriler beklemekten gitmez. "
-            + "Durumu oku düğmesiyle istediğin an bilgi alabilirsin. Öğretici bitti.";
+    public static final String TUT_END_UNTIMED = "Öğretici bitti. Süre baskısı kapalı, acele yok.";
     public static String tutEnd(boolean timed) { return timed ? TUT_END : TUT_END_UNTIMED; }
 }

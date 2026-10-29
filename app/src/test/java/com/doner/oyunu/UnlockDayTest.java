@@ -56,7 +56,7 @@ public class UnlockDayTest {
                 toppings++;
                 assertTrue(i.id, i.unlockDay >= 1 && i.unlockDay <= 15);
             } else {
-                assertEquals(i.id + " temel malzeme", 1, i.unlockDay);
+                assertEquals(i.id + " temel malzeme", i.id.equals(Catalog.PATATES) ? Catalog.FRIES_OPEN_DAY : 1, i.unlockDay);
             }
             assertEquals(i.unlockDay <= 5, i.isOpen(5));
         }

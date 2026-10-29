@@ -7,8 +7,10 @@ public final class Upgrade {
     public enum EffectType {
         /** Hedef istasyonlarda adım süresi çarpanı (değer = çarpan, küçük = hızlı). */
         STATION_SPEED,
-        /** Ek eşzamanlı yuva sayısı. */
+        /** Ek eşzamanlı oyuncu yuvası (şu an hiçbir yükseltme kullanmıyor). */
         SLOTS,
+        /** Çırak seviyesi = otomatik işçi sayısı ve yetenek seviyesi (1..3). */
+        APPRENTICE,
         /** Sabır çarpanına eklenen oran. */
         PATIENCE,
         /** Müşteri geliş sıklığına eklenen oran. */

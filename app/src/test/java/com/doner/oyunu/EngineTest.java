@@ -81,7 +81,10 @@ public class EngineTest {
         assertEquals("hint:Ekmeği ısıt", ev.get(1));
         assertEquals(StartResult.STARTED, e.startStep(o.id, Station.EKMEK.id));
         assertTrue(o.isRunning());
-        assertEquals(StartResult.ORDER_BUSY, e.startStep(o.id, Station.DONER.id));
+        // tek yuva dolu: başka adım (serbest sıra) yuva yüzünden reddedilir, sıra yüzünden DEĞİL
+        assertEquals(StartResult.NO_SLOT, e.startStep(o.id, Station.DONER.id));
+        // aynı adım zaten sürüyor
+        assertEquals(StartResult.ORDER_BUSY, e.startStep(o.id, Station.EKMEK.id));
         assertEquals(1, e.getActiveSteps().size());
         for (int i = 0; i < 100 && o.isRunning(); i++) e.tick(0.1f);
         assertFalse(o.isRunning());
@@ -99,7 +102,7 @@ public class EngineTest {
         e.addListener(r);
         Order o = waitForCustomer(e);
         double before = save.stars;
-        assertEquals(StartResult.WRONG_STATION, e.startStep(o.id, Station.PAKET.id));
+        assertEquals(StartResult.WRONG_STATION, e.startStep(o.id, Station.ICECEK.id));
         assertEquals(1, r.wrong);
         assertTrue(save.stars < before);
         assertEquals(0, o.getNextStepIndex());
@@ -226,20 +229,14 @@ public class EngineTest {
     }
 
     @Test public void slotsLimitParallelWork() {
+        // çırak yuva sayısını ARTIRMAZ: oyuncunun yuvası hep 1
         SaveData save = SaveData.newGame();
-        save.upgradeLevels.put("cirak", 1); // 2 yuva
+        save.upgradeLevels.put("cirak", 1);
         GameEngine e = new GameEngine(9, save);
-        Rec r = new Rec();
-        e.addListener(r);
+        assertEquals(1, e.getSlotCount());
         for (int i = 0; i < 2000 && e.getOrders().size() < 2; i++) e.tick(0.1f);
         assertEquals(2, e.getOrders().size());
-        assertEquals(2, e.getSlotCount());
-        Order a = e.getOrders().get(0), b = e.getOrders().get(1);
-        assertEquals(StartResult.STARTED, e.startStep(a.id, Station.EKMEK.id));
-        assertEquals(StartResult.STARTED, e.startStep(b.id, Station.EKMEK.id));
-        assertEquals(0, e.getFreeSlots());
-        assertNotEquals(e.getActiveFor(a.id).slot, e.getActiveFor(b.id).slot);
-        // tek yuvalı durumda ikinci reddedilir
+        // tek yuvalı oyuncu: ikinci adım reddedilir
         SaveData s1 = SaveData.newGame();
         GameEngine e1 = new GameEngine(9, s1);
         Rec r1 = new Rec();
@@ -249,6 +246,49 @@ public class EngineTest {
         assertEquals(StartResult.STARTED, e1.startStep(c.id, Station.EKMEK.id));
         assertEquals(StartResult.NO_SLOT, e1.startStep(d.id, Station.EKMEK.id));
         assertEquals(1, r1.noSlot);
+        assertEquals(0, e1.getFreeSlots());
+    }
+
+    @Test public void freeOrderWithinItemAndAcrossItems() {
+        SaveData save = SaveData.newGame();
+        save.day = 3; // ayran açık
+        Shop.buyRecommended(save);
+        GameEngine e = new GameEngine(4, save);
+        Order o = e.spawnOrder(java.util.Arrays.asList("ekmek_arasi", "ayran"), java.util.Collections.<String>emptyList());
+        assertNotNull(o);
+        assertEquals(2, o.lineCount());
+        int doner = Flow.itemOf(o, "ekmek_arasi"), ayran = Flow.itemOf(o, "ayran");
+        // serbest sıra: önce ayran, sonra döner kalemi; dilimleme ısıtmadan önce de yapılabilir
+        Flow.doItemStation(e, o, ayran, Station.ICECEK);
+        assertTrue(o.getLine(ayran).isDone());
+        assertFalse(o.allLinesDone());
+        Flow.doItemStation(e, o, doner, Station.DONER);
+        // topping adımı ısıt bitmeden açılmaz
+        assertEquals(StartResult.STEP_LOCKED, e.startStep(o.id, doner, Station.SOS.id));
+        // paketleme tüm kalemler bitmeden açılmaz
+        assertEquals(StartResult.STEP_LOCKED, e.startStep(o.id, Station.PAKET.id));
+        Flow.doItemStation(e, o, doner, Station.EKMEK);
+        assertEquals(StartResult.NEEDS_TOPPINGS, e.startStep(o.id, doner, Station.SOS.id));
+        assertEquals(StartResult.STARTED, e.confirmToppings(o.id, doner, e.getToppingTarget(o.id, doner)));
+        Flow.waitDone(e, o);
+        assertTrue(o.allLinesDone());
+        assertFalse(o.isReady());
+        // tek ortak paketleme: süre 1,5 + 0,5 x kalem
+        final float[] secs = {0};
+        e.addListener(new GameListenerAdapter() {
+            @Override public void onStepStarted(Order oo, Step s, int slot, float sec) { secs[0] = sec; }
+        });
+        assertEquals(StartResult.STARTED, e.startStep(o.id, Station.PAKET.id));
+        assertEquals(2.5f, secs[0], 0.01f);
+        Flow.waitDone(e, o);
+        assertTrue(o.isReady());
+        assertTrue(e.deliver(o.id));
+    }
+
+    @Test public void packagingIsOnlyAfterAllItemsAndNoPackInsideItems() {
+        for (Product p : Catalog.products()) {
+            for (Step s : p.steps) assertNotEquals(p.name + " kalem-içi paket kalktı", Station.PAKET, s.station);
+        }
     }
 
     @Test public void upgradesShortenSteps() {
@@ -284,10 +324,7 @@ public class EngineTest {
         });
         Order o = waitForCustomer(e);
         int moneyBefore = save.money;
-        while (!o.isReady()) {
-            if (!o.isRunning()) e.startStep(o.id, o.nextStep().station.id);
-            e.tick(0.1f);
-        }
+        Flow.makeReady(e, o);
         assertTrue(e.deliver(o.id));
         assertEquals(240, got[0]);
         assertTrue(happy[0]);

@@ -16,7 +16,7 @@ public class CatalogTest {
         Set<String> ids = new HashSet<>();
         for (Product p : Catalog.products()) {
             assertTrue("benzersiz id " + p.id, ids.add(p.id));
-            assertTrue(p.name + " 3-5 adım", p.steps.size() >= 3 && p.steps.size() <= 5);
+            assertTrue(p.name + " 1-4 adım", p.steps.size() >= 1 && p.steps.size() <= 4);
             assertTrue(p.price > 0 && p.openDay >= 1);
             assertTrue("kar var: " + p.name, p.ingredientCost() < p.price);
             for (Step s : p.steps) {
@@ -32,7 +32,7 @@ public class CatalogTest {
 
     @Test public void everyIngredientIsUsed() {
         Set<String> used = new HashSet<>();
-        for (Product p : Catalog.products()) used.addAll(p.totalNeeds().keySet());
+        for (Product p : Catalog.products()) { used.addAll(p.totalNeeds().keySet()); used.addAll(p.toppingPool); }
         for (Ingredient i : Catalog.ingredients()) assertTrue(i.id + " kullanılmıyor", used.contains(i.id));
     }
 
@@ -58,6 +58,7 @@ public class CatalogTest {
     @Test public void allStationsAreUsedAndIdsUnique() {
         Set<Station> used = new HashSet<>();
         for (Product p : Catalog.products()) for (Step s : p.steps) used.add(s.station);
+        used.add(Station.PAKET); // PAKET artık yalnızca ortak "Siparişi paketle" adımı
         assertEquals(Station.values().length, used.size());
         Set<Integer> ids = new HashSet<>();
         for (Station s : Station.values()) {
@@ -91,7 +92,9 @@ public class CatalogTest {
         assertTrue(new Upgrades(new SaveData()).slots() == 1);
         SaveData s = new SaveData();
         s.upgradeLevels.put("cirak", 2);
-        assertEquals(3, new Upgrades(s).slots());
+        assertEquals("çırak yuva eklemez", 1, new Upgrades(s).slots());
+        assertEquals(2, new Upgrades(s).apprenticeLevel());
+        assertEquals(3, Catalog.upgrade("cirak").maxLevel());
     }
 
     @Test public void customerTypesValid() {

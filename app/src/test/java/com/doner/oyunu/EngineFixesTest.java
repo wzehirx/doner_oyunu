@@ -19,11 +19,6 @@ public class EngineFixesTest {
         return e.getOrders().get(0);
     }
 
-    private static void doStep(GameEngine e, Order o) {
-        assertEquals(StartResult.STARTED, e.startStep(o.id, o.nextStep().station.id));
-        for (int i = 0; i < 200 && o.isRunning(); i++) e.tick(0.1f);
-        assertFalse(o.isRunning());
-    }
 
     // ------------------------------------------------------------ madde 8: startStep ilk tick'ten önce
     @Test public void startStepBeforeFirstTickStillAnnouncesDayStartedOnce() {
@@ -59,36 +54,54 @@ public class EngineFixesTest {
     }
 
     // ------------------------------------------------------------ madde 1: birden çok eksik malzeme
-    private static Order toSauceStep(GameEngine e) {
-        Order o = firstCustomer(e);
-        doStep(e, o); // ekmek
-        doStep(e, o); // et
-        assertEquals("sos adımı", Station.SOS, o.nextStep().station);
-        assertTrue("sos adımı 3 malzeme ister", o.nextStep().needs.size() >= 2);
+    /** Hatay dürüm: "Harç ve döner ekle" adımı iki malzeme ister (harç + et döner); serbest sırada baştan açıktır. */
+    private static Order hatayOrder(GameEngine e) {
+        Order o = e.spawnOrder(java.util.Collections.singletonList("hatay_durum"), java.util.Collections.<String>emptyList());
+        assertNotNull(o);
+        e.selectOrder(o.id);
+        Step harc = o.getLine(0).step(1);
+        assertEquals(Station.DONER, harc.station);
+        assertTrue("harç adımı 2 malzeme ister", harc.needs.size() >= 2);
+        return o;
+    }
+
+    private static GameEngine hatayEngine(SaveData save) {
+        save.day = 6;
+        Shop.buyRecommended(save);
+        return new GameEngine(11, save);
+    }
+
+    /** Harç adımının malzemelerini sıfırlayıp o adıma basarak "engellenmiş" duruma getirir. */
+    private static Order toBlockedStep(GameEngine e, SaveData save) {
+        Order o = hatayOrder(e);
+        for (String id : o.getLine(0).step(1).needs.keySet()) save.inventory.set(id, 0);
+        assertEquals(StartResult.OUT_OF_STOCK, e.startStep(o.id, 0, Station.DONER.id));
         return o;
     }
 
     @Test public void missingIngredientsListsAllAndFirstMatches() {
-        GameEngine e = new GameEngine(11, SaveData.newGame());
-        Order o = toSauceStep(e);
+        SaveData save = SaveData.newGame();
+        GameEngine e = hatayEngine(save);
+        Order o = hatayOrder(e);
         assertTrue(e.missingIngredients(o.id).isEmpty());
         assertNull(e.missingIngredient(o.id));
-        for (String id : o.nextStep().needs.keySet()) e.getSave().inventory.set(id, 0);
+        Step harc = o.getLine(0).step(1);
+        for (String id : harc.needs.keySet()) save.inventory.set(id, 0);
+        assertEquals(StartResult.OUT_OF_STOCK, e.startStep(o.id, 0, Station.DONER.id));
         List<Ingredient> all = e.missingIngredients(o.id);
-        assertEquals(o.nextStep().needs.size(), all.size());
+        assertEquals(harc.needs.size(), all.size());
         assertEquals(all.get(0).id, e.missingIngredient(o.id).id);
         // yalnızca bir tanesi eksikse yalnızca o listelenir
         String keep = all.get(0).id;
-        for (Ingredient i : all) e.getSave().inventory.set(i.id, i.id.equals(keep) ? 0 : 5);
+        for (Ingredient i : all) save.inventory.set(i.id, i.id.equals(keep) ? 0 : 5);
         assertEquals(1, e.missingIngredients(o.id).size());
     }
 
     @Test public void emergencyBuyMissingBuysEveryMissingIngredientInOneCall() {
         SaveData save = SaveData.newGame();
-        GameEngine e = new GameEngine(11, save);
-        Order o = toSauceStep(e);
-        for (String id : o.nextStep().needs.keySet()) save.inventory.set(id, 0);
-        int n = o.nextStep().needs.size();
+        GameEngine e = hatayEngine(save);
+        Order o = toBlockedStep(e, save);
+        int n = o.getLine(0).step(1).needs.size();
         int expected = e.emergencyCostForMissing(o.id);
         int exp2 = 0;
         for (Ingredient i : e.missingIngredients(o.id)) exp2 += i.emergencyPrice() * Ingredient.EMERGENCY_BATCH;
@@ -103,15 +116,14 @@ public class EngineFixesTest {
         assertEquals(money - expected, save.money);
         assertEquals(expected, e.getSummary().emergencySpend);
         assertTrue(e.missingIngredients(o.id).isEmpty());
-        assertEquals(StartResult.STARTED, e.startStep(o.id, Station.SOS.id));
+        assertEquals(StartResult.STARTED, e.startStep(o.id, 0, Station.DONER.id));
         assertFalse("eksik kalmadıysa tekrar alınmaz", e.emergencyBuyMissing(o.id));
     }
 
     @Test public void emergencyBuyMissingIsAtomicWhenMoneyShort() {
         SaveData save = SaveData.newGame();
-        GameEngine e = new GameEngine(11, save);
-        Order o = toSauceStep(e);
-        for (String id : o.nextStep().needs.keySet()) save.inventory.set(id, 0);
+        GameEngine e = hatayEngine(save);
+        Order o = toBlockedStep(e, save);
         int cost = e.emergencyCostForMissing(o.id);
         save.money = cost - 1;
         final int[] needed = {0};
@@ -121,7 +133,7 @@ public class EngineFixesTest {
         assertFalse(e.emergencyBuyMissing(o.id));
         assertEquals(cost, needed[0]);
         assertEquals("hiçbiri alınmamalı", cost - 1, save.money);
-        assertEquals(o.nextStep().needs.size(), e.missingIngredients(o.id).size());
+        assertEquals(o.getLine(0).step(1).needs.size(), e.missingIngredients(o.id).size());
         assertEquals(0, e.getSummary().emergencySpend);
     }
 
@@ -137,14 +149,14 @@ public class EngineFixesTest {
 
     @Test public void narratorOutOfStockNamesAllMissingAndTotalPrice() {
         SaveData save = SaveData.newGame();
-        GameEngine e = new GameEngine(11, save);
-        Order o = toSauceStep(e);
-        for (String id : o.nextStep().needs.keySet()) save.inventory.set(id, 0);
+        GameEngine e = hatayEngine(save);
+        Order o = hatayOrder(e);
+        for (String id : o.getLine(0).step(1).needs.keySet()) save.inventory.set(id, 0);
         final List<String> said = new ArrayList<>();
         e.addListener(new Narrator(e, new Narrator.Output() {
             @Override public void say(String text, boolean urgent) { said.add(text); }
         }));
-        assertEquals(StartResult.OUT_OF_STOCK, e.startStep(o.id, Station.SOS.id));
+        assertEquals(StartResult.OUT_OF_STOCK, e.startStep(o.id, 0, Station.DONER.id));
         String t = said.get(said.size() - 1);
         for (Ingredient i : e.missingIngredients(o.id)) assertTrue(t, t.contains(i.name));
         assertTrue(t, t.contains(e.emergencyCostForMissing(o.id) + " lira"));

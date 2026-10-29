@@ -43,12 +43,18 @@ public class HumanSimTest {
                 return true;
             }
             if (e.getFreeSlots() <= 0) return false;
-            Station need = sel.nextStep().station;
+            Step ns = sel.nextStep();
+            if (ns == null) return false;
+            Station need = ns.station;
             if (rnd.nextDouble() < slipChance) {
                 Station wrong = Station.values()[rnd.nextInt(Station.values().length)];
                 if (wrong != need) { e.startStep(sel.id, wrong.id); slips++; return true; }
             }
             StartResult r = e.startStep(sel.id, need.id);
+            if (r == StartResult.NEEDS_TOPPINGS) {
+                int li = e.openToppingItem(sel.id);
+                e.confirmToppings(sel.id, li, e.getToppingTarget(sel.id, li));
+            }
             if (r == StartResult.OUT_OF_STOCK) {
                 Ingredient m = e.missingIngredient(sel.id);
                 if (m != null && e.emergencyBuy(m.id)) emergency++;
@@ -71,6 +77,7 @@ public class HumanSimTest {
                     int price = u.priceForNext(lv);
                     if (price < 0 || save.day < u.unlockDayForNext(lv)) continue;
                     if (save.money - price >= reserve && Shop.buyUpgrade(save, id) == Shop.BuyResult.OK) { bought = true; break; }
+                    if (id.equals("cirak") && save.money - price < reserve) break; // çırak için biriktir
                 }
             }
         }

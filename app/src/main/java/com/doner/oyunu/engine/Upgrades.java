@@ -34,7 +34,20 @@ public final class Upgrades {
         return m;
     }
 
+    /** Oyuncunun eşzamanlı işlem yuvası sayısı (çırak yuva eklemez). */
     public int slots() { return 1 + (int) Math.round(sum(Upgrade.EffectType.SLOTS)); }
+
+    /** Çırak seviyesi 0..3: otomatik işçi sayısı ve yetenek seviyesi. */
+    public int apprenticeLevel() { return (int) Math.round(sum(Upgrade.EffectType.APPRENTICE)); }
+
+    /** Hazır stok kapasitesi (buzdolabı seviyesiyle artar): döner 8, içecek 8, tepsi (malzeme başına kullanım) 12. */
+    public int readyCapacity(PrepKind kind) {
+        int lv = save.level("buzdolabi");
+        switch (kind) {
+            case TRAY: return 12 + 6 * lv;
+            default: return 8 + 4 * lv;
+        }
+    }
     public double patienceMult() { return 1.0 + sum(Upgrade.EffectType.PATIENCE); }
     public double arrivalMult() { return 1.0 + sum(Upgrade.EffectType.ARRIVAL); }
     public double tipMult() { return 1.0 + sum(Upgrade.EffectType.TIP); }

@@ -23,6 +23,11 @@ public final class SaveData {
     public double musicVolume = 0.7;
     public double sfxVolume = 1.0;
     public boolean tutorialDone = false;
+    /** Çırak duyuruları (ayar). */
+    public boolean apprenticeAnnounce = true;
+
+    /** Hazır (doldurulmuş) içecek stoğu; gün sonunda atılmaz, ertesi güne kalır. */
+    public int readyDrinks = 0;
 
     /** Yeni oyun: 1. gün için önerilen stok hazır gelir. */
     public static SaveData newGame() {
@@ -45,7 +50,7 @@ public final class SaveData {
 
     public String serialize() {
         StringBuilder sb = new StringBuilder();
-        sb.append("v=1\n");
+        sb.append("v=2\n");
         sb.append("day=").append(day).append('\n');
         sb.append("bestDay=").append(bestDay).append('\n');
         sb.append("money=").append(money).append('\n');
@@ -63,6 +68,8 @@ public final class SaveData {
         sb.append("music=").append(musicVolume).append('\n');
         sb.append("sfx=").append(sfxVolume).append('\n');
         sb.append("tutorial=").append(tutorialDone ? 1 : 0).append('\n');
+        sb.append("apprenticeAnnounce=").append(apprenticeAnnounce ? 1 : 0).append('\n');
+        sb.append("readyDrinks=").append(readyDrinks).append('\n');
         return sb.toString();
     }
 
@@ -102,6 +109,8 @@ public final class SaveData {
                 else if (k.equals("music")) s.musicVolume = Math.max(0, Math.min(1, num(v)));
                 else if (k.equals("sfx")) s.sfxVolume = Math.max(0, Math.min(1, num(v)));
                 else if (k.equals("tutorial")) s.tutorialDone = v.equals("1");
+                else if (k.equals("apprenticeAnnounce")) s.apprenticeAnnounce = v.equals("1");
+                else if (k.equals("readyDrinks")) s.readyDrinks = Math.max(0, Math.min(40, Integer.parseInt(v)));
             } catch (NumberFormatException ignored) {
                 // bozuk satır atlanır
             }

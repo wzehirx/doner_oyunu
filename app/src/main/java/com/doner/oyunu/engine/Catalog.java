@@ -23,20 +23,46 @@ public final class Catalog {
 
     private Catalog() {}
 
-    private static void ing(String id, String name, String unit, int price) {
-        INGREDIENTS.put(id, new Ingredient(id, name, unit, price));
+    public static final String AYRAN = "ayran";
+
+    private static void ing(String id, String name, String unit, int price, Ingredient.Category cat) {
+        INGREDIENTS.put(id, new Ingredient(id, name, unit, price, cat));
     }
 
     private static Step st(String name, Station station, double sec, Object... needs) {
+        return new Step(name, station, (float) sec, needMap(needs));
+    }
+
+    /** Sıralı adım: kalemin önceki tüm adımları bitmeden açılmaz. */
+    private static Step seq(String name, Station station, double sec, Object... needs) {
+        return new Step(name, station, (float) sec, needMap(needs), Step.Kind.NORMAL, true);
+    }
+
+    /** Malzeme seçimi (topping) adımı; SOS istasyonu, kalemin diğer adımlarından sonra. */
+    private static Step top(String name, double sec) {
+        return new Step(name, SOS, (float) sec, needMap(), Step.Kind.TOPPING, true);
+    }
+
+    private static Map<String, Integer> needMap(Object... needs) {
         Map<String, Integer> m = new LinkedHashMap<>();
         for (int i = 0; i < needs.length; i += 2) m.put((String) needs[i], (Integer) needs[i + 1]);
-        return new Step(name, station, (float) sec, m);
+        return m;
+    }
+
+    private static List<String> l(String... a) {
+        List<String> r = new ArrayList<>();
+        Collections.addAll(r, a);
+        return r;
     }
 
     private static void prod(String id, String name, int openDay, int price, Step... steps) {
-        List<Step> l = new ArrayList<>();
-        Collections.addAll(l, steps);
-        PRODUCTS.put(id, new Product(id, name, openDay, price, l));
+        prod(id, name, openDay, price, l(), l(), steps);
+    }
+
+    private static void prod(String id, String name, int openDay, int price, List<String> defaults, List<String> pool, Step... steps) {
+        List<Step> st = new ArrayList<>();
+        Collections.addAll(st, steps);
+        PRODUCTS.put(id, new Product(id, name, openDay, price, st, defaults, pool));
     }
 
     private static void up(String id, String name, Upgrade.Category c, String desc, int[] prices,
@@ -47,87 +73,104 @@ public final class Catalog {
     private static Station[] s(Station... a) { return a; }
 
     static {
-        ing("et_doner", "Et döner", "porsiyon", 68);
-        ing("tavuk_doner", "Tavuk döner", "porsiyon", 40);
-        ing("ekmek", "Döner ekmeği", "adet", 6);
-        ing("lavas", "Dürüm lavaşı", "adet", 5);
-        ing("pirinc", "Pilavlık pirinç", "porsiyon", 6);
-        ing("tereyagi", "Tereyağı", "porsiyon", 11);
-        ing("domates", "Domates", "porsiyon", 2);
-        ing("sogan", "Soğan", "porsiyon", 1);
-        ing("marul", "Marul", "adet", 4);
-        ing("yogurt", "Süzme yoğurt", "porsiyon", 4);
-        ing("kadayif", "Tel kadayıf", "porsiyon", 17);
-        ing("peynir", "Künefe peyniri", "porsiyon", 38);
-        ing("lahmacun_harci", "Lahmacun harcı", "porsiyon", 27);
-        ing("ayran", "Ayran şişesi", "adet", 14);
-        ing("kutu_icecek", "Kutu içecek", "adet", 22);
+        Ingredient.Category ET = Ingredient.Category.ET, EKM = Ingredient.Category.EKMEK, SOSC = Ingredient.Category.SOS,
+                SAL = Ingredient.Category.SALATA, ICE = Ingredient.Category.ICECEK, TAT = Ingredient.Category.TATLI,
+                DIG = Ingredient.Category.DIGER;
+        ing("et_doner", "Et döner", "porsiyon", 68, ET);
+        ing("tavuk_doner", "Tavuk döner", "porsiyon", 40, ET);
+        ing("ekmek", "Döner ekmeği", "adet", 6, EKM);
+        ing("lavas", "Dürüm lavaşı", "adet", 5, EKM);
+        ing("pirinc", "Pilavlık pirinç", "porsiyon", 6, DIG);
+        ing("tereyagi", "Tereyağı", "porsiyon", 11, DIG);
+        ing("domates", "Domates", "porsiyon", 2, SAL);
+        ing("sogan", "Soğan", "porsiyon", 1, SAL);
+        ing("marul", "Marul", "adet", 4, SAL);
+        ing("yogurt", "Süzme yoğurt", "porsiyon", 4, SOSC);
+        ing("kadayif", "Tel kadayıf", "porsiyon", 17, TAT);
+        ing("peynir", "Künefe peyniri", "porsiyon", 38, TAT);
+        ing("lahmacun_harci", "Lahmacun harcı", "porsiyon", 27, DIG);
+        ing(AYRAN, "Ayran şişesi", "adet", 14, ICE);
+        ing("kutu_icecek", "Kutu içecek", "adet", 22, ICE);
+        // v0.5 sos ve salata malzemeleri (topping)
+        ing("ketcap", "Ketçap", "porsiyon", 2, SOSC);
+        ing("mayonez", "Mayonez", "porsiyon", 3, SOSC);
+        ing("aci_sos", "Acı sos", "porsiyon", 2, SOSC);
+        ing("nar_eksisi", "Nar ekşisi", "porsiyon", 3, SOSC);
+        ing("tursu", "Turşu", "porsiyon", 3, SAL);
+        ing("biber", "Yeşil biber", "porsiyon", 2, SAL);
+        ing("limon", "Limon", "porsiyon", 2, SAL);
 
         prod("ekmek_arasi", "Ekmek arası döner", 1, 240,
+                l("domates", "marul", "sogan", "ketcap"),
+                l("domates", "marul", "sogan", "ketcap", "mayonez", "aci_sos", "tursu"),
                 st("Ekmeği ısıt", EKMEK, 3.5, "ekmek", 1),
                 st("Döneri dilimle", DONER, 3.5, "et_doner", 1),
-                st("Yoğurt, domates ve soğan ekle", SOS, 3.0, "yogurt", 1, "domates", 1, "sogan", 1),
-                st("Kapat ve kağıda sar", PAKET, 2.0));
-        prod("ayran", "Ayran", 2, 45,
-                st("Dolaptan şişeyi al", ICECEK, 1.2, "ayran", 1),
-                st("Bardağa koy", ICECEK, 1.2),
-                st("Teslime hazırla", PAKET, 1.0));
+                top("Malzemeleri ekle", 2.0));
+        prod(AYRAN, "Ayran", 2, 45,
+                st("Ayranı doldur", ICECEK, 1.8, AYRAN, 1));
         prod("pilav_ustu", "Pilav üstü döner", 3, 320,
+                l("domates", "biber", "tursu"),
+                l("domates", "biber", "sogan", "tursu", "aci_sos"),
                 st("Pilavı tabağa al", IZGARA, 3.0, "pirinc", 1),
                 st("Tereyağını gezdir", IZGARA, 2.0, "tereyagi", 1),
                 st("Döneri dilimle", DONER, 4.5, "et_doner", 2),
-                st("Pilavın üstüne yerleştir", PAKET, 3.5));
+                top("Garnitürü ekle", 2.0));
         prod("tavuk_durum", "Tavuk dürüm", 4, 210,
+                l("marul", "domates", "mayonez"),
+                l("marul", "domates", "sogan", "mayonez", "ketcap", "aci_sos", "tursu"),
                 st("Lavaşı ısıt", EKMEK, 3.0, "lavas", 1),
                 st("Tavuğu dilimle", DONER, 3.5, "tavuk_doner", 1),
-                st("Yoğurt, marul ve domates ekle", SOS, 3.0, "yogurt", 1, "marul", 1, "domates", 1),
-                st("Dürümü sar", PAKET, 2.5));
+                top("Malzemeleri ekle", 2.0));
         prod("kutu_icecek", "Kutu içecek", 5, 55,
-                st("Dolaptan kutuyu al", ICECEK, 1.0, "kutu_icecek", 1),
-                st("Kutuyu tepsiye koy", ICECEK, 1.0),
-                st("Teslime hazırla", PAKET, 1.0));
+                st("Dolaptan al", ICECEK, 1.0, "kutu_icecek", 1));
         prod("hatay_durum", "Hatay usulü dürüm", 6, 260,
+                l("sogan", "domates", "tursu", "aci_sos", "nar_eksisi"),
+                l("sogan", "domates", "tursu", "aci_sos", "nar_eksisi", "marul", "biber"),
                 st("Lavaşı ısıt", EKMEK, 3.0, "lavas", 1),
                 st("Harç ve döner ekle", DONER, 4.0, "lahmacun_harci", 1, "et_doner", 1),
-                st("Soğan, domates ve marul ekle", SOS, 3.5, "sogan", 1, "domates", 1, "marul", 1),
                 st("Izgarada mühürle", IZGARA, 3.5),
-                st("Sıkı sar", PAKET, 2.0));
+                top("Malzemeleri ekle", 2.0));
         prod("tavuk_ekmek", "Ekmek arası tavuk döner", 7, 190,
+                l("marul", "domates", "mayonez"),
+                l("marul", "domates", "sogan", "mayonez", "ketcap", "aci_sos", "tursu"),
                 st("Ekmeği ısıt", EKMEK, 3.0, "ekmek", 1),
                 st("Tavuğu dilimle", DONER, 3.0, "tavuk_doner", 1),
-                st("Yoğurt, marul ve domates ekle", SOS, 2.5, "yogurt", 1, "marul", 1, "domates", 1),
-                st("Kapat ve sar", PAKET, 1.5));
+                top("Malzemeleri ekle", 1.8));
         prod("zurna_durum", "Zurna dürüm", 8, 340,
+                l("yogurt", "domates", "sogan"),
+                l("yogurt", "domates", "sogan", "marul", "aci_sos", "tursu", "biber"),
                 st("Lavaşı ısıt ve tereyağı sür", EKMEK, 3.5, "lavas", 1, "tereyagi", 1),
                 st("Döneri dilimle", DONER, 5.0, "et_doner", 1),
-                st("Yoğurt ve domates ekle", SOS, 3.5, "yogurt", 1, "domates", 1),
-                st("Uzun sar", PAKET, 3.0));
+                top("Malzemeleri ekle", 2.0));
         prod("iskender", "İskender", 10, 420,
+                l("yogurt", "domates", "biber"),
+                l("yogurt", "domates", "biber", "aci_sos", "tursu"),
                 st("Ekmeği küp doğra", EKMEK, 3.5, "ekmek", 1),
                 st("Döneri dilimle ve ser", DONER, 6.0, "et_doner", 2),
                 st("Tereyağı ve domates sosunu gezdir", IZGARA, 5.0, "tereyagi", 2, "domates", 2),
-                st("Yoğurdu ekle", SOS, 3.0, "yogurt", 2),
-                st("Servise hazırla", PAKET, 2.5));
+                top("Yoğurt ve garnitürü ekle", 2.0));
         prod("porsiyon_doner", "Porsiyon döner", 12, 380,
+                l("domates", "sogan", "biber"),
+                l("domates", "sogan", "marul", "biber", "tursu", "aci_sos", "ketcap"),
                 st("Ekmeği ısıt", EKMEK, 3.0, "ekmek", 1),
                 st("Döneri dilimle", DONER, 5.0, "et_doner", 2),
-                st("Domates ve soğanı diz", SOS, 3.0, "domates", 2, "sogan", 1),
-                st("Tabağı hazırla", PAKET, 2.0));
+                top("Garnitürü diz", 2.0));
         prod("lahmacun", "Lahmacun", 14, 120,
+                l("sogan", "domates", "limon"),
+                l("sogan", "domates", "limon", "marul", "tursu", "aci_sos"),
                 st("Harcı lavaşa yay", SOS, 3.0, "lavas", 1, "lahmacun_harci", 1),
-                st("Fırına ver", IZGARA, 6.0),
-                st("Domates ve soğan ekle", SOS, 2.5, "domates", 1, "sogan", 1),
-                st("Sar", PAKET, 2.5));
+                seq("Fırına ver", IZGARA, 6.0),
+                top("Malzemeleri ekle", 1.8));
         prod("kunefe", "Künefe", 16, 240,
                 st("Kadayıfı tereyağıyla yoğur", TATLI, 3.5, "kadayif", 1, "tereyagi", 2),
-                st("Peyniri ser", TATLI, 3.0, "peynir", 1),
-                st("Fırında pişir", IZGARA, 8.0),
-                st("Çevir ve servis et", TATLI, 3.0));
+                seq("Peyniri ser", TATLI, 3.0, "peynir", 1),
+                seq("Fırında pişir", IZGARA, 8.0),
+                seq("Çevir ve servis et", TATLI, 3.0));
 
         // Yükseltmeler (fiyat/etki araştırma notundan; 'cirak' motor tasarımı).
-        up("cirak", "Çırak", MUTFAK, "Aynı anda bir işlem daha yapar.",
-                new int[]{3000, 9000}, new int[]{3, 8},
-                new Upgrade.Effect(SLOTS, null, 1, 2));
+        up("cirak", "Çırak", MUTFAK, "Kendi başına çalışan yardımcı: boşta hazırlık yapar, paketler, içecek doldurur. Seviye 2 ekmek ısıtır, seviye 3 döner dilimler ve ızgara yapar.",
+                new int[]{3000, 9000, 24000}, new int[]{3, 8, 16},
+                new Upgrade.Effect(APPRENTICE, null, 1, 2, 3));
         up("doner_makinesi", "Döner makinesi", MUTFAK, "Döner dilimleme adımlarını hızlandırır.",
                 new int[]{4000, 15000, 48000}, new int[]{4, 10, 18},
                 new Upgrade.Effect(STATION_SPEED, s(DONER), 0.85, 0.70, 0.55));

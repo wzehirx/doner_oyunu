@@ -17,6 +17,16 @@ public final class DaySummary {
     public double startStars;
     public double endStars;
     public int moneyAfter;
+    /** Gün sonunda atılan hazır döner porsiyonu + tepsi kullanımı (israf). */
+    public int wastedPortions;
+    /** Atılan hazır stokun malzeme değeri (TL; hazırlanırken zaten harcanmıştı). */
+    public int wastedCost;
+    /** Hatalı malzemeli teslim sayısı / kusursuz malzemeli teslim sayısı. */
+    public int mistakes;
+    public int perfect;
+    /** Biten hazırlık işi sayısı (oyuncu + çırak) ve çırağın bitirdiği sipariş adımı sayısı. */
+    public int prepBatches;
+    public int apprenticeTasks;
     /** Sonraki gün açılan yeni ürünler (adlar). */
     public String newProductsNext = "";
 
@@ -29,6 +39,6 @@ public final class DaySummary {
     public String toString() {
         return "Gün " + day + (failed ? " BAŞARISIZ" : "") + " gelir=" + revenue + " bahşiş=" + tips
                 + " acil=" + emergencySpend + " kira=" + rent + (rentUnpaid() > 0 ? "(eksik " + rentUnpaid() + ")" : "") + " teslim=" + delivered + " kayıp=" + lost
-                + " yıldız=" + startStars + "->" + endStars + " para=" + moneyAfter;
+                + (wastedPortions > 0 ? " israf=" + wastedPortions : "") + " yıldız=" + startStars + "->" + endStars + " para=" + moneyAfter;
     }
 }

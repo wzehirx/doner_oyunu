@@ -9,8 +9,9 @@ import org.junit.Test;
 public class SimulationTest {
 
     @Test public void botWithUpgradesPlaysDays1To40() {
+        // hazırlık yapan, malzeme seçimine dikkat eden bot
         Campaign c = new Campaign();
-        int failedDay = c.run(40, 1, 0.8f, true, 3);
+        int failedDay = c.run(40, 1, 0.8f, true, 3, true, true);
         if (failedDay != -1) fail("Yükseltmeli bot gün " + failedDay + " geçemedi: " + c.results.get(c.results.size() - 1));
         assertEquals(40, c.attemptsPerDay.size());
         assertEquals(41, c.save.day);
@@ -21,11 +22,66 @@ public class SimulationTest {
         assertTrue(c.save.money > 0);
     }
 
-    @Test public void botWithoutUpgradesEventuallyFails() {
+    @Test public void noPrepBotWithUpgradesAlsoPlaysDays1To40() {
         Campaign c = new Campaign();
-        int failedDay = c.run(40, 1, 0.8f, false, 3);
-        assertTrue("yükseltmesiz bot 40. güne kadar takılmalı", failedDay > 0);
-        assertTrue("ilk günler rahat olmalı", failedDay > 10);
+        int failedDay = c.run(40, 2, 0.8f, true, 3, false, true);
+        if (failedDay != -1) fail("Hazırlıksız yükseltmeli bot gün " + failedDay + " geçemedi: " + c.results.get(c.results.size() - 1));
+        assertEquals(41, c.save.day);
+    }
+
+    @Test public void slowHumanPaceWithUpgradesStillPlaysDays1To40() {
+        Campaign c = new Campaign();
+        int failedDay = c.run(40, 3, 1.5f, true, 3, true, true);
+        if (failedDay != -1) fail("Yavaş (1,5 sn) bot gün " + failedDay + " geçemedi: " + c.results.get(c.results.size() - 1));
+    }
+
+    @Test public void botWithoutUpgradesEventuallyFails() {
+        for (boolean prep : new boolean[]{false, true}) {
+            Campaign c = new Campaign();
+            int failedDay = c.run(40, 1, 0.8f, false, 3, prep, true);
+            assertTrue("yükseltmesiz bot 40. güne kadar takılmalı (prep=" + prep + ")", failedDay > 0);
+            assertTrue("ilk günler rahat olmalı (prep=" + prep + ", gün " + failedDay + ")", failedDay > 10);
+        }
+    }
+
+    @Test public void botWithoutPrepOrUpgradesPassesFirstFiveDays() {
+        for (long seed = 1; seed <= 4; seed++) {
+            Campaign c = new Campaign();
+            int failedDay = c.run(5, seed, 0.8f, false, 3, false, true);
+            assertEquals("seed " + seed, -1, failedDay);
+        }
+    }
+
+    private static long profit(Campaign c) {
+        long p = 0;
+        for (DaySummary d : c.results) if (!d.failed) p += d.profit();
+        return p;
+    }
+
+    @Test public void prepBotEarnsMoreThanNonPrepBot() {
+        long prep = 0, noprep = 0;
+        for (long seed = 1; seed <= 3; seed++) {
+            Campaign a = new Campaign(), b = new Campaign();
+            assertEquals(-1, a.run(15, seed, 0.8f, false, 3, true, true));
+            assertEquals(-1, b.run(15, seed, 0.8f, false, 3, false, true));
+            prep += profit(a);
+            noprep += profit(b);
+            System.out.println("SIM seed " + seed + " 15 gün (yükseltmesiz): hazırlıklı kazanç=" + profit(a) + " hazırlıksız=" + profit(b));
+        }
+        assertTrue("hazırlık yapan bot daha kazançlı olmalı: " + prep + " vs " + noprep, prep > noprep * 1.03);
+    }
+
+    @Test public void carelessToppingBotMakesMistakesAndCareful_BotDoesNot() {
+        int carelessMistakes = 0, carefulMistakes = 0;
+        for (long seed = 1; seed <= 3; seed++) {
+            Campaign a = new Campaign(), b = new Campaign();
+            a.run(10, seed, 0.8f, false, 3, true, false);
+            b.run(10, seed, 0.8f, false, 3, true, true);
+            for (DaySummary d : a.results) carelessMistakes += d.mistakes;
+            for (DaySummary d : b.results) carefulMistakes += d.mistakes;
+        }
+        assertTrue("istekleri yok sayan bot hata yapar: " + carelessMistakes, carelessMistakes > 0);
+        assertEquals("istekleri uygulayan bot hata yapmaz", 0, carefulMistakes);
     }
 
     @Test public void dayOneIsComfortableForSlowPlayer() {
@@ -52,8 +108,8 @@ public class SimulationTest {
     @Test public void determinismSameSeedSameResult() {
         Campaign a = new Campaign();
         Campaign b = new Campaign();
-        a.run(15, 77, 0.9f, true, 3);
-        b.run(15, 77, 0.9f, true, 3);
+        a.run(15, 77, 0.9f, true, 3, true, true);
+        b.run(15, 77, 0.9f, true, 3, true, true);
         assertEquals(a.results.size(), b.results.size());
         for (int i = 0; i < a.results.size(); i++) assertEquals(a.results.get(i).toString(), b.results.get(i).toString());
         assertEquals(a.save.serialize(), b.save.serialize());
@@ -84,7 +140,7 @@ public class SimulationTest {
         e.addListener(new Narrator(e, new Narrator.Output() {
             @Override public void say(String text, boolean urgent) { sb.append(text).append('|'); }
         }));
-        new TestBot(1.0f).playDay(e);
+        new TestBot(1.0f, true, true).playDay(e);
         return sb.toString();
     }
 
@@ -95,7 +151,7 @@ public class SimulationTest {
             s.stars = 4.0;
             Shop.buyRecommended(s);
             GameEngine e = new GameEngine(d, s);
-            new TestBot(0.8f).playDay(e);
+            new TestBot(0.8f, d % 2 == 0, true).playDay(e);
             assertFalse("gün " + d + " bitmeli", e.isRunning());
         }
     }

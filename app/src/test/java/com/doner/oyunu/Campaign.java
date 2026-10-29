@@ -23,6 +23,11 @@ public final class Campaign {
 
     /** @return geçilemeyen ilk gün (hepsi geçildiyse -1) */
     public int run(int lastDay, long seed, float reaction, boolean buyUpgrades, int maxAttempts) {
+        return run(lastDay, seed, reaction, buyUpgrades, maxAttempts, false, true);
+    }
+
+    /** prep: gün öncesi + gün içi hazırlık yapan bot; careful: malzeme seçiminde istekleri uygular. */
+    public int run(int lastDay, long seed, float reaction, boolean buyUpgrades, int maxAttempts, boolean prep, boolean careful) {
         for (int d = 1; d <= lastDay; d++) {
             boolean passed = false;
             int attempt = 0;
@@ -30,7 +35,7 @@ public final class Campaign {
                 if (buyUpgrades) shop();
                 else Shop.buyRecommended(save);
                 GameEngine e = new GameEngine(seed * 1000 + d * 7 + attempt, save);
-                new TestBot(reaction).playDay(e);
+                new TestBot(reaction, prep, careful).playDay(e);
                 results.add(e.getSummary());
                 passed = !e.getSummary().failed;
                 attempt++;
@@ -56,6 +61,8 @@ public final class Campaign {
                 if (price < 0 || save.day < u.unlockDayForNext(lv)) continue;
                 if (save.money - price >= reserve) {
                     if (Shop.buyUpgrade(save, id) == Shop.BuyResult.OK) { bought = true; break; }
+                } else if (id.equals("cirak")) {
+                    break; // çırak için biriktir (akıllı oyuncu önce çırağı alır)
                 }
             }
         }

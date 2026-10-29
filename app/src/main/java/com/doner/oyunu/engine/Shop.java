@@ -62,6 +62,12 @@ public final class Shop {
                 Double d = demand.get(e.getKey());
                 demand.put(e.getKey(), (d == null ? 0 : d) + e.getValue() * items / menu.size());
             }
+            // seçilebilir (varsayılan olmayan) malzemeler ve müşteri istekleri için küçük pay
+            for (String t : p.toppingPool) {
+                if (p.defaultToppings.contains(t)) continue;
+                Double d = demand.get(t);
+                demand.put(t, (d == null ? 0 : d) + 0.25 * items / menu.size());
+            }
         }
         int cap = up.stockCap();
         Map<String, Integer> out = new LinkedHashMap<>();

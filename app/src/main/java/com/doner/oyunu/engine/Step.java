@@ -6,16 +6,46 @@ import java.util.Map;
 
 /** Bir ürünün tek hazırlık adımı. */
 public final class Step {
+    public enum Kind {
+        NORMAL,
+        /** Malzeme (topping) seçimi adımı: ürünün diğer tüm adımları bitince açılır; stok seçilenlerden tüketilir. */
+        TOPPING
+    }
+
     public final String name;
     public final Station station;
     public final float baseSeconds;
-    /** malzeme id -> miktar (adım başlarken tüketilir). */
+    /** malzeme id -> miktar (adım başlarken tüketilir; TOPPING adımında boş, seçilen malzemeler tüketilir). */
     public final Map<String, Integer> needs;
+    public final Kind kind;
+    /** true: kalemin önceki TÜM adımları bitmeden açılmaz (künefe gibi sıralı ürünler). TOPPING her zaman sıralıdır. */
+    public final boolean sequential;
 
     public Step(String name, Station station, float baseSeconds, Map<String, Integer> needs) {
+        this(name, station, baseSeconds, needs, Kind.NORMAL, false);
+    }
+
+    public Step(String name, Station station, float baseSeconds, Map<String, Integer> needs, Kind kind, boolean sequential) {
         this.name = name;
         this.station = station;
         this.baseSeconds = baseSeconds;
         this.needs = Collections.unmodifiableMap(new LinkedHashMap<>(needs));
+        this.kind = kind;
+        this.sequential = sequential || kind == Kind.TOPPING;
     }
+
+    public boolean isTopping() { return kind == Kind.TOPPING; }
+
+    /** Hazır (dilimlenmiş) döner ile hızlanabilen adımsa döner malzemesinin id'si, değilse null. */
+    public String meatId() {
+        if (station != Station.DONER) return null;
+        for (String id : needs.keySet()) {
+            Ingredient i = Catalog.ingredient(id);
+            if (i != null && i.category == Ingredient.Category.ET) return id;
+        }
+        return null;
+    }
+
+    /** "Ayranı doldur" gibi hazır içecek ile hızlanabilen adım mı. */
+    public boolean isDrinkFill() { return station == Station.ICECEK && needs.containsKey(Catalog.AYRAN); }
 }

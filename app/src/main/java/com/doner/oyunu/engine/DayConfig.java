@@ -39,6 +39,14 @@ public final class DayConfig {
         this.rent = 300 + 30 * (day - 1);
     }
 
+    /** Müşteri isteği olasılığı: 1. gün 0, 2. gün %20, sonra %45. */
+    public static double requestChance(int day) {
+        return day <= 1 ? 0.0 : (day == 2 ? 0.20 : 0.45);
+    }
+
+    /** Malzeme seçim panelinin önceden seçili gelip gelmediği: 1-3. gün varsayılan küme seçili, 4. günden itibaren boş. */
+    public static boolean toppingsPreselected(int day) { return day <= 3; }
+
     public static DayConfig forDay(int day) {
         if (day < 1) day = 1;
         return new DayConfig(day);

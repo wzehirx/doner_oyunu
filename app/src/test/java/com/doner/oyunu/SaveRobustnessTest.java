@@ -35,7 +35,7 @@ public class SaveRobustnessTest {
         assertTrue(s.money >= 0);
         assertTrue(s.bestDay >= s.day || s.bestDay >= 1);
         assertTrue(s.inventory.get("et_doner") >= 0);
-        assertTrue(s.level("cirak") <= 2);
+        assertTrue(s.level("cirak") <= 3);
     }
 
     @Test public void serializeParseRoundTripKeepsSettings() {

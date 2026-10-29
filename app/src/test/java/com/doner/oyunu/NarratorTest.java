@@ -41,9 +41,9 @@ public class NarratorTest {
         String arrive = said.get(1);
         assertTrue(arrive, arrive.startsWith("Yeni müşteri: " + o.customer.name + ", Ekmek arası döner istiyor."));
         e.selectOrder(o.id);
-        assertTrue(said.toString(), anySaid(said, "Sıradaki adım: Ekmeği ısıt. Ekmek ısıtıcı istasyonuna dokun."));
-        e.startStep(o.id, Station.DONER.id);
-        assertTrue(said.toString(), anySaid(said, "Yanlış istasyon. Bu adım için Ekmek ısıtıcı gerekli."));
+        assertTrue(said.toString(), anySaid(said, "Önerilen: Ekmeği ısıt. Ekmek ısıtıcı istasyonuna dokun."));
+        e.startStep(o.id, Station.ICECEK.id);
+        assertTrue(said.toString(), anySaid(said, "Yanlış istasyon. Bu sipariş için şimdi Ekmek ısıtıcı gerekli."));
         e.startStep(o.id, Station.EKMEK.id);
         assertTrue(said.toString(), anySaid(said, "Malzeme bitti: Döner ekmeği."));
         assertTrue(said.toString(), anySaid(said, "27 lira"));
@@ -54,7 +54,7 @@ public class NarratorTest {
         StringBuilder all = new StringBuilder();
         for (String t : said) all.append(t).append('\n');
         String text = all.toString();
-        assertTrue(text, text.contains("Ekmeği ısıt bitti. Sıradaki: Döneri dilimle"));
+        assertTrue(text, text.contains("Ekmeği ısıt bitti. Önerilen: Döneri dilimle"));
         assertTrue(text, text.contains("sabırsızlanıyor"));
         assertTrue(text, text.contains("gitmek üzere"));
         assertTrue(text, text.contains("sabrı tükendi ve gitti"));

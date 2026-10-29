@@ -1,6 +1,8 @@
 package com.doner.oyunu.engine;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Olaylar için hazır Türkçe duyuru metinleri. GameListener olarak motora eklenirse
@@ -38,6 +40,9 @@ public class Narrator implements GameListener {
     private final GameEngine engine;
     private final StarsTracker starsTracker = new StarsTracker();
     private Output output;
+    /** Çırak duyurularını kısıtlamak için son duyuru zamanı (motor süresi). */
+    private float lastApprenticeSay = -100f;
+    private static final float APPRENTICE_MIN_GAP = 4f;
 
     public Narrator(GameEngine engine) { this.engine = engine; }
 
@@ -64,7 +69,55 @@ public class Narrator implements GameListener {
 
     public static String fmtMoney(int m) { return m + " lira"; }
 
+    // ------------------------------------------------------------ yardımcılar
+    /** "domates, marul ve ketçap". */
+    public static String joinNames(Collection<String> ids) {
+        List<String> names = new java.util.ArrayList<>();
+        for (String id : ids) {
+            Ingredient i = Catalog.ingredient(id);
+            names.add((i == null ? id : i.name).toLowerCase(new java.util.Locale("tr")));
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < names.size(); i++) {
+            if (i > 0) sb.append(i == names.size() - 1 ? " ve " : ", ");
+            sb.append(names.get(i));
+        }
+        return sb.toString();
+    }
+
+    /** Adımın hangi kaleme ait olduğunu bulur (önce henüz bitmemiş adım). Yoksa null. */
+    private static OrderLine lineOf(Order o, Step s) {
+        OrderLine fallback = null;
+        for (OrderLine l : o.getLines()) {
+            for (int i = 0; i < l.stepCount(); i++) {
+                if (l.step(i) == s) {
+                    if (!l.isStepDone(i)) return l;
+                    if (fallback == null) fallback = l;
+                }
+            }
+        }
+        return fallback;
+    }
+
+    private static String itemPrefix(Order o, Step s) {
+        if (o.lineCount() < 2) return "";
+        OrderLine l = lineOf(o, s);
+        return l == null ? "" : l.product.name + ": ";
+    }
+
+    private static String requestSentence(Order o) {
+        return o.hasRequests() ? " İstek: " + o.requestsText() + "." : "";
+    }
+
     // ------------------------------------------------------------ metin üreticiler
+    public String prepPhaseStarted(int day) {
+        String t = "Hazırlık aşaması. Müşteri yok, süre akmıyor. Dilediğin kadar hazırlık yap, hazır olunca dükkânı aç.";
+        if (engine != null && engine.getApprenticeLevel() > 0) t += " Çırak da hazırlık yapacak.";
+        return t;
+    }
+
+    public String prepPhaseEnded(int day) { return "Dükkân açılıyor."; }
+
     public String dayStarted(int day, DayConfig cfg) {
         StringBuilder sb = new StringBuilder();
         sb.append("Gün ").append(day).append(" başladı. Süre ").append(Math.round(cfg.duration)).append(" saniye.");
@@ -78,37 +131,58 @@ public class Narrator implements GameListener {
     }
 
     public String customerArrived(Order o) {
-        return "Yeni müşteri: " + o.customer.name + ", " + o.itemsText() + " istiyor. "
-                + o.customer.type.hint + " Sipariş " + o.position + ".";
+        return "Yeni müşteri: " + o.customer.name + ", " + o.itemsText() + " istiyor."
+                + (o.lineCount() > 1 ? " " + o.lineCount() + " kalem." : "") + requestSentence(o)
+                + " " + o.customer.type.hint + " Sipariş " + o.position + ".";
     }
 
     public String orderSelected(Order o) {
-        return "Seçilen sipariş " + o.position + ": " + o.customer.name + ", " + o.itemsText() + ".";
+        String t = "Seçilen sipariş " + o.position + ": " + o.customer.name + ", " + o.itemsText() + ".";
+        return t + requestSentence(o);
+    }
+
+    public String itemSelected(Order o, int itemIndex) {
+        OrderLine l = o.getLine(itemIndex);
+        return "Kalem " + (itemIndex + 1) + " seçildi: " + l.product.name + (l.isDone() ? ", hazır." : ".");
     }
 
     public String nextStepHint(Order o, Step s) {
-        return "Sıradaki adım: " + s.name + ". " + s.station.displayName + " istasyonuna dokun.";
+        return "Önerilen: " + itemPrefix(o, s) + s.name + ". " + s.station.displayName + " istasyonuna dokun.";
     }
 
     public String stepStarted(Order o, Step s, int slot, float seconds) {
-        return s.name + " başladı, " + fmtSeconds(seconds) + ".";
+        return itemPrefix(o, s) + s.name + " başladı, " + fmtSeconds(seconds) + ".";
     }
 
     public String stepFinished(Order o, Step s, boolean complete) {
-        String t = s.name + " bitti.";
+        String t = itemPrefix(o, s) + s.name + " bitti.";
         if (!complete) {
             Step n = o.nextStep();
-            if (n != null) t += " Sıradaki: " + n.name + ", " + n.station.displayName + ".";
+            if (n != null) t += " Önerilen: " + itemPrefix(o, n) + n.name + ", " + n.station.displayName + ".";
         }
         return t;
     }
 
     public String wrongStation(Order o, Station tapped, Station expected) {
-        return "Yanlış istasyon. Bu adım için " + expected.displayName + " gerekli.";
+        return "Yanlış istasyon. Bu sipariş için şimdi " + expected.displayName + " gerekli.";
+    }
+
+    public String stepLocked(Order o, Step s) {
+        if (s == o.getPackStep()) return "Paketlemeden önce tüm kalemler hazır olmalı.";
+        if (s.isTopping()) return "Malzeme eklemeden önce kalemin diğer adımları bitmeli: ısıtma, dilimleme.";
+        return "Bu adım için önce kalemin önceki adımları bitmeli.";
     }
 
     public String noFreeSlot(Order o) {
         return "Boş yuva yok. Önce devam eden bir işlemin bitmesini bekle.";
+    }
+
+    public String itemFinished(Order o, int itemIndex) {
+        return o.getLine(itemIndex).product.name + " hazır.";
+    }
+
+    public String orderReadyToPack(Order o) {
+        return "Tüm kalemler hazır. Siparişi paketle, " + Station.PAKET.displayName + ".";
     }
 
     public String orderReady(Order o) {
@@ -120,6 +194,115 @@ public class Narrator implements GameListener {
         if (tip > 0) t += ", " + fmtMoney(tip) + " bahşiş";
         t += ". " + (happy ? (tip > 0 ? "Müşteri çok memnun." : "Müşteri memnun.") : "Müşteri biraz geç kaldı.");
         return t;
+    }
+
+    // ---- malzeme (topping) seçimi
+    public String toppingSelectionNeeded(Order o, int itemIndex) {
+        OrderLine l = o.getLine(itemIndex);
+        return "Malzeme seçimi: " + l.product.name + ". Her malzeme bir aç kapa düğmesi. Onaylamadan önce hedefi okuyabilirsin.";
+    }
+
+    /** "Hedefi oku": kalemin hedef malzemeleri ve müşteri istekleri. */
+    public String toppingTarget(Order o, int itemIndex) {
+        OrderLine l = o.getLine(itemIndex);
+        Set<String> target = l.getTarget();
+        String t = "Hedef, " + l.product.name + ": " + (target.isEmpty() ? "hiç malzeme yok" : joinNames(target)) + ".";
+        t += o.hasRequests() ? " Müşteri isteği: " + o.requestsText() + "." : " Müşteri isteği yok, standart malzemeler.";
+        return t;
+    }
+
+    /** Düğmenin sesli durumu: "Soğan, eklenmedi". */
+    public String toppingState(Ingredient ing, boolean selected, boolean available) {
+        if (!available && !selected) return ing.name + ", stokta yok";
+        return ing.name + ", " + (selected ? "eklendi" : "eklenmedi");
+    }
+
+    /** Seçili malzemelerin özeti. */
+    public String toppingSelectionSummary(Collection<String> ids) {
+        if (ids.isEmpty()) return "Hiç malzeme seçili değil.";
+        return "Seçili: " + joinNames(ids) + ". Toplam " + ids.size() + " malzeme.";
+    }
+
+    public String toppingsRejected(Order o, int itemIndex, StartResult reason, Ingredient ing) {
+        if (reason == StartResult.OUT_OF_STOCK && ing != null) {
+            return ing.name + " stokta yok, seçilemez. Marketten acil al, "
+                    + fmtMoney(ing.emergencyPrice() * Ingredient.EMERGENCY_BATCH) + ", ya da seçimden çıkar.";
+        }
+        if (reason == StartResult.INVALID) return "Bu malzeme bu ürüne eklenemez.";
+        return startResultText(reason);
+    }
+
+    /** Müşteri şikâyeti: "Soğan istememiştim. Soğan fazla olmuş..." */
+    public String orderMistake(Order o, ToppingCheck check, double penalty) {
+        StringBuilder sb = new StringBuilder("Hatalı sipariş. ");
+        int n = 0;
+        for (ToppingCheck.Mistake m : check.getMistakes()) {
+            if (n >= 3) break;
+            Ingredient ing = Catalog.ingredient(m.ingredientId);
+            String name = ing == null ? m.ingredientId : ing.name;
+            if (m.extra) sb.append(m.requested ? name + " istememiştim. " : name + " fazla olmuş. ");
+            else sb.append(m.requested ? name + " istemiştim. " : name + " eksik olmuş. ");
+            n++;
+        }
+        if (check.mistakes() > 3) sb.append("Daha başka hatalar da var. ");
+        sb.append("Yıldız düştü, bahşiş yarıya indi.");
+        return sb.toString();
+    }
+
+    public String orderPerfect(Order o) { return "Malzemeler tam istediği gibi."; }
+
+    // ---- hazırlık
+    public String prepStarted(PrepKind kind, boolean byApprentice, float seconds) {
+        return kind.displayName + " başladı, " + fmtSeconds(seconds) + ".";
+    }
+
+    public String prepFinished(PrepKind kind, boolean byApprentice, int amount) {
+        switch (kind) {
+            case DONER: return amount + " porsiyon döner dilimlendi. Hazır döner " + (engine == null ? "" : engine.getReadyDoner() + " porsiyon") + ".";
+            case DRINK: return amount + " bardak ayran dolduruldu. Hazır içecek " + (engine == null ? "" : engine.getReadyDrinks() + " bardak") + ".";
+            default: return "Salata ve sos tepsisi hazır.";
+        }
+    }
+
+    public String prepRejected(PrepKind kind, PrepResult reason, Ingredient ing) {
+        switch (reason) {
+            case FULL: return "Hazır stok dolu, " + kind.displayName + " yapılamaz.";
+            case OUT_OF_STOCK: return (ing == null ? "Malzeme" : ing.name) + " yetmiyor, " + kind.displayName + " yapılamaz.";
+            case NO_SLOT: return "Boş yuva yok. Önce devam eden bir işlemin bitmesini bekle.";
+            case INVALID: return "Bu hazırlık için geçersiz seçim.";
+            default: return "Hazırlık yapılamaz.";
+        }
+    }
+
+    /** Hazır stok durumu: "Hazır: döner 4 porsiyon, ayran 3 bardak, tepsi 12 kullanım." Hiç yoksa boş metin. */
+    public String readyStockText() {
+        if (engine == null) return "";
+        List<String> parts = new java.util.ArrayList<>();
+        if (engine.getReadyDoner() > 0) parts.add("döner " + engine.getReadyDoner() + " porsiyon");
+        if (engine.getReadyDrinks() > 0) parts.add("ayran " + engine.getReadyDrinks() + " bardak");
+        if (engine.getTrayTotal() > 0) parts.add("salata ve sos tepsisi " + engine.getTrayTotal() + " kullanım");
+        if (parts.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder("Hazır: ");
+        for (int i = 0; i < parts.size(); i++) { if (i > 0) sb.append(", "); sb.append(parts.get(i)); }
+        return sb.append('.').toString();
+    }
+
+    // ---- çırak
+    /** Çırak duyurusu; sessiz kalması gereken durumda null (yalnızca bitişi önemsiz adımlar). */
+    public String apprenticeAction(ApprenticeAction a) {
+        if (a.pack) {
+            return a.started ? "Çırak " + a.order.position + " numaralı siparişi paketliyor."
+                    : "Çırak " + a.order.position + " numaralı siparişi paketledi.";
+        }
+        if (!a.started) {
+            return a.isPrep() ? (a.prep == PrepKind.DONER ? "Çırak döner dilimledi." : a.prep == PrepKind.DRINK ? "Çırak ayranları doldurdu."
+                    : "Çırak salata ve sos tepsisini hazırladı.") : null;
+        }
+        if (a.isPrep()) {
+            return a.prep == PrepKind.DONER ? "Çırak döner dilimliyor." : a.prep == PrepKind.DRINK ? "Çırak ayran dolduruyor."
+                    : "Çırak salata ve sos tepsisi hazırlıyor.";
+        }
+        return "Çırak " + a.order.position + " numaralı siparişte: " + a.step.name + ".";
     }
 
     public String patienceWarning(Order o, int level) {
@@ -174,6 +357,8 @@ public class Narrator implements GameListener {
         }
         t += ". Net " + (s.profit() < 0 ? "eksi " + fmtMoney(-s.profit()) : fmtMoney(s.profit()))
                 + ". Kasada " + fmtMoney(s.moneyAfter) + ". Yıldız " + fmtStars(s.endStars) + ".";
+        if (s.wastedPortions > 0) t += " İsraf: " + s.wastedPortions + " porsiyon hazır malzeme atıldı, değeri " + fmtMoney(s.wastedCost) + ".";
+        if (s.mistakes > 0) t += " Hatalı malzemeli sipariş: " + s.mistakes + ".";
         if (s.newProductsNext != null && !s.newProductsNext.isEmpty()) t += " Yarın yeni ürün: " + s.newProductsNext + ".";
         return t;
     }
@@ -182,19 +367,24 @@ public class Narrator implements GameListener {
         return "Gün " + s.day + " başarısız oldu, itibarın çok düştü. Aynı günü tekrar deneyebilirsin, paran ve stokların korundu.";
     }
 
-    /** Kısa durum özeti: para, yıldız, kalan süre, bekleyen sipariş. */
+    /** Kısa durum özeti: para, yıldız, kalan süre, bekleyen sipariş, hazır stok. */
     public String statusText() {
         if (engine == null) return "";
         int n = engine.getOrders().size();
         String t = "Para " + fmtMoney(engine.getMoney()) + ", yıldız " + fmtStars(engine.getStars());
-        if (engine.isOvertime()) t += ", mesai uzatması";
+        if (engine.isPrepPhase()) t += ", hazırlık aşaması, süre akmıyor";
+        else if (engine.isOvertime()) t += ", mesai uzatması";
         else t += ", kalan süre " + Math.round(engine.getTimeLeft()) + " saniye";
         t += ", " + (n == 0 ? "bekleyen sipariş yok" : n + " bekleyen sipariş") + ".";
         Order sel = engine.getSelectedOrder();
         if (sel != null) {
             Step s = sel.nextStep();
-            t += " Seçili: " + sel.customer.name + ", " + (s == null ? "teslime hazır." : "sıradaki " + s.name + ".");
+            t += " Seçili: " + sel.customer.name + ", " + sel.itemsText() + ", "
+                    + (sel.isReady() ? "teslime hazır." : s == null ? "işler sürüyor." : "önerilen " + s.name + ".");
+            if (sel.hasRequests()) t += " İstek: " + sel.requestsText() + ".";
         }
+        String ready = readyStockText();
+        if (!ready.isEmpty()) t += " " + ready;
         return t;
     }
 
@@ -204,9 +394,27 @@ public class Narrator implements GameListener {
         for (ActiveStep a : engine.getActiveSteps()) if (a.step.station == st) busy = true;
         StringBuilder sb = new StringBuilder(st.displayName).append(" istasyonu, ").append(busy ? "çalışıyor" : "boş");
         Order sel = engine.getSelectedOrder();
-        if (sel != null && sel.nextStep() != null && !sel.isRunning() && sel.nextStep().station == st) {
-            sb.append(", ").append(sel.nextStep().name).append(" için gerekli");
+        if (sel != null && !sel.isReady()) {
+            Step need = null;
+            OrderLine needLine = null;
+            List<OrderLine> lines = new java.util.ArrayList<>(sel.getLines());
+            int pref = engine.getSelectedItem();
+            if (pref >= 0 && pref < lines.size()) { OrderLine p = lines.remove(pref); lines.add(0, p); }
+            for (OrderLine l : lines) {
+                for (int i = 0; i < l.stepCount() && need == null; i++) {
+                    if (l.isStepOpen(i) && l.step(i).station == st) { need = l.step(i); needLine = l; }
+                }
+                if (need != null) break;
+            }
+            if (need == null && st == Station.PAKET && sel.canPack()) need = sel.getPackStep();
+            if (need != null) {
+                sb.append(", ").append(needLine != null && sel.lineCount() > 1 ? needLine.product.name + " " : "")
+                        .append(need.name).append(" için gerekli");
+            }
         }
+        if (st == Station.DONER && engine.getReadyDoner() > 0) sb.append(", hazır döner ").append(engine.getReadyDoner());
+        if (st == Station.ICECEK && engine.getReadyDrinks() > 0) sb.append(", hazır ayran ").append(engine.getReadyDrinks());
+        if (st == Station.SOS && engine.getTrayTotal() > 0) sb.append(", hazır tepsi var");
         return sb.toString();
     }
 
@@ -218,26 +426,58 @@ public class Narrator implements GameListener {
             case WRONG_STATION: return "Yanlış istasyon.";
             case NO_SLOT: return "Boş yuva yok.";
             case OUT_OF_STOCK: return "Malzeme yok.";
-            case ORDER_BUSY: return "Bu siparişin adımı zaten sürüyor.";
+            case ORDER_BUSY: return "Bu adım zaten sürüyor.";
             case ORDER_READY: return "Sipariş hazır, teslim et.";
+            case NEEDS_TOPPINGS: return "Malzeme seçimi gerekli.";
+            case STEP_LOCKED: return "Bu adım henüz açılmadı.";
+            case INVALID: return "Geçersiz seçim.";
             default: return "Gün bitti.";
         }
     }
 
     // ------------------------------------------------------------ GameListener
+    @Override public void onPrepPhaseStarted(int day) { say(prepPhaseStarted(day), true); }
+    @Override public void onPrepPhaseEnded(int day) { say(prepPhaseEnded(day), false); }
     @Override public void onDayStarted(int day, DayConfig c) {
         if (engine != null) starsTracker.reset(engine.getStars());
         say(dayStarted(day, c), false);
     }
     @Override public void onCustomerArrived(Order o) { say(customerArrived(o), false); }
     @Override public void onOrderSelected(Order o) { say(orderSelected(o), true); }
+    @Override public void onItemSelected(Order o, int i) { say(itemSelected(o, i), true); }
     @Override public void onNextStepHint(Order o, Step s) { say(nextStepHint(o, s), false); }
     @Override public void onStepStarted(Order o, Step s, int slot, float sec) { say(stepStarted(o, s, slot, sec), false); }
     @Override public void onStepFinished(Order o, Step s, boolean c) { say(stepFinished(o, s, c), false); }
     @Override public void onWrongStation(Order o, Station t, Station e) { say(wrongStation(o, t, e), true); }
+    @Override public void onStepLocked(Order o, Step s) { say(stepLocked(o, s), true); }
     @Override public void onNoFreeSlot(Order o) { say(noFreeSlot(o), true); }
+    /** Kalem/paketleme hazır duyuruları stepFinished metnine dahildir; ayrıca konuşulmaz. */
+    @Override public void onItemFinished(Order o, int i) {}
+    @Override public void onOrderReadyToPack(Order o) {}
     @Override public void onOrderReady(Order o) { say(orderReady(o), false); }
     @Override public void onOrderDelivered(Order o, int m, int t, boolean h) { say(orderDelivered(o, m, t, h), false); }
+    @Override public void onToppingSelectionNeeded(Order o, int i) { say(toppingSelectionNeeded(o, i), true); }
+    @Override public void onToppingsRejected(Order o, int i, StartResult r, Ingredient ing) { say(toppingsRejected(o, i, r, ing), true); }
+    @Override public void onOrderMistake(Order o, ToppingCheck c, double p) { say(orderMistake(o, c, p), true); }
+    @Override public void onOrderPerfect(Order o) { say(orderPerfect(o), false); }
+    @Override public void onPrepStarted(PrepKind k, boolean byApprentice, float sec) {
+        if (!byApprentice) say(prepStarted(k, false, sec), false);
+    }
+    @Override public void onPrepFinished(PrepKind k, boolean byApprentice, int amount) {
+        if (!byApprentice) say(prepFinished(k, false, amount), false);
+    }
+    @Override public void onPrepRejected(PrepKind k, PrepResult r, Ingredient ing) { say(prepRejected(k, r, ing), true); }
+    @Override public void onApprenticeAction(ApprenticeAction a) {
+        if (engine != null && !engine.getSave().apprenticeAnnounce) return;
+        String t = apprenticeAction(a);
+        if (t == null) return;
+        float now = engine == null ? 0f : engine.getElapsed();
+        // paketleme bitişi her zaman söylenir; diğerleri en az APPRENTICE_MIN_GAP arayla
+        boolean important = a.pack && !a.started;
+        if (!important && engine != null && engine.getState() == GameEngine.State.RUNNING && now - lastApprenticeSay < APPRENTICE_MIN_GAP) return;
+        lastApprenticeSay = now;
+        say(t, false);
+    }
     @Override public void onPatienceWarning(Order o, int l) { say(patienceWarning(o, l), l >= 2); }
     @Override public void onCustomerLeft(Order o) { say(customerLeft(o), true); }
     @Override public void onStarsChanged(double a, double b) {

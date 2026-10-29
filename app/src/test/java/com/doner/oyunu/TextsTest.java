@@ -97,7 +97,7 @@ public class TextsTest {
         s.money = 99999;
         assertTrue(Texts.upgradeStatus(cirak, s).startsWith("Satın alınabilir"));
         assertTrue(Texts.upgradeBuyable(cirak, s));
-        s.upgradeLevels.put("cirak", 2);
+        s.upgradeLevels.put("cirak", 3);
         assertEquals("En üst seviyede", Texts.upgradeStatus(cirak, s));
     }
 

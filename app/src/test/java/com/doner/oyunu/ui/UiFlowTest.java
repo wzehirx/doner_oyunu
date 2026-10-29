@@ -21,37 +21,10 @@ import org.robolectric.annotation.Config;
 @Config(sdk = 34, qualifiers = "w360dp-h740dp-xxhdpi")
 public class UiFlowTest {
 
-    /** Oyun ekranında "makul oyuncu": seç, doğru istasyona dokun, hazırsa teslim et. */
-    static void botStep(UiHarness h) {
-        GameEngine e = h.engine();
-        if (e.getState() != GameEngine.State.RUNNING) return;
-        for (Order o : e.getOrders()) {
-            if (o.isReady()) { h.click("Teslim et"); return; }
-        }
-        Order sel = e.getSelectedOrder();
-        if (sel == null) {
-            for (Order o : e.getOrders()) if (!o.isRunning()) { View c = h.orderCard(o); if (c != null) { c.performClick(); return; } }
-            return;
-        }
-        if (!sel.isRunning() && sel.nextStep() != null && e.getFreeSlots() > 0) {
-            Station st = sel.nextStep().station;
-            View t = h.stationTile(st);
-            assertNotNull("istasyon düğmesi yok " + st, t);
-            t.performClick();
-        } else if (sel.isRunning() || sel.nextStep() == null) {
-            // başka bekleyen sipariş varsa ona geç
-            for (Order o : e.getOrders()) if (!o.isRunning() && !o.isReady() && o.id != sel.id && e.getFreeSlots() > 0) { View c = h.orderCard(o); if (c != null) c.performClick(); return; }
-        }
-    }
+    /** Oyun ekranında "makul oyuncu" (bkz. UiBot). */
+    static void botStep(UiHarness h) { UiBot.step(h); }
 
-    static void playDay(UiHarness h, long maxMs) {
-        long t = 0;
-        while (h.screen() instanceof GameScreen && t < maxMs) {
-            botStep(h);
-            h.run(100);
-            t += 100;
-        }
-    }
+    static void playDay(UiHarness h, long maxMs) { UiBot.playDay(h, maxMs); }
 
     @Test public void menuNewGameBriefingShopDay() {
         UiHarness h = new UiHarness(false);
@@ -67,17 +40,33 @@ public class UiFlowTest {
         h.click("Güne başla");
         h.settle();
         assertTrue(h.screen() instanceof GameScreen);
+        // hazırlık aşaması: hazırlık kontrolleri var, sipariş ekranı yok, süre akmıyor
+        assertEquals(GameEngine.State.PREP, h.engine().getState());
+        assertNotNull(h.findLabel("Dükkânı aç"));
+        assertNotNull(h.findLabel("Hazırlık yapmadan aç"));
+        assertNotNull(h.findLabel("Döner dilimle"));
+        assertNotNull(h.findLabel("Salata ve sos tepsisi hazırla"));
+        assertNotNull(h.findLabel("Duraklat"));
+        assertNotNull(h.findLabel("Durumu oku"));
+        assertNull(h.findLabel("Teslim et"));
+        assertNull(h.stationTile(Station.DONER));
+        h.run(3000);
+        assertEquals("Hazırlıkta saat akmamalı", 0f, h.engine().getElapsed(), 1e-6f);
+        h.click("Dükkânı aç");
+        h.run(200);
+        assertEquals(GameEngine.State.RUNNING, h.engine().getState());
         assertNotNull(h.findLabel("Teslim et"));
         assertNotNull(h.findLabel("Duraklat"));
         assertNotNull(h.findLabel("Durumu oku"));
         assertNotNull(h.findLabel("Sonraki sipariş"));
+        assertNull(h.findLabel("Dükkânı aç"));
         for (Station s : Station.values()) assertNotNull("istasyon " + s, h.stationTile(s));
     }
 
     @Test public void fullDayThroughUiReachesSummary() {
         UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
-        h.click("Güne başla"); h.settle();
+        h.startDay();
         assertTrue(h.screen() instanceof GameScreen);
         playDay(h, 400_000);
         // beginFinish en az 1.8 sn sonra Özet ekranına geçer
@@ -94,24 +83,51 @@ public class UiFlowTest {
         assertNotNull(h.findText("Yeni ürün: Ayran"));
     }
 
+    /** 1. gün öğreticisi: hazırlık yap -> dükkânı aç -> sipariş seç -> istasyonlar -> malzeme paneli -> paketle -> teslim. */
     @Test public void tutorialRunsOnDayOneAndFinishes() {
         UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
         h.click("Güne başla"); h.settle();
         GameScreen gs = (GameScreen) h.screen();
+        GameEngine e = h.engine();
         assertFalse(h.act.save.tutorialDone);
-        // ilk teslime kadar oyna
+        assertEquals("Hazırlık aşaması öğreticisi konuşulmalı", 1, h.field(gs, "tutorialStage"));
+        // hazırlık yap: döner dilimle
+        h.click("Döner dilimle");
+        h.run(300);
         long t = 0;
-        while (t < 120_000 && h.engine().getSummary().delivered == 0) { botStep(h); h.run(100); t += 100; }
-        assertTrue("1. günde ilk teslim yapılabilmeli", h.engine().getSummary().delivered > 0);
-        assertEquals("Öğretici aşaması 5'e ulaşmalı", 5, h.field(gs, "tutorialStage"));
+        while (e.getReadyDoner() == 0 && t < 20_000) { h.run(100); t += 100; }
+        assertTrue("hazır döner artmalı", e.getReadyDoner() > 0);
+        assertEquals("Hazırlık bitti aşaması", 2, h.field(gs, "tutorialStage"));
+        h.click("Dükkânı aç");
+        h.run(200);
+        assertEquals(3, h.field(gs, "tutorialStage"));
+        // müşteri gelir, sipariş seçilir
+        t = 0;
+        while (e.getOrders().isEmpty() && t < 40_000) { h.run(100); t += 100; }
+        assertFalse(e.getOrders().isEmpty());
+        assertEquals(4, h.field(gs, "tutorialStage"));
+        // öğreticide sipariş kendiliğinden seçilmez: oyuncu seçmeli
+        h.run(3000);
+        assertEquals("Öğreticide sipariş otomatik seçilmemeli", -1, e.getSelectedOrderId());
+        // ilk teslime kadar oyna (malzeme paneli dahil)
+        boolean panelSeen = false;
+        t = 0;
+        while (t < 150_000 && e.getSummary().delivered == 0) {
+            if (UiBot.panelOpen(h)) panelSeen = true;
+            botStep(h); h.run(100); t += 100;
+        }
+        assertTrue("1. günde ilk teslim yapılabilmeli", e.getSummary().delivered > 0);
+        assertTrue("malzeme seçimi paneli kullanılmalı", panelSeen);
+        assertEquals("Öğretici son aşamaya ulaşmalı", GameScreen.TUTORIAL_END, h.field(gs, "tutorialStage"));
         assertEquals(Boolean.FALSE, h.field(gs, "tutorialActive"));
+        assertEquals("Doğru malzemeler: kusursuz sipariş", 1, e.getSummary().perfect);
     }
 
     @Test public void wrongStationCostsStarsAndDoesNotCrash() {
         UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
-        h.click("Güne başla"); h.settle();
+        h.startDay();
         GameEngine e = h.engine();
         long t = 0;
         while (e.getOrders().isEmpty() && t < 20000) { h.run(100); t += 100; }
@@ -135,7 +151,7 @@ public class UiFlowTest {
     @Test public void tapWithoutOrderOrBeforeStartGivesFeedbackNoCrash() {
         UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
-        h.click("Güne başla"); h.settle();
+        h.startDay();
         // startDelay içinde (1.6 sn) ve siparişsizken her şeye dokun
         for (View v : UiHarness.visibleViews(h.root())) if (v.isClickable() && !UiHarness.label(v).contains("Duraklat")) v.performClick();
         h.run(300);
@@ -146,7 +162,7 @@ public class UiFlowTest {
     @Test public void pauseResumeStopsClock() {
         UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
-        h.click("Güne başla"); h.settle();
+        h.startDay();
         h.run(4000);
         GameEngine e = h.engine();
         float t0 = e.getElapsed();
@@ -169,7 +185,7 @@ public class UiFlowTest {
     @Test public void backgroundingAutoPausesAndBackKeyTogglesPause() {
         UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
-        h.click("Güne başla"); h.settle();
+        h.startDay();
         h.run(3000);
         GameEngine e = h.engine();
         h.controller.pause();
@@ -201,7 +217,7 @@ public class UiFlowTest {
     @Test public void rotationAndStopStartDoNotCrash() {
         UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
-        h.click("Güne başla"); h.settle();
+        h.startDay();
         h.run(2500);
         h.controller.configurationChange();
         h.idle(300);
@@ -217,7 +233,7 @@ public class UiFlowTest {
     @Test public void saveAndContinueAcrossRecreate() {
         UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
-        h.click("Güne başla"); h.settle();
+        h.startDay();
         playDay(h, 400_000);
         h.run(20_000);
         assertTrue(h.screen() instanceof SummaryScreen);
@@ -250,7 +266,7 @@ public class UiFlowTest {
         assertTrue(h.screen() instanceof MenuScreen);
         h.click("Devam et"); h.settle();
         assertTrue(h.screen() instanceof BriefingScreen);
-        h.click("Güne başla"); h.settle();
+        h.startDay();
         h.run(5000);
         assertTrue(h.screen() instanceof GameScreen);
     }

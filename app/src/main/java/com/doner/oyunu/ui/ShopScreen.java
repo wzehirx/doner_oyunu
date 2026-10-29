@@ -234,7 +234,7 @@ public final class ShopScreen extends Screen {
                     int lv = s.level(u.id);
                     boolean can = Texts.upgradeBuyable(u, s);
                     name.setText(u.name + "  ·  Seviye " + lv + " / " + u.maxLevel());
-                    desc.setText(u.description);
+                    desc.setText(Texts.upgradeDescription(u, s));
                     String st = Texts.upgradeStatus(u, s);
                     status.setText(st);
                     infoBox.setContentDescription(Texts.upgradeInfo(u, s) + " " + st + ".");

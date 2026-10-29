@@ -16,6 +16,7 @@ import com.doner.oyunu.engine.GameEngine;
 import com.doner.oyunu.engine.Ingredient;
 import com.doner.oyunu.engine.Order;
 import com.doner.oyunu.engine.Station;
+import com.doner.oyunu.engine.Step;
 import com.doner.oyunu.engine.Upgrades;
 
 import org.junit.Test;
@@ -44,7 +45,7 @@ public class FixesUiTest {
     private UiHarness game() {
         UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
-        h.click("Güne başla"); h.settle();
+        h.startDay();
         return h;
     }
 
@@ -54,16 +55,6 @@ public class FixesUiTest {
         while (e.getOrders().isEmpty() && t < 30000) { h.run(100); t += 100; }
         assertFalse(e.getOrders().isEmpty());
         return e.getOrders().get(0);
-    }
-
-    /** Siparişi seçip verilen adım sayısını arayüzden (istasyon düğmeleriyle) tamamlar. */
-    private static void advance(UiHarness h, Order o, int steps) {
-        for (int i = 0; i < steps; i++) {
-            h.stationTile(o.nextStep().station).performClick();
-            h.run(200);
-            int guard = 0;
-            while (o.isRunning() && guard++ < 200) h.run(100);
-        }
     }
 
     private static boolean insideScrollView(View v) {
@@ -113,16 +104,25 @@ public class FixesUiTest {
     }
 
     @Test public void oneTapBuysAllMissingIngredientsOfTheStep() {
-        UiHarness h = game();
+        // Hatay dürüm: "Harç ve döner ekle" adımı iki malzeme ister (lahmacun harcı + et döner)
+        UiHarness h = new UiHarness(false);
+        h.click("Yeni oyun"); h.settle();
+        h.act.save.day = 6;
+        h.act.save.money = 20_000;
+        h.startDay();
         GameEngine e = h.engine();
-        Order o = firstOrder(h);
+        e.setSpawning(false);
+        Order o = e.spawnOrder(java.util.Arrays.asList("hatay_durum"), new ArrayList<String>());
+        assertNotNull(o);
+        h.run(300);
         h.orderCard(o).performClick(); h.run(100);
-        advance(h, o, 2); // ekmek ısıt, döneri dilimle -> sıradaki sos adımı 3 malzeme ister
-        assertEquals(Station.SOS, o.nextStep().station);
-        for (String id : new ArrayList<>(o.nextStep().needs.keySet())) e.getSave().inventory.set(id, 0);
+        Step harc = o.getLine(0).step(1);
+        assertEquals("Harç ve döner ekle", harc.name);
+        assertEquals(Station.DONER, harc.station);
+        for (String id : new ArrayList<>(harc.needs.keySet())) e.getSave().inventory.set(id, 0);
+        h.stationTile(Station.DONER).performClick(); h.run(200);
         List<Ingredient> missing = e.missingIngredients(o.id);
         assertTrue("birden çok eksik", missing.size() >= 2);
-        h.stationTile(Station.SOS).performClick(); h.run(200);
         View b = h.findLabel("Acil al");
         assertNotNull(b);
         String d = UiHarness.label(b);
@@ -134,7 +134,7 @@ public class FixesUiTest {
         assertEquals("tek dokunuşla hepsi alınmalı", money - cost, e.getMoney());
         assertTrue(e.missingIngredients(o.id).isEmpty());
         assertNull("eksik kalmayınca düğme kapanır", h.findLabel("Acil al"));
-        h.stationTile(Station.SOS).performClick(); h.run(200);
+        h.stationTile(Station.DONER).performClick(); h.run(200);
         assertTrue("adım başlamalı", o.isRunning());
     }
 

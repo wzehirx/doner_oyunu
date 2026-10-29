@@ -85,6 +85,7 @@ public class MainActivity extends Activity {
         s.musicVolume = old.musicVolume;
         s.sfxVolume = old.sfxVolume;
         s.tutorialDone = old.tutorialDone;
+        s.apprenticeAnnounce = old.apprenticeAnnounce;
         save = s;
         prefs.edit().putBoolean(KEY_STARTED, true).apply();
         saveNow();

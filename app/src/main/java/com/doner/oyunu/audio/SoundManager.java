@@ -9,9 +9,14 @@ import android.media.SoundPool;
 import android.os.Handler;
 import android.os.Looper;
 
+import android.os.SystemClock;
+
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 
 /**
@@ -25,6 +30,13 @@ public final class SoundManager {
             "sfx_warning", "sfx_customer_happy", "sfx_customer_angry", "sfx_star_up", "sfx_star_down",
             "sfx_day_start", "sfx_day_end", "sfx_buy", "sfx_tap", "sfx_tick"
     };
+
+    /** Döngülenebilen istasyon sesleri: SoundPool döngüsüyle adım süresince çalar. */
+    public static final String[] LOOPED = {"sfx_grill_sizzle", "sfx_pour", "sfx_wrap"};
+    /** Darbeli istasyon sesleri: adım süresince rastgele aralıkla tekrarlanır. */
+    public static final String[] PULSED = {"sfx_slice", "sfx_sauce", "sfx_bread_warm"};
+    /** Darbeli tekrar aralığı (sn), perde ve ses rastgeleliği (şartname §5). */
+    static final float PULSE_MIN_S = 0.35f, PULSE_MAX_S = 0.6f, PULSE_RATE_JITTER = 0.05f, PULSE_VOL_JITTER = 0.08f;
 
     /** Konuşma / başka bir uygulamanın kısa ses odağı sırasında müziğin çarpanı (kısma). */
     static final float DUCK_FACTOR = 0.25f;
@@ -42,6 +54,8 @@ public final class SoundManager {
     private final Map<String, Integer> ids = new HashMap<>();
     private final Set<Integer> loaded = new HashSet<>();
     private SoundPool pool;
+    /** Ses çıkışı (SoundPool); testte yerine konabilir. */
+    private Sink sink = new PoolSink();
     private float sfxVolume = 1f;
     private float musicVolume = 0.7f;
 
@@ -136,14 +150,154 @@ public final class SoundManager {
     public void play(String name) { play(name, 0f); }
 
     /** pan: -1 (tam sol) ... +1 (tam sağ). */
-    public void play(String name, float pan) {
+    public void play(String name, float pan) { play(name, pan, 1f); }
+
+    /** volume: 0..1 ek çarpan (ör. çırak sesleri için 0,6). */
+    public void play(String name, float pan, float volume) {
         if (pool == null || sfxVolume <= 0f) return;
-        Integer id = ids.get(name);
-        if (id == null || !loaded.contains(id)) return;
+        sink.start(name, left(pan, volume), right(pan, volume), 1f, 0);
+    }
+
+    private float left(float pan, float volume) {
         float p = Math.max(-1f, Math.min(1f, pan));
-        float left = sfxVolume * (p > 0 ? 1f - p * 0.85f : 1f);
-        float right = sfxVolume * (p < 0 ? 1f + p * 0.85f : 1f);
-        try { pool.play(id, left, right, 1, 0, 1f); } catch (Exception ignored) { }
+        return sfxVolume * clamp(volume) * (p > 0 ? 1f - p * 0.85f : 1f);
+    }
+
+    private float right(float pan, float volume) {
+        float p = Math.max(-1f, Math.min(1f, pan));
+        return sfxVolume * clamp(volume) * (p < 0 ? 1f + p * 0.85f : 1f);
+    }
+
+    // ------------------------------------------------------------------ istasyon sesleri (adım süresince)
+    /** SoundPool çıkışı soyutlaması (testte yerine konabilir). */
+    interface Sink {
+        /** Akış kimliği (0: çalınamadı). */
+        int start(String name, float left, float right, float rate, int loop);
+        void stop(int stream);
+    }
+
+    private final class PoolSink implements Sink {
+        @Override public int start(String name, float left, float right, float rate, int loop) {
+            SoundPool p = pool;
+            if (p == null || name == null) return 0;
+            Integer id = ids.get(name);
+            if (id == null || !loaded.contains(id)) return 0;
+            try { return p.play(id, left, right, 1, loop, rate); } catch (Exception e) { return 0; }
+        }
+
+        @Override public void stop(int stream) {
+            SoundPool p = pool;
+            if (p == null || stream == 0) return;
+            try { p.stop(stream); } catch (Exception ignored) { }
+        }
+    }
+
+    void setSinkForTest(Sink s) { sink = s; }
+
+    public static boolean isLooped(String name) {
+        for (String n : LOOPED) if (n.equals(name)) return true;
+        return false;
+    }
+
+    public static boolean isPulsed(String name) {
+        for (String n : PULSED) if (n.equals(name)) return true;
+        return false;
+    }
+
+    private final class Job {
+        final String key, name;
+        final float pan, volume;
+        long endAt;          // uptime ms
+        long remainingMs;    // duraklatılmışken kalan
+        int stream;
+        boolean running;
+        Runnable pulse, stopper;
+
+        Job(String key, String name, float pan, float volume, long ms) {
+            this.key = key; this.name = name; this.pan = pan; this.volume = volume; this.remainingMs = ms;
+        }
+    }
+
+    private final Handler loopHandler = new Handler(Looper.getMainLooper());
+    private final Map<String, Job> jobs = new HashMap<>();
+    private final Random rnd = new Random();
+    private boolean loopsPaused;
+
+    /**
+     * Bir istasyon sesini {@code seconds} süresince çalar. Döngülenebilen sesler SoundPool döngüsüyle sürer,
+     * darbeli sesler 0,35-0,6 sn aralıkla (±%5 perde, ±%8 ses) tekrarlanır. Aynı anahtar yeniden başlarsa eskisi kesilir.
+     * {@link #stopLoop} ya da süre dolunca durur; {@link #pauseLoops} ile bekletilir.
+     */
+    public void startLoop(String key, String name, float pan, float volume, float seconds) {
+        if (key == null || name == null) return;
+        stopLoop(key);
+        if (pool == null || sfxVolume <= 0f || seconds <= 0f) return;
+        Job j = new Job(key, name, pan, volume, (long) (seconds * 1000f));
+        jobs.put(key, j);
+        if (!loopsPaused) begin(j);
+    }
+
+    private void begin(final Job j) {
+        j.running = true;
+        j.endAt = SystemClock.uptimeMillis() + j.remainingMs;
+        j.stopper = new Runnable() { @Override public void run() { stopLoop(j.key); } };
+        loopHandler.postDelayed(j.stopper, j.remainingMs);
+        if (isLooped(j.name)) {
+            j.stream = sink.start(j.name, left(j.pan, j.volume), right(j.pan, j.volume), 1f, -1);
+        } else {
+            j.pulse = new Runnable() {
+                @Override public void run() {
+                    if (!j.running) return;
+                    float rate = 1f + (rnd.nextFloat() * 2f - 1f) * PULSE_RATE_JITTER;
+                    float vol = j.volume * (1f + (rnd.nextFloat() * 2f - 1f) * PULSE_VOL_JITTER);
+                    sink.start(j.name, left(j.pan, vol), right(j.pan, vol), rate, 0);
+                    long gap = (long) ((PULSE_MIN_S + rnd.nextFloat() * (PULSE_MAX_S - PULSE_MIN_S)) * 1000f);
+                    if (SystemClock.uptimeMillis() + gap < j.endAt) loopHandler.postDelayed(this, gap);
+                }
+            };
+            j.pulse.run();
+        }
+    }
+
+    private void halt(Job j) {
+        j.running = false;
+        if (j.stopper != null) loopHandler.removeCallbacks(j.stopper);
+        if (j.pulse != null) loopHandler.removeCallbacks(j.pulse);
+        if (j.stream != 0) sink.stop(j.stream);
+        j.stream = 0;
+    }
+
+    public void stopLoop(String key) {
+        Job j = jobs.remove(key);
+        if (j != null) halt(j);
+    }
+
+    public void stopAllLoops() {
+        for (Job j : new ArrayList<>(jobs.values())) halt(j);
+        jobs.clear();
+    }
+
+    /** Duraklatma: sesler susar, kalan süreleri saklanır ({@link #resumeLoops} ile sürer). */
+    public void pauseLoops() {
+        loopsPaused = true;
+        long now = SystemClock.uptimeMillis();
+        for (Job j : new ArrayList<>(jobs.values())) {
+            if (j.running) j.remainingMs = Math.max(0L, j.endAt - now);
+            halt(j);
+            if (j.remainingMs <= 0L) jobs.remove(j.key);
+        }
+    }
+
+    public void resumeLoops() {
+        loopsPaused = false;
+        for (Job j : new ArrayList<>(jobs.values())) if (!j.running) begin(j);
+    }
+
+    /** Çalışan (duraklatılmamış) istasyon sesi sayısı; testler içindir. */
+    public int activeLoopCount() {
+        int n = 0;
+        for (Job j : jobs.values()) if (j.running) n++;
+        return n;
     }
 
     /** Gecikmeli çalma (art arda efektler için). */
@@ -153,7 +307,11 @@ public final class SoundManager {
         }, delayMs);
     }
 
-    public void cancelScheduled() { sfxHandler.removeCallbacksAndMessages(null); }
+    public void cancelScheduled() {
+        sfxHandler.removeCallbacksAndMessages(null);
+        stopAllLoops();
+        loopsPaused = false;
+    }
 
     // ------------------------------------------------------------------ müzik
     public void playMusic(String name) {
@@ -244,6 +402,7 @@ public final class SoundManager {
     public void pause() {
         paused = true;
         sfxHandler.removeCallbacksAndMessages(null);
+        pauseLoops();
         if (music != null) try { music.pause(); } catch (Exception ignored) { }
         focus.abandon();
         if (pool != null) try { pool.autoPause(); } catch (Exception ignored) { }
@@ -264,6 +423,8 @@ public final class SoundManager {
         focus.abandon();
         handler.removeCallbacksAndMessages(null);
         sfxHandler.removeCallbacksAndMessages(null);
+        stopAllLoops();
+        loopHandler.removeCallbacksAndMessages(null);
         fadeToken++;
         for (MediaPlayer old : new java.util.ArrayList<>(retiring)) {
             try { old.stop(); } catch (Exception ignored) { }

@@ -28,7 +28,7 @@ public class GameDetailTest {
     private UiHarness game() {
         UiHarness h = new UiHarness(false);
         h.click("Yeni oyun"); h.settle();
-        h.click("Güne başla"); h.settle();
+        h.startDay();
         return h;
     }
 
@@ -43,7 +43,8 @@ public class GameDetailTest {
         h.click("Geri"); h.settle();
         h.click("Yeni oyun"); h.settle(); check(h, "Brifing");
         h.click("Markete git"); h.settle(); check(h, "Market");
-        h.click("Güne başla"); h.settle(); check(h, "Oyun");
+        h.click("Güne başla"); h.settle(); check(h, "Oyun(hazırlık)");
+        h.skipPrep(); check(h, "Oyun");
         h.run(100);
         h.click("Duraklat"); h.run(100);
         View t = (View) h.field(h.screen(), "overlayTitle");

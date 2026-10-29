@@ -145,4 +145,91 @@ public class TextsTest {
         assertTrue(h.size() >= 6);
         for (String[] s : h) { assertFalse(s[0].isEmpty()); assertTrue(s[1].length() > 30); }
     }
+
+    @Test public void summaryShowsWasteMistakesAndPrepRows() {
+        DaySummary d = new DaySummary();
+        d.day = 3; d.delivered = 4; d.rent = 100; d.moneyAfter = 900; d.startStars = 3; d.endStars = 3.1;
+        d.wastedPortions = 7; d.wastedCost = 210; d.mistakes = 2; d.perfect = 5; d.prepBatches = 3; d.apprenticeTasks = 9;
+        StringBuilder sb = new StringBuilder();
+        for (String[] r : Texts.summaryRows(d)) sb.append(r[0]).append('=').append(r[1]).append(';');
+        String t = sb.toString();
+        assertTrue(t, t.contains("İsraf=7 porsiyon hazır malzeme atıldı, 210 lira"));
+        assertTrue(t, t.contains("Hatalı malzemeli sipariş=2"));
+        assertTrue(t, t.contains("Kusursuz malzemeli sipariş=5"));
+        assertTrue(t, t.contains("Hazırlık=3 parti"));
+        assertTrue(t, t.contains("Çırağın yaptığı iş=9"));
+        d.wastedPortions = 0; d.wastedCost = 0;
+        sb.setLength(0);
+        for (String[] r : Texts.summaryRows(d)) sb.append(r[0]).append('=').append(r[1]).append(';');
+        assertTrue(sb.toString(), sb.toString().contains("İsraf=yok"));
+        d.prepBatches = 0;
+        for (String[] r : Texts.summaryRows(d)) assertFalse("hazırlık yapılmadıysa israf satırı yok", r[0].equals("İsraf"));
+    }
+
+    @Test public void helpExplainsPrepToppingsAndApprentice() {
+        StringBuilder sb = new StringBuilder();
+        for (String[] s : Texts.helpSections()) sb.append(s[0]).append(' ').append(s[1]).append(' ');
+        String all = sb.toString();
+        for (String k : new String[]{"hazırlık aşamasına", "Dükkânı aç", "Hazırlık yapmadan aç", "Hedefi oku", "Tamam", "israf", "kalem",
+                "Siparişi paketle", "Çırak", "Seviye 1", "Seviye 3", "çırak duyurularını"}) {
+            assertTrue("yardımda geçmeli: " + k, all.contains(k));
+        }
+        assertTrue(Texts.quickHelp().contains("Hazırlık"));
+        assertTrue(Texts.quickHelp().contains("Hedefi oku"));
+    }
+
+    @Test public void apprenticeMarketTextCoversThreeLevels() {
+        SaveData s = SaveData.newGame();
+        Upgrade cirak = Catalog.upgrade("cirak");
+        String d = Texts.upgradeDescription(cirak, s);
+        assertTrue(d, d.contains("Seviye 1") && d.contains("Seviye 2") && d.contains("Seviye 3"));
+        assertFalse(d.contains("Şu an seviye"));
+        s.upgradeLevels.put("cirak", 2);
+        assertTrue(Texts.upgradeDescription(cirak, s).contains("Şu an seviye 2"));
+        assertEquals(Catalog.upgrade("doner_makinesi").description, Texts.upgradeDescription(Catalog.upgrade("doner_makinesi"), s));
+    }
+
+    @Test public void lineDescriptionsExplainStatesAndLocks() {
+        SaveData s = SaveData.newGame();
+        GameEngine e = new GameEngine(5, s);
+        e.setSpawning(false);
+        e.startDay();
+        Order o = e.spawnOrder(java.util.Arrays.asList("ekmek_arasi", "ayran"), java.util.Arrays.asList("soğansız"));
+        s.inventory.add("ayran", 5);
+        OrderLine l0 = o.getLine(0), l1 = o.getLine(1);
+        String d0 = Texts.lineDescription(e, o, l0, false);
+        assertTrue(d0, d0.contains("Sipariş " + o.getPosition() + ", kalem 1 / 2: Ekmek arası döner"));
+        assertTrue(d0, d0.contains("Ekmeği ısıt bekliyor, Ekmek ısıtıcı"));
+        assertTrue(d0, d0.contains("Malzemeleri ekle kilitli, önce kalemin diğer adımları bitmeli"));
+        assertTrue(d0, d0.contains("seçmek için çift dokun"));
+        assertTrue(Texts.lineDescription(e, o, l0, true).contains("Bu kalem seçili"));
+        assertTrue(Texts.lineSteps(e, o, l0).contains("– Malzemeleri ekle  (kilitli)"));
+        assertTrue(Texts.packDescription(o).contains("kilitli"));
+        assertTrue(Texts.packText(o).contains("2 kalem bekliyor"));
+        assertEquals(StartResult.STARTED, e.startStep(o.id, 1, Station.ICECEK.id));
+        assertTrue(Texts.lineDescription(e, o, l1, false).contains("Ayranı doldur sürüyor"));
+        assertTrue(Texts.lineSteps(e, o, l1).startsWith("▶ Ayranı doldur"));
+        for (int i = 0; i < 40; i++) e.tick(0.1f);
+        assertTrue(Texts.lineDescription(e, o, l1, false).contains("Kalem hazır"));
+        assertTrue(Texts.orderDescription(o, true, null).contains("İstek: soğansız"));
+        assertTrue(Texts.orderDescription(o, true, null).contains("2 kalem"));
+    }
+
+    @Test public void jobLabelsNameWhoDoesWhat() {
+        SaveData s = SaveData.newGame();
+        s.upgradeLevels.put("cirak", 1);
+        GameEngine e = new GameEngine(5, s);
+        e.beginPrep();
+        assertEquals(PrepResult.STARTED, e.startPrepDoner("et_doner"));
+        e.tick(0.2f);
+        boolean player = false, helper = false;
+        for (ActiveStep a : e.getActiveSteps()) {
+            String l = Texts.jobLabel(e, a);
+            if (a.isApprentice()) { helper = true; assertTrue(l, l.startsWith("Çırak: ")); }
+            else { player = true; assertEquals("Sen: döner dilimleme", l); }
+        }
+        assertTrue(player);
+        for (int i = 0; i < 20 && !helper; i++) e.tick(0.5f);
+        for (ActiveStep a : e.getActiveSteps()) if (a.isApprentice()) { helper = true; assertTrue(Texts.jobLabel(e, a), Texts.jobLabel(e, a).startsWith("Çırak: ")); }
+    }
 }

@@ -97,6 +97,18 @@ public final class SettingsScreen extends Screen {
             }
         });
 
+        addSwitch(body, "Çırak duyuruları", s.apprenticeAnnounce, new CompoundButton.OnCheckedChangeListener() {
+            @Override public void onCheckedChanged(CompoundButton b, boolean on) {
+                s.apprenticeAnnounce = on;
+                a.saveNow();
+                a.sound.play("sfx_tap");
+                a.speaker.announce(on ? "Çırak duyuruları açık" : "Çırak duyuruları kapalı", true);
+            }
+        });
+        TextView apprNote = Ui.label(ctx, "Açıkken çırağın yaptığı işler sesli duyurulur, örneğin çırak ayran dolduruyor. Çırak yine de çalışır ve ekranda görünür.", 15, Theme.MUTED, false);
+        apprNote.setFocusable(true);
+        body.addView(apprNote, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 4, 0, 4, 8));
+
         root.addView(button("Geri", Ui.PRIMARY, new Runnable() {
             @Override public void run() { a.saveNow(); a.show(new MenuScreen(a)); }
         }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 8, 0, 0));

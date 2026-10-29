@@ -125,6 +125,19 @@ final class UiHarness {
         return l;
     }
 
+    /** Brifing/Market'ten "Güne başla" der, hazırlık aşamasını atlar ("Hazırlık yapmadan aç"): gün çalışmaya başlar. */
+    void startDay() {
+        click("Güne başla");
+        settle();
+        skipPrep();
+    }
+
+    /** Hazırlık aşamasındaki ekranda "Hazırlık yapmadan aç" düğmesine dokunur. */
+    void skipPrep() {
+        click("Hazırlık yapmadan aç");
+        idle(100);
+    }
+
     /** Sahne geçişini bitir (animasyon + onEnter gecikmesi). */
     void settle() { idle(800); }
 

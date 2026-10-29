@@ -25,17 +25,15 @@ final class UiHarness {
     final ActivityController<MainActivity> controller;
     final MainActivity act;
 
-    /** Sanal kare saati (ns). Robolectric'in Choreographer'ı gerçek vsync gibi davranmadığından kareleri biz sürüyoruz. */
-    private long frameNanos = 1_000_000_000L;
-    private final boolean manualFrames;
+    // Robolectric PAUSED modunda Choreographer her idle() çağrısında tam BİR kare çalıştırır (kare zamanı = sanal uptime).
+    // Duraksız modda ise 1 ms aralıklı kareler sonsuz döngüye girer; bu yüzden her zaman paused kullanılır.
 
     UiHarness() { this(false); }
 
-    /** animations=false: geçiş animasyonları kapalı, Choreographer duraklı, oyun kareleri elle sürülür. */
+    /** animations=false: geçiş animasyonları kapalı (animasyonlu mod: kare başına bir ilerleme). */
     UiHarness(boolean animations) {
-        manualFrames = !animations;
+        org.robolectric.shadows.ShadowChoreographer.setPaused(true);
         if (!animations) {
-            org.robolectric.shadows.ShadowChoreographer.setPaused(true);
             android.provider.Settings.Global.putFloat(org.robolectric.RuntimeEnvironment.getApplication().getContentResolver(),
                     android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 0f);
         }
@@ -54,10 +52,6 @@ final class UiHarness {
         while (left > 0) {
             long d = Math.min(16, left);
             ShadowLooper.idleMainLooper(d, TimeUnit.MILLISECONDS);
-            if (manualFrames && act.currentScreen() instanceof GameScreen) {
-                frameNanos += d * 1_000_000L;
-                ((GameScreen) act.currentScreen()).doFrame(frameNanos);
-            }
             left -= d;
         }
     }

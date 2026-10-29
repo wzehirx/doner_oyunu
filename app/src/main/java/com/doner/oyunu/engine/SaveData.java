@@ -66,6 +66,13 @@ public final class SaveData {
         return sb.toString();
     }
 
+    /** NaN/Infinity kabul etmez (bozuk kayıt oyunu kilitlemesin); NumberFormatException fırlatır, çağıran satırı atlar. */
+    private static double num(String v) {
+        double d = Double.parseDouble(v);
+        if (Double.isNaN(d) || Double.isInfinite(d)) throw new NumberFormatException(v);
+        return d;
+    }
+
     /** Hataya toleranslı yükleme: bozuk/eksik satırlar atlanır, null/boş = yeni oyun. */
     public static SaveData parse(String text) {
         if (text == null || text.trim().isEmpty()) return newGame();
@@ -80,7 +87,7 @@ public final class SaveData {
                 if (k.equals("day")) s.day = Math.max(1, Integer.parseInt(v));
                 else if (k.equals("bestDay")) s.bestDay = Math.max(1, Integer.parseInt(v));
                 else if (k.equals("money")) s.money = Math.max(0, Integer.parseInt(v));
-                else if (k.equals("stars")) s.stars = Math.max(1.0, Math.min(5.0, Double.parseDouble(v)));
+                else if (k.equals("stars")) s.stars = Math.max(1.0, Math.min(5.0, num(v)));
                 else if (k.startsWith("stock.")) {
                     String id = k.substring(6);
                     if (Catalog.ingredient(id) != null) s.inventory.set(id, Integer.parseInt(v));
@@ -88,12 +95,12 @@ public final class SaveData {
                     String id = k.substring(3);
                     Upgrade u = Catalog.upgrade(id);
                     if (u != null) s.upgradeLevels.put(id, Math.max(0, Math.min(u.maxLevel(), Integer.parseInt(v))));
-                } else if (k.equals("tempo")) s.setTempo(Double.parseDouble(v));
+                } else if (k.equals("tempo")) s.setTempo(num(v));
                 else if (k.equals("speech")) s.speechOn = v.equals("1");
-                else if (k.equals("speechRate")) s.speechRate = Math.max(0.5, Math.min(2.0, Double.parseDouble(v)));
+                else if (k.equals("speechRate")) s.speechRate = Math.max(0.5, Math.min(2.0, num(v)));
                 else if (k.equals("vibration")) s.vibration = v.equals("1");
-                else if (k.equals("music")) s.musicVolume = Math.max(0, Math.min(1, Double.parseDouble(v)));
-                else if (k.equals("sfx")) s.sfxVolume = Math.max(0, Math.min(1, Double.parseDouble(v)));
+                else if (k.equals("music")) s.musicVolume = Math.max(0, Math.min(1, num(v)));
+                else if (k.equals("sfx")) s.sfxVolume = Math.max(0, Math.min(1, num(v)));
                 else if (k.equals("tutorial")) s.tutorialDone = v.equals("1");
             } catch (NumberFormatException ignored) {
                 // bozuk satır atlanır

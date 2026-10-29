@@ -21,6 +21,8 @@ final class A11yAudit {
     int checkedInteractive;
     /** Denetlenen TalkBack özel eylemi sayısı (istasyon / hazırlık düğmeleri). */
     int checkedActions;
+    /** Denetlenen seçili-durumlu görünüm sayısı (v0.7 oyun akışı seçenekleri). */
+    int checkedSelected;
 
     static A11yAudit run(UiHarness h, String where) {
         A11yAudit a = new A11yAudit();
@@ -63,6 +65,11 @@ final class A11yAudit {
             if (interactive && important) {
                 a.checkedInteractive++;
                 if (lab.isEmpty()) a.errors.add(id + " etiketsiz");
+                // v0.7: seçim durumu (ör. Ayarlar > Oyun akışı) yalnızca renkle değil, etikette de söylenmeli
+                if (v.isSelected() && !(v instanceof CompoundButton)) {
+                    a.checkedSelected++;
+                    if (!lab.contains("seçili")) a.errors.add(id + " seçili ama etiketi 'seçili' demiyor (renge bağımlı durum)");
+                }
                 if (ENGLISH.matcher(lab).find()) a.errors.add(id + " İngilizce etiket olabilir");
                 if (v.isClickable()) {
                     float w = v.getWidth() / density, hh = v.getHeight() / density;

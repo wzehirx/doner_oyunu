@@ -120,6 +120,7 @@ public class FlowModeUiTest {
         assertNotNull(h.findLabel("Rahat, seçmek için dokun"));
         assertNotNull(h.findLabel("Gerçekçi, seçmek için dokun"));
         audit(h, "Ayarlar (akış)");
+        assertEquals("seçili akış düğmesi denetlendi", 1, A11yAudit.run(h, "Ayarlar (seçili)").checkedSelected);
         h.click("Rahat, seçmek için dokun");
         assertEquals(FlowMode.RAHAT, h.act.save.flowMode);
         assertTrue(h.act.save.flowChosen);

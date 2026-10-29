@@ -21,8 +21,13 @@ public final class Campaign {
     public final List<DaySummary> results = new ArrayList<>();
     /** v0.6 denge kuralları (karşılaştırma ölçümü için; bkz. GameEngine(seed, save, true)). */
     public boolean v06Balance;
-    /** İnsan benzeri bot (panel açmak ayrı tepki, tepki ±%20). */
+    /**
+     * İnsan benzeri bot (panel açmak ayrı tepki, tepki ±%20) ve insan gibi alışveriş: önce mutfak aletleri, çırak ve klima;
+     * müşteri sayısını artıran restoran öğelerini (tabela, müzik, dekor, masa) yalnızca önceki gün en çok 1 müşteri
+     * kaçırdıysa alır (yetişemeyen oyuncu dükkânı kalabalıklaştırmaz).
+     */
     public boolean humanLike;
+    static final String[] CROWD = {"tabela", "muzik", "dekor", "masa"};
     /** Toplam dokunuş / teslim (TestBot ölçütü), kayıp müşteri ve teslim sayıları (tüm denemeler). */
     public long taps, delivered, lost, v04Taps;
 
@@ -70,6 +75,8 @@ public final class Campaign {
         return -1;
     }
 
+    private int lastLost() { return results.isEmpty() ? 0 : results.get(results.size() - 1).lost; }
+
     /** Ölçüt: teslim edilen sipariş başına oyuncu dokunuşu. */
     public double tapsPerOrder() { return delivered == 0 ? 0 : taps / (double) delivered; }
 
@@ -92,6 +99,7 @@ public final class Campaign {
                 int lv = save.level(id);
                 int price = u.priceForNext(lv);
                 if (price < 0 || save.day < u.unlockDayForNext(lv)) continue;
+                if (humanLike && java.util.Arrays.asList(CROWD).contains(id) && lastLost() > 1) continue;
                 if (save.money - price >= reserve) {
                     if (Shop.buyUpgrade(save, id) == Shop.BuyResult.OK) { bought = true; break; }
                 } else if (id.equals("cirak")) {

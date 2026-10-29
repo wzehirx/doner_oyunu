@@ -86,6 +86,8 @@ public class MainActivity extends Activity {
         s.sfxVolume = old.sfxVolume;
         s.tutorialDone = old.tutorialDone;
         s.apprenticeAnnounce = old.apprenticeAnnounce;
+        s.flowMode = old.flowMode; // oyun akışı bir ayardır: yeni oyunda korunur
+        s.flowChosen = old.flowChosen;
         save = s;
         prefs.edit().putBoolean(KEY_STARTED, true).apply();
         saveNow();

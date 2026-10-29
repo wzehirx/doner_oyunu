@@ -4,6 +4,7 @@ import com.doner.oyunu.engine.ActiveStep;
 import com.doner.oyunu.engine.Catalog;
 import com.doner.oyunu.engine.DayConfig;
 import com.doner.oyunu.engine.DaySummary;
+import com.doner.oyunu.engine.FlowMode;
 import com.doner.oyunu.engine.GameEngine;
 import com.doner.oyunu.engine.Ingredient;
 import com.doner.oyunu.engine.Narrator;
@@ -437,7 +438,7 @@ public final class Texts {
         }
         String newIng = Narrator.newIngredientsText(save.day);
         if (!newIng.isEmpty()) l.add(newIng);
-        String newSize = Narrator.newSizesText(save.day);
+        String newSize = Narrator.newSizesText(save.day, save.flowMode);
         if (!newSize.isEmpty()) l.add(newSize);
         List<String> ups = new ArrayList<>();
         for (Upgrade u : Catalog.upgrades()) {
@@ -453,9 +454,74 @@ public final class Texts {
         if (rec > 0) l.add("Stoğun bugün için yetersiz olabilir. Önerilen malzemelerin maliyeti " + rec + " lira. Markete uğramanı öneririm.");
         else l.add("Stoğun bugün için yeterli görünüyor.");
         l.add("Güne başlayınca önce hazırlık aşaması gelir: döner dilimle, ayran doldur, salata ve sos tepsisi hazırla. Süre akmaz; hazır olunca Dükkânı aç ya da Hazırlık yapmadan aç.");
-        l.add("Her istasyon düğmesinin seçenekleri vardır: TalkBack Eylemleri menüsünden seç ya da düğmeye dokununca açılan seçenekler panelinden seç. Döner boyunu ve eklenecek malzemeleri bu seçeneklerle belirlersin.");
-        if (save.day == 1 && !save.tutorialDone) l.add("Öğretici açık: hazırlık yapmayı, sipariş seçmeyi, istasyon seçeneklerini ve TalkBack Eylemlerini, boy seçmeyi, malzemeleri tek tek eklemeyi ve teslim etmeyi adım adım sesle öğreneceksin.");
+        l.add(flowBriefingLine(save));
+        l.add("Her istasyon düğmesinin seçenekleri vardır: TalkBack Eylemleri menüsünden seç ya da düğmeye dokununca açılan seçenekler panelinden seç. "
+                + (save.flowMode == FlowMode.RAHAT ? "Tek işlem varsa dokununca hemen başlar."
+                : "Döner boyunu ve eklenecek malzemeleri bu seçeneklerle belirlersin."));
+        if (save.day == 1 && !save.tutorialDone) l.add("Öğretici açık: hazırlık yapmayı, sipariş seçmeyi, istasyon seçeneklerini ve TalkBack Eylemlerini, "
+                + tutorialFlowPart(save.flowMode) + " ve teslim etmeyi adım adım sesle öğreneceksin.");
         return l;
+    }
+
+    // ------------------------------------------------------------------ oyun akışı (v0.7)
+    /** Brifing satırı: "Oyun akışı: Dengeli. <açıklama> Oyun akışı düğmesiyle ya da Ayarlardan değiştirebilirsin." */
+    public static String flowBriefingLine(SaveData save) {
+        String t = save.flowMode.spoken();
+        if (!save.flowChosen) t = "Seçim: " + t + " Rahat, Dengeli ya da Gerçekçi; istediğini seç.";
+        return t + " Oyun akışı düğmesiyle ya da Ayarlardan, oyun sırasında da Duraklat menüsünden değiştirebilirsin.";
+    }
+
+    /** "Oyun akışı: Dengeli" düğmesi etiketi (sıradaki akışa geçer). */
+    public static String flowButtonLabel(FlowMode m) { return "Oyun akışı: " + m.displayName; }
+
+    /** Düğme contentDescription: durum + ne yapar. */
+    public static String flowButtonDescription(FlowMode m) {
+        return "Oyun akışı: " + m.displayName + ". Dokununca " + m.next().displayName + " akışına geçer. " + m.description;
+    }
+
+    /** Ayarlardaki seçenek düğmesi: "Dengeli, seçili. <açıklama>" */
+    public static String flowOptionDescription(FlowMode m, boolean selected) {
+        return m.displayName + (selected ? ", seçili. " : ", seçmek için dokun. ") + m.description
+                + (m == FlowMode.DEFAULT ? " Önerilen." : "");
+    }
+
+    private static String tutorialFlowPart(FlowMode m) {
+        switch (m) {
+            case RAHAT: return "malzemelerin ve boyun otomatik eklendiğini";
+            case DENGELI: return "varsayılan malzemeleri tek dokunuşla eklemeyi, istek farkını yapmayı";
+            default: return "boy seçmeyi, malzemeleri tek tek eklemeyi";
+        }
+    }
+
+    /** Akışa göre döner boyu öğretici metni (Gerçekçi = {@link #TUT_SIZE}). */
+    public static String tutSize(FlowMode m) {
+        switch (m) {
+            case RAHAT: return "Rahat akışta döner boyunu sistem seçer: müşterinin istediği boy otomatik dilimlenir. Döner makinesine bir kez dokunman yeter.";
+            case DENGELI: return "Dengeli akışta tam ekmek otomatik dilimlenir; döner makinesine bir kez dokunman yeter. "
+                    + "Müşteri yarım ekmek ya da duble isterse seçenekler açılır ve boyu sen seçersin. Yanlış boy hatalı sipariş sayılır.";
+            default: return TUT_SIZE;
+        }
+    }
+
+    /** Akışa göre malzeme öğretici metni (Gerçekçi = {@link #TUT_TOPPING}). */
+    public static String tutTopping(FlowMode m) {
+        switch (m) {
+            case RAHAT: return "Malzeme ekleme zamanı. Sos ve salata tezgahına bir kez dokun: malzemeler, müşteri istekleri dahil, otomatik eklenir ve sana söylenir.";
+            case DENGELI: return "Malzeme ekleme zamanı. Sos ve salata tezgahına dokun: varsayılan malzemeler tek dokunuşla eklenir. "
+                    + "Müşterinin isteği yoksa iş biter. İstek varsa, örneğin soğansız, seçenekler açılır: Soğan çıkar ya da Acı sos ekle gibi farkı yap, sonra Malzemeleri bitir seçeneğini seç.";
+            default: return TUT_TOPPING;
+        }
+    }
+
+    /** Akışa göre kısa yardım (Gerçekçi = {@link #quickHelp()}). */
+    public static String quickHelp(FlowMode m) {
+        if (m == FlowMode.GERCEKCI) return quickHelp();
+        String mid = m == FlowMode.RAHAT
+                ? "Rahat akışta döner boyu ve malzemeler, müşteri istekleri dahil, otomatik; her istasyona bir kez dokun. "
+                : "Dengeli akışta tam ekmek ve varsayılan malzemeler tek dokunuşla; yarım ekmek, duble ya da müşteri isteğinde farkı sen yap, sonra Malzemeleri bitir. Hedefi oku ile kontrol edebilirsin. ";
+        return "Hazırlık aşamasında önceden döner dilimle, ayran doldur, tepsi hazırla; sonra Dükkânı aç. "
+                + "Siparişe dokunarak seç, önerilen istasyonun düğmesine dokun. Birden çok seçenek varsa panel açılır; TalkBack kullanıyorsan Eylemler menüsünden de seçebilirsin. "
+                + mid + "Tüm kalemler bitince siparişi paketle, sonra Teslim et. Oyun akışını Duraklat menüsünden değiştirebilirsin. Durumu oku düğmesi bilgi verir.";
     }
 
     // ------------------------------------------------------------------ gün sonu
@@ -525,11 +591,19 @@ public final class Texts {
                         + "İkincisi seçenekler paneli: düğmeye dokununca ya da TalkBack açıkken çift dokununca büyük düğmelerden oluşan panel açılır. "
                         + "Gruplar başlıklıdır: Boy seç, Malzeme ekle, Kontrol, Oku, Hazırlık. Bir seçeneğe tek dokun, Kapat düğmesiyle vazgeç. "
                         + "Yalnızca tek işlem varsa, örneğin Siparişi paketle, panel açılmadan doğrudan uygulanır."});
+        l.add(new String[]{"Oyun akışı",
+                "Ayarlardan, gün brifinginden ya da oyun sırasında Duraklat menüsünden üç akıştan birini seçersin; seçim kaydedilir ve istediğin an değişir. "
+                        + "Rahat: döner boyu ve malzemeler, müşteri istekleri dahil, otomatik eklenir; her istasyona bir kez dokunman yeter. "
+                        + "Dengeli, önerilen: tam ekmek ve varsayılan malzemeler tek dokunuşla eklenir; müşteri yarım ekmek ya da duble isterse ya da soğansız, acılı gibi bir istek varsa farkı sen yaparsın. "
+                        + "Gerçekçi: her malzemeyi tek tek ekler, her dilimlemede boyu seçersin; müşteriler biraz daha sabırlıdır ve bahşişler yüzde on beş fazladır. "
+                        + "Gerçekçi akışta çırak ikinci seviyeye çıkınca Standart malzemelerle bitir kısayolu açılır; istek olan siparişte bu kısayolu kullanma. "
+                        + "Otomatik eklenen malzemeler ve boy kısaca söylenir, örneğin Varsayılan malzemeler eklendi: domates, marul. Otomatik işler de süre alır ve stoktan düşer; stok yoksa Acil al düğmesi çıkar."});
         l.add(new String[]{"Döner boyu",
                 "Döner makinesinde dilimleme boyunu sen seçersin: yarım ekmek, tam ekmek ya da duble. Müşterinin istediği boy sipariş kartında yazar; tam ekmek ayrıca söylenmez. "
                         + "Yarım ekmek ürün fiyatının yüzde altmışıdır, yarım porsiyon et ve daha kısa süre alır. Duble yüzde yetmiş fazla öder, iki porsiyon et ve daha uzun süre alır. "
                         + "Yarım boy ikinci günden, duble dördüncü günden itibaren istenir. Yanlış boyda dilimlersen sipariş hatalı sayılır: yıldız düşer, bahşiş yarıya iner. "
-                        + "Hazır dilimlenmiş döner yarım porsiyon hassasiyetiyle sayılır, örneğin 3,5 porsiyon."});
+                        + "Hazır dilimlenmiş döner yarım porsiyon hassasiyetiyle sayılır, örneğin 3,5 porsiyon. "
+                        + "Bu Gerçekçi akıştır; Rahat akışta boy hep otomatik, Dengeli akışta tam ekmek otomatik seçilir."});
         l.add(new String[]{"Malzeme ekleme",
                 "Sos ve salata tezgahında malzemeleri tek tek eklersin. Seçenekler panelinde ya da Eylemler menüsünde her malzeme ayrı bir seçenektir, örneğin Domates ekle. "
                         + "Her ekleme kısa sürer ve malzemeyi stoktan düşer. Aynı malzemeyi ikinci kez eklersen bol olur; en fazla iki kez eklenir. "
@@ -537,7 +611,8 @@ public final class Texts {
                         + "İşin bitince Malzemeleri bitir seçeneğini seç. Hiç malzeme eklemeden bitirmek sosuz demektir. "
                         + "Sipariş kartı eklenen malzemeleri ve müşteri isteklerini gösterir. "
                         + "Malzemeler teslimde kontrol edilir: eksik ya da fazla malzeme yıldızı düşürür ve bahşişi yarıya indirir, tam doğru sipariş küçük bir ödül verir. "
-                        + "Stokta olmayan malzemeyi eklemeye çalışırsan Acil al düğmesi çıkar. Sos ve salata malzemeleri gün gün açılır; yeni malzeme brifingde duyurulur."});
+                        + "Stokta olmayan malzemeyi eklemeye çalışırsan Acil al düğmesi çıkar. Sos ve salata malzemeleri gün gün açılır; yeni malzeme brifingde duyurulur. "
+                        + "Bu Gerçekçi akıştır. Dengeli akışta Varsayılan malzemeleri ekle tek dokunuştur; istek varsa Soğan çıkar ya da Acı sos ekle gibi farkı yapıp Malzemeleri bitir dersin. Rahat akışta Malzemeleri ekle her şeyi kendisi yapar."});
         l.add(new String[]{"Çırak",
                 "Markette çırak alabilirsin. Çırak kendi başına çalışan yardımcıdır ve yeni yuva eklemez. Seviye 1: siparişleri paketler, içecek doldurur; boştayken ayran doldurur ve döner dilimler. "
                         + "Seviye 2: ayrıca ekmek ve lavaş ısıtır, salata ve sos tepsisi hazırlar. Seviye 3: ayrıca döner dilimler, ızgara, tatlı ve harç işlerini yapar. "
@@ -559,7 +634,7 @@ public final class Texts {
         l.add(new String[]{"Kolaylıklar",
                 "Her ekranda Nasıl oynanır yardımına ulaşabilirsin. Oyun sırasında Durumu oku düğmesi para, yıldız, süre, seçili sipariş ve hazır stoğu söyler. "
                         + "Duraklat düğmesi oyunu durdurur; uygulama arka plana gidince oyun kendiliğinden durur. "
-                        + "Ayarlardan müzik ve efekt sesini, anlatım hızını, oyun temposunu, titreşimi ve çırak duyurularını değiştirebilirsin. Tüm eylemler tek dokunuşla yapılır."});
+                        + "Ayarlardan oyun akışını, müzik ve efekt sesini, anlatım hızını, oyun temposunu, titreşimi ve çırak duyurularını değiştirebilirsin. Tüm eylemler tek dokunuşla yapılır."});
         return l;
     }
 
@@ -576,7 +651,7 @@ public final class Texts {
                 + "Seviye 2: ayrıca ekmek ve lavaş ısıtır; boştayken salata ve sos tepsisi hazırlar. "
                 + "Seviye 3: ayrıca döner dilimler, ızgara, tatlı ve harç işlerini yapar. "
                 + "Seviye sayısı kadar çırak aynı anda çalışır, yeni yuva eklemez. Senden yüzde yirmi yavaştır, hata yapmaz, en sabırsız siparişe öncelik verir ve seçili siparişine dokunmaz. "
-                + "Boy seçimi ve malzeme ekleme her zaman sende.";
+                + "Boy seçimi ve malzeme ekleme her zaman sende. Gerçekçi akışta seviye 2 çırak standart malzemeleri hazır tutar: Standart malzemelerle bitir kısayolu açılır.";
         if (currentLevel > 0) t += " Şu an seviye " + currentLevel + ".";
         return t;
     }

@@ -12,6 +12,7 @@ import android.widget.Button;
 import android.widget.ScrollView;
 
 import com.doner.oyunu.engine.Catalog;
+import com.doner.oyunu.engine.FlowMode;
 import com.doner.oyunu.engine.GameEngine;
 import com.doner.oyunu.engine.Ingredient;
 import com.doner.oyunu.engine.Order;
@@ -43,7 +44,7 @@ public class FixesUiTest {
     }
 
     private UiHarness game() {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.startDay();
         return h;
@@ -105,7 +106,7 @@ public class FixesUiTest {
 
     @Test public void oneTapBuysAllMissingIngredientsOfTheStep() {
         // Hatay dürüm: "Harç ve döner ekle" adımı iki malzeme ister (lahmacun harcı + et döner)
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.act.save.day = 6;
         h.act.save.money = 20_000;
@@ -179,7 +180,7 @@ public class FixesUiTest {
 
     // ------------------------------------------------------------ madde 5
     @Test public void summaryScreenShowsRentActuallyPaid() {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         com.doner.oyunu.engine.DaySummary s = new com.doner.oyunu.engine.DaySummary();
         s.day = 2; s.rentDue = 330; s.rent = 120; s.moneyAfter = 0; s.endStars = 3; s.startStars = 3;
         List<String[]> rows = Texts.summaryRows(s);
@@ -197,7 +198,7 @@ public class FixesUiTest {
 
     // ------------------------------------------------------------ madde 6
     @Test public void plusTenDescriptionReportsRealQuantityAndPriceWhenCapped() {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.click("Markete git"); h.settle();
         Ingredient ing = Catalog.ingredients().get(0);
@@ -229,7 +230,7 @@ public class FixesUiTest {
     }
 
     @Test public void plusTenDescriptionIsPlainWhenRoomAndWarnsWhenMoneyShort() {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.click("Markete git"); h.settle();
         Ingredient ing = Catalog.ingredients().get(0);

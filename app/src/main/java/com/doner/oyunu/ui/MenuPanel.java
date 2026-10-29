@@ -139,6 +139,7 @@ final class MenuPanel {
     static String groupTitle(StationOption.Group g) {
         switch (g) {
             case SIZE: return "Boy seç";
+            case REMOVE: return "Malzeme çıkar";
             case ADD: return "Malzeme ekle";
             case CONTROL: return "Kontrol";
             case READ: return "Oku";

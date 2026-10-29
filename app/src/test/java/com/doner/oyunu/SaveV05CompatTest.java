@@ -62,7 +62,7 @@ public class SaveV05CompatTest {
     @Test public void v06SaveWritesV3AndRoundTrips() {
         SaveData s = SaveData.parse(V05);
         String text = s.serialize();
-        assertTrue(text.startsWith("v=3\n"));
+        assertTrue("v0.7 kaydı v=4 yazar", text.startsWith("v=4\n"));
         SaveData t = SaveData.parse(text);
         assertEquals(text, t.serialize());
         assertEquals(s.copy().serialize(), text);

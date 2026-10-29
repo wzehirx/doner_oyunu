@@ -20,7 +20,7 @@ public enum FlowMode {
             1.0, 1.0, 1.0),
     GERCEKCI("gercekci", "Gerçekçi",
             "Her malzemeyi tek tek eklersin ve her dilimlemede boyu sen seçersin. En çok emek isteyen akış; müşteriler el emeğine saygıyla biraz daha sabırlı ve seyrek gelir, bahşişler yüzde on beş fazla.",
-            1.15, 1.4, 0.75); // sabır ve geliş çarpanları: v0.7 yumuşatma, denge testleriyle ayarlandı
+            1.15, 1.15, 0.9); // sabır ve geliş çarpanları: v0.7 yumuşatma, denge testleriyle ayarlandı
 
     public static final FlowMode DEFAULT = DENGELI;
 

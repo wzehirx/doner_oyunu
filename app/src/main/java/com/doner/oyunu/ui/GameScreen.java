@@ -20,6 +20,7 @@ import com.doner.oyunu.engine.ActiveStep;
 import com.doner.oyunu.engine.ApprenticeAction;
 import com.doner.oyunu.engine.DayConfig;
 import com.doner.oyunu.engine.DaySummary;
+import com.doner.oyunu.engine.FlowMode;
 import com.doner.oyunu.engine.GameEngine;
 import com.doner.oyunu.engine.GameListenerAdapter;
 import com.doner.oyunu.engine.Catalog;
@@ -451,7 +452,21 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             @Override public void run() { a.speaker.force(narrator.statusText()); }
         }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 6));
 
-        final TextView help = Ui.label(ctx, Texts.quickHelp(), 17, Theme.CREAM, false);
+        // v0.7: oyun akışı oyun ortasında da değişir (tek düğme, sıradakine geçer)
+        final Button flowBtn = Ui.button(ctx, Texts.flowButtonLabel(engine.getFlowMode()), Ui.SECONDARY);
+        flowBtn.setContentDescription(Texts.flowButtonDescription(engine.getFlowMode()));
+        tap(flowBtn, new Runnable() {
+            @Override public void run() {
+                engine.setFlowMode(engine.getFlowMode().next()); // Narrator duyurur, Feedback kaydı günceller
+                a.saveNow();
+                flowBtn.setText(Texts.flowButtonLabel(engine.getFlowMode()));
+                flowBtn.setContentDescription(Texts.flowButtonDescription(engine.getFlowMode()));
+                if (!a.save.speechOn) a.speaker.announce(engine.getFlowMode().spoken(), true);
+            }
+        });
+        pnl.addView(flowBtn, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 6));
+
+        final TextView help = Ui.label(ctx, Texts.quickHelp(engine.getFlowMode()), 17, Theme.CREAM, false);
         help.setFocusable(true);
         help.setVisibility(View.GONE);
         help.setPadding(dp(4), dp(6), dp(4), dp(6));
@@ -459,7 +474,10 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             @Override public void run() {
                 boolean show = help.getVisibility() != View.VISIBLE;
                 help.setVisibility(show ? View.VISIBLE : View.GONE);
-                if (show) a.speaker.force(Texts.quickHelp());
+                if (show) {
+                    help.setText(Texts.quickHelp(engine.getFlowMode()));
+                    a.speaker.force(Texts.quickHelp(engine.getFlowMode()));
+                }
             }
         }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 6));
         pnl.addView(help);
@@ -537,6 +555,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         switch (op.group) {
             case READ:
             case ADD:
+            case REMOVE:
                 return false;
             case CONTROL:
                 return op.id.equals("finish") && r == StartResult.STARTED;
@@ -696,16 +715,9 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
      * hazırlık varsa ve tek ise o.
      */
     static StationOption directOption(List<StationOption> ops) {
-        List<StationOption> np = new ArrayList<>();
-        for (StationOption op : ops) if (op.group != StationOption.Group.PREP) np.add(op);
-        if (np.isEmpty()) return ops.size() == 1 ? ops.get(0) : null;
-        boolean actionable = false;
-        for (StationOption op : np) if (op.enabled && op.group != StationOption.Group.READ) actionable = true;
-        if (!actionable) {
-            for (StationOption op : np) if (op.group != StationOption.Group.READ) return op;
-            return np.get(0);
-        }
-        return np.size() == 1 ? np.get(0) : null;
+        // v0.7: kural motorda (bot ölçütleri de aynı kuralı kullanır); okuma seçenekleri ("Hedefi oku") tek işlemi
+        // panele zorlamaz: Rahat/Dengeli'de "Malzemeleri ekle" ve otomatik boylu dilimleme tek dokunuştur.
+        return StationOption.direct(ops);
     }
 
     private void openMenu(String title, Station st, Order target, View origin, String meatFilter) {
@@ -717,7 +729,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         openPanel(p, origin);
         if (tutorialActive && hasSize && !tutSizeShown) {
             tutSizeShown = true;
-            a.speaker.say("Öğretici. " + Texts.TUT_SIZE, false);
+            a.speaker.say("Öğretici. " + Texts.tutSize(engine.getFlowMode()), false);
         }
     }
 
@@ -1101,6 +1113,8 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
     private static String apprenticeKey(int worker) { return "a:" + worker; }
 
+    private static String autoKey(Order o, int itemIndex) { return "auto:" + o.id + ":" + itemIndex; }
+
     /** Motor olaylarını ses + titreşim + arayüz yenilemeye çevirir (anlatım Narrator'dadır). */
     private final class Feedback extends GameListenerAdapter {
         private final Narrator.StarsTracker starsFx = new Narrator.StarsTracker();
@@ -1141,11 +1155,15 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         }
 
         @Override public void onNextStepHint(Order o, Step s) {
-            if (s != null && s.isTopping()) tutorial(7, Texts.TUT_TOPPING);
+            if (s != null && s.isTopping()) tutorial(7, Texts.tutTopping(engine.getFlowMode()));
             dirty = true;
         }
 
         @Override public void onStepStarted(Order o, Step step, int slot, float seconds) {
+            if (step.isSized() && tutorialActive && !tutSizeShown) { // otomatik boyda panel açılmaz: öğretici burada
+                tutSizeShown = true;
+                a.speaker.say("Öğretici. " + Texts.tutSize(engine.getFlowMode()), false);
+            }
             a.sound.startLoop(playerKey(o, step), sfxForStation(step.station), panForStation(step.station), 1f, seconds);
             a.haptics.stepStart();
             tutorial(6, Texts.TUT_STEP);
@@ -1201,9 +1219,9 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         // ---- tek tek malzeme ekleme (kısa işler: onStepStarted/ses döngüsü YOK, tek atış ses)
         @Override public void onToppingAddStarted(Order o, int itemIndex, Ingredient ing, int count, float seconds) {
             boolean salad = ing.category == Ingredient.Category.SALATA;
-            String sfx = salad ? "sfx_slice" : "sfx_sauce";
-            // salata: tok, yüksek dilim; sos: alçak, yumuşak; her eklemede hafif rastgele perde
-            float rate = (salad ? 1.2f : 0.9f) + (fx.nextFloat() - 0.5f) * 0.1f;
+            String sfx = !salad ? "sfx_sauce" : "domates".equals(ing.id) ? "sfx_veg_tomato" : "sfx_veg_lettuce";
+            // domates: ıslak dilim; marul/soğan: çıtır yaprak; sos: alçak, yumuşak; hafif rastgele perde
+            float rate = (salad ? 1.0f : 0.9f) + (fx.nextFloat() - 0.5f) * 0.1f;
             float pan = panForStation(Station.SOS);
             a.sound.play(sfx, pan, 0.9f, rate);
             if (count >= 2) a.sound.playLater(sfx, pan, 150); // bol: çift vuruş
@@ -1224,9 +1242,37 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             dirty = true;
         }
 
+        /** Otomatik iş adımı bitirdiyse onun (daha bilgili) duyurusu ekranda kalır. */
+        private boolean autoJustFinished;
+
         @Override public void onToppingsFinished(Order o, int itemIndex, Set<String> chosen) {
             wantEmergency.clear();
-            notice(narrator.toppingsFinished(o, itemIndex, chosen));
+            if (!autoJustFinished) notice(narrator.toppingsFinished(o, itemIndex, chosen));
+            autoJustFinished = false;
+            dirty = true;
+        }
+
+        // ---- v0.7 otomatik malzeme ve oyun akışı
+        @Override public void onAutoToppingsStarted(Order o, int itemIndex, List<Ingredient> adding, float seconds) {
+            a.sound.startLoop(autoKey(o, itemIndex), sfxForStation(Station.SOS), panForStation(Station.SOS), 1f, seconds);
+            a.haptics.stepStart();
+            dirty = true;
+        }
+
+        @Override public void onToppingsAutoAdded(Order o, int itemIndex, List<Ingredient> added, List<Ingredient> removed, boolean finished) {
+            a.sound.stopLoop(autoKey(o, itemIndex));
+            a.sound.play("sfx_tap", panForStation(Station.SOS), 0.6f, 1.3f);
+            if (!finished) a.haptics.warning();
+            notice(narrator.toppingsAutoAdded(o, itemIndex, added, removed, finished));
+            autoJustFinished = finished;
+            dirty = true;
+        }
+
+        @Override public void onFlowModeChanged(FlowMode mode) {
+            a.save.flowMode = mode;
+            a.save.flowChosen = true;
+            actionSig.clear(); // TalkBack eylem listeleri yeni akışa göre yeniden kurulsun
+            notice(narrator.flowModeChanged(mode));
             dirty = true;
         }
 

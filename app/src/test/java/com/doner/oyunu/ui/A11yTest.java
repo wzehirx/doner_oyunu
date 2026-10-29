@@ -5,6 +5,7 @@ import static org.junit.Assert.*;
 import android.view.View;
 
 import com.doner.oyunu.engine.DaySummary;
+import com.doner.oyunu.engine.FlowMode;
 import com.doner.oyunu.engine.GameEngine;
 import com.doner.oyunu.engine.Order;
 import com.doner.oyunu.engine.SaveData;
@@ -35,14 +36,14 @@ public class A11yTest {
     }
 
     private UiHarness gameHarness() {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.startDay();
         return h;
     }
 
     @Test public void menuHelpSettings() {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         audit(h, "Menü(kayıtsız)");
         h.click("Nasıl oynanır"); h.settle();
         audit(h, "Yardım");
@@ -60,7 +61,7 @@ public class A11yTest {
 
     @Test public void briefingAndShopOnVariousDays() {
         for (int day : new int[]{1, 2, 3, 8, 10, 25}) {
-            UiHarness h = new UiHarness(false);
+            UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
             h.click("Yeni oyun"); h.settle();
             h.act.save.day = day;
             h.act.save.money = 200_000;
@@ -99,7 +100,7 @@ public class A11yTest {
 
     /** Hazırlık aşaması ekranı + hazırlık seçenek paneli + gün içindeki hazırlık bölümü. */
     @Test public void prepScreenAndPrepPanel() {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.click("Güne başla"); h.settle();
         audit(h, "Hazırlık(başlangıç)");
@@ -122,7 +123,7 @@ public class A11yTest {
 
     /** Hazırlık aşamasında çırak çalışırken ve çırak duyuruları kapalıyken. */
     @Test public void prepScreenWithApprentice() {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.act.save.upgradeLevels.put("cirak", 3);
         h.click("Güne başla"); h.settle();

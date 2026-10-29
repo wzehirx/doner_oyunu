@@ -8,6 +8,7 @@ import android.content.res.Configuration;
 import android.view.View;
 import android.view.accessibility.AccessibilityManager;
 
+import com.doner.oyunu.engine.FlowMode;
 import com.doner.oyunu.engine.GameEngine;
 
 import org.junit.Test;
@@ -31,7 +32,7 @@ public class MonkeyLifecycleTest {
             shadowOf(am).setEnabled(true);
             shadowOf(am).setTouchExplorationEnabled(true);
         }
-        UiHarness h = new UiHarness(animations);
+        UiHarness h = new UiHarness(animations, FlowMode.GERCEKCI);
         Random rnd = new Random(seed);
         boolean paused = false;
         int gameFrames = 0;
@@ -65,7 +66,7 @@ public class MonkeyLifecycleTest {
             shadowOf(am).setEnabled(true);
             shadowOf(am).setTouchExplorationEnabled(true);
         }
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.act.save.day = day;
         h.act.save.money = 60_000;
@@ -118,7 +119,7 @@ public class MonkeyLifecycleTest {
 
     /** Seçenek paneli açıkken arka plan, döndürme, geri tuşu, yok edilme. */
     @Test public void menuPanelSurvivesLifecycleAndBack() {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.startDay();
         GameEngine e = h.engine();
@@ -164,7 +165,7 @@ public class MonkeyLifecycleTest {
 
     /** Panel açıkken sipariş müşteriyle birlikte giderse panel kapanır, çökmez. */
     @Test public void menuPanelClosesWhenOrderDisappears() {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.startDay();
         GameEngine e = h.engine();
@@ -189,7 +190,7 @@ public class MonkeyLifecycleTest {
         AccessibilityManager am = (AccessibilityManager) RuntimeEnvironment.getApplication().getSystemService(Context.ACCESSIBILITY_SERVICE);
         shadowOf(am).setEnabled(true);
         shadowOf(am).setTouchExplorationEnabled(true);
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.act.save.day = 6;
         h.act.save.money = 60_000;
@@ -230,7 +231,7 @@ public class MonkeyLifecycleTest {
         AccessibilityManager am = (AccessibilityManager) RuntimeEnvironment.getApplication().getSystemService(Context.ACCESSIBILITY_SERVICE);
         shadowOf(am).setEnabled(true);
         shadowOf(am).setTouchExplorationEnabled(true);
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.startDay();
         UiFlowTest.playDay(h, 400_000);
@@ -241,7 +242,7 @@ public class MonkeyLifecycleTest {
 
     /** Sistem karanlık/aydınlık modu (uiMode) veya yazı boyutu değişince etkinlik yeniden yaratılmamalı; gün kaybolmamalı. */
     @Test public void uiModeChangeMidDayKeepsGame() {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.startDay();
         h.run(5000);
@@ -253,7 +254,7 @@ public class MonkeyLifecycleTest {
     }
 
     @Test public void fontScaleAndUiModeChangeMidDayKeepsSameActivityAndGame() {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.startDay();
         h.run(5000);

@@ -18,6 +18,7 @@ public class StationOptionTest {
 
     private static SaveData day(int d) {
         SaveData s = SaveData.newGame();
+        s.flowMode = FlowMode.GERCEKCI; // v0.6 akışı = v0.7 Gerçekçi
         s.day = d;
         s.stars = 4.0;
         s.money = 50000;

@@ -75,10 +75,14 @@ public final class Order {
         return t;
     }
 
+    /** v0.7: elle iş süresinin sabra çevrilme çarpanı (gün ilerledikçe azalmaz). */
+    static float INTERACTION_PATIENCE = 1.0f;
+    /** v0.7: Gerçekçi akışta elle eklenen her hedef malzeme için ek iş yükü (sn; menüde art arda dokunuş). */
+    static float MANUAL_ADD_WORK = 1.0f;
     /** v0.7: boy seçimi elle yapılan kalem için ek iş yükü (sn): menüyü açmak + boyu seçmek. */
-    static float SIZE_CHOICE_WORK = 2.0f;
+    static float SIZE_CHOICE_WORK = 3.0f;
     /** v0.7: malzemesi elle bitirilen kalem için ek iş yükü (sn): menüyü açmak + "Malzemeleri bitir". */
-    static float TOPPING_FINISH_WORK = 2.0f;
+    static float TOPPING_FINISH_WORK = 3.0f;
     /** v0.7: elle yapılan her istek farkı (çıkar/ekle) için ek iş yükü (sn). */
     static float REQUEST_DIFF_WORK = 1.5f;
 
@@ -102,7 +106,8 @@ public final class Order {
             int diff = 0;
             for (String id : target) if (!def.contains(id)) diff++;
             for (String id : def) if (!target.contains(id)) diff++;
-            if (mode == FlowMode.GERCEKCI || diff > 0) t += TOPPING_FINISH_WORK + REQUEST_DIFF_WORK * diff;
+            if (mode == FlowMode.GERCEKCI) t += TOPPING_FINISH_WORK + MANUAL_ADD_WORK * target.size() + REQUEST_DIFF_WORK * diff;
+            else if (diff > 0) t += TOPPING_FINISH_WORK + REQUEST_DIFF_WORK * diff;
         }
         return t;
     }

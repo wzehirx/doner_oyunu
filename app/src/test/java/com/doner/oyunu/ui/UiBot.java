@@ -88,14 +88,19 @@ final class UiBot {
         if (st == Station.DONER) {
             String id = "size:" + line.getSize().id;
             for (StationOption op : ops) if (op.id.equals(id)) { if (op.enabled) pickOption(h, p, id); return; }
+            for (StationOption op : ops) if (op.id.equals("step")) { if (op.enabled) pickOption(h, p, "step"); return; } // otomatik boy
             prepPick(h, p, ops);
             return;
         }
         if (st == Station.SOS) {
+            for (StationOption op : ops) if (op.id.equals("auto") && autoOk(e, line)) { if (op.enabled) pickOption(h, p, "auto"); return; }
             boolean hasAdd = false;
             for (StationOption op : ops) if (op.group == StationOption.Group.ADD) hasAdd = true;
             if (!hasAdd) { prepPick(h, p, ops); return; }
             Set<String> target = e.getToppingTarget(o.id, li);
+            for (StationOption op : ops) { // v0.7: istek farkı "X çıkar"
+                if (op.group == StationOption.Group.REMOVE && !target.contains(op.ingredientId)) { if (op.enabled) pickOption(h, p, op.id); return; }
+            }
             for (StationOption op : ops) {
                 if (op.group != StationOption.Group.ADD) continue;
                 String ing = op.ingredientId;
@@ -116,6 +121,11 @@ final class UiBot {
         h.click("Kapat");
     }
 
+    /** "auto" kullanılabilir mi: Gerçekçi kısayolu ("Standart malzemelerle bitir") yalnızca istek farkı yoksa. */
+    static boolean autoOk(GameEngine e, OrderLine line) {
+        return e.getFlowMode() != com.doner.oyunu.engine.FlowMode.GERCEKCI || line.getTarget().equals(line.getDefaults());
+    }
+
     private static void prepPick(UiHarness h, MenuPanel p, List<StationOption> ops) {
         for (StationOption op : ops) if (op.enabled) { pickOption(h, p, op.id); return; }
         h.click("Kapat");
@@ -133,11 +143,16 @@ final class UiBot {
         if (st == Station.DONER && li >= 0) {
             OrderLine line = sel.getLine(li);
             for (StationOption op : ops) if (op.group == StationOption.Group.SIZE && op.id.equals("size:" + line.getSize().id)) want = op.id;
+            if (want == null) for (StationOption op : ops) if (op.id.equals("step")) want = "step"; // otomatik boy
         } else if (st == Station.SOS && li >= 0 && sel.getLine(li).product.toppingStepIndex() >= 0
                 && sel.getLine(li).isStepOpen(sel.getLine(li).product.toppingStepIndex())) {
             OrderLine line = sel.getLine(li);
             Set<String> target = e.getToppingTarget(sel.id, li);
-            for (StationOption op : ops) {
+            for (StationOption op : ops) if (op.id.equals("auto") && autoOk(e, line)) { if (op.enabled) want = "auto"; else return; }
+            if (want == null) for (StationOption op : ops) {
+                if (op.group == StationOption.Group.REMOVE && !target.contains(op.ingredientId)) { if (op.enabled) want = op.id; else return; break; }
+            }
+            if (want == null) for (StationOption op : ops) {
                 if (op.group == StationOption.Group.ADD && target.contains(op.ingredientId) && line.addedCount(op.ingredientId) == 0) {
                     if (op.enabled) want = op.id; else return;
                     break;

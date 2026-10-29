@@ -25,16 +25,16 @@ import java.util.Set;
  */
 public final class SoundManager {
     public static final String[] SFX = {
-            "sfx_customer_arrive", "sfx_order_new", "sfx_slice", "sfx_bread_warm", "sfx_sauce", "sfx_wrap",
+            "sfx_customer_arrive", "sfx_order_new", "sfx_slice", "sfx_bread_warm", "sfx_sauce", "sfx_wrap", "sfx_veg_tomato", "sfx_veg_lettuce",
             "sfx_grill_sizzle", "sfx_pour", "sfx_step_done", "sfx_deliver", "sfx_coin", "sfx_error",
             "sfx_warning", "sfx_customer_happy", "sfx_customer_angry", "sfx_star_up", "sfx_star_down",
             "sfx_day_start", "sfx_day_end", "sfx_buy", "sfx_tap", "sfx_tick"
     };
 
     /** Döngülenebilen istasyon sesleri: SoundPool döngüsüyle adım süresince çalar. */
-    public static final String[] LOOPED = {"sfx_grill_sizzle", "sfx_pour", "sfx_wrap"};
+    public static final String[] LOOPED = {"sfx_grill_sizzle", "sfx_pour", "sfx_wrap", "sfx_bread_warm"};
     /** Darbeli istasyon sesleri: adım süresince rastgele aralıkla tekrarlanır. */
-    public static final String[] PULSED = {"sfx_slice", "sfx_sauce", "sfx_bread_warm"};
+    public static final String[] PULSED = {"sfx_slice", "sfx_sauce"};
     /** Darbeli tekrar aralığı (sn), perde ve ses rastgeleliği (şartname §5). */
     static final float PULSE_MIN_S = 0.35f, PULSE_MAX_S = 0.6f, PULSE_RATE_JITTER = 0.05f, PULSE_VOL_JITTER = 0.08f;
 

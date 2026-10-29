@@ -43,7 +43,7 @@ public class SaveCompatTest {
         s.apprenticeAnnounce = false;
         s.readyDrinks = 6;
         String text = s.serialize();
-        assertTrue(text.startsWith("v=3"));
+        assertTrue("v0.7 kaydı v=4 yazar", text.startsWith("v=4"));
         SaveData t = SaveData.parse(text);
         assertFalse(t.apprenticeAnnounce);
         assertEquals(6, t.readyDrinks);

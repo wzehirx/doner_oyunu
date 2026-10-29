@@ -791,14 +791,27 @@ public final class GameEngine {
     }
 
     // ---------------------------------------------------------------- otomatik malzeme (v0.7 Rahat / Dengeli)
-    /** Kalemde otomatik malzeme ("auto") sunulur mu: akış + adım bitmemiş (Dengeli'de yalnızca bir kez). Kilit/yuva bakılmaz. */
+    /** Gerçekçi akışta "Standart malzemeleri ekle" kısayolunu açan çırak seviyesi (v0.7 ilerleme bağlantısı). */
+    public static final int STANDARD_SET_APPRENTICE_LEVEL = 2;
+
+    /**
+     * Kalemde otomatik malzeme ("auto") sunulur mu: Rahat her zaman; Dengeli kalem başına bir kez; Gerçekçi yalnızca
+     * çırak seviye 2+ iken ve kaleme henüz hiç malzeme eklenmemişken ("Standart malzemelerle bitir": çırak standart
+     * malzemeleri hazır tutar). Adım bitmemiş olmalı; kilit/yuva bakılmaz.
+     */
     private boolean autoAvailable(OrderLine line) {
         FlowMode m = getFlowMode();
-        if (!m.autoToppings()) return false;
         int ti = line.product.toppingStepIndex();
         if (ti < 0 || line.isStepDone(ti)) return false;
-        return m == FlowMode.RAHAT || !line.isAutoDone();
+        switch (m) {
+            case RAHAT: return true;
+            case DENGELI: return !line.isAutoDone();
+            default: return !v06Balance && standardSetUnlocked() && !line.isAutoDone() && line.addedTotal() == 0;
+        }
     }
+
+    /** Gerçekçi akışta standart set kısayolu açık mı (çırak seviye 2+). */
+    public boolean standardSetUnlocked() { return upgrades.apprenticeLevel() >= STANDARD_SET_APPRENTICE_LEVEL; }
 
     /** Otomatik işin istediği küme: Rahat = hedef (istekler dahil), Dengeli = günün varsayılanı. */
     private Set<String> autoWanted(OrderLine line) {
@@ -844,7 +857,8 @@ public final class GameEngine {
      * Rahat: hedef kümeyi kurar (eksikleri ekler, fazlaları çıkarıp iade eder) ve iş bitince malzeme adımı da biter.
      * Dengeli: günün varsayılan kümesini ekler; hedef varsayılanla aynıysa (istek farkı yok) adım biter, değilse açık kalır
      * ve oyuncu farkı (remove:/add:) yapıp "Malzemeleri bitir" der. Dengeli'de kalem başına bir kez.
-     * Gerçekçi akışta INVALID (+ onOptionRejected). Sonuçlar: STARTED, OUT_OF_STOCK, NO_SLOT, STEP_LOCKED, ORDER_BUSY,
+     * Gerçekçi: yalnızca çırak seviye 2+ iken ve kalem boşken "Standart malzemelerle bitir" (varsayılan küme eklenir ve
+     * adım biter — müşteri isteği varsa bu kısayolu kullanmak HATADIR, oyuncu isteği hatırlamalı); aksi halde INVALID. Sonuçlar: STARTED, OUT_OF_STOCK, NO_SLOT, STEP_LOCKED, ORDER_BUSY,
      * INVALID, NO_ORDER, ORDER_READY, NOT_RUNNING.
      */
     public StartResult autoToppings(int orderId, int itemIndex) {
@@ -889,10 +903,10 @@ public final class GameEngine {
             line.recordAdd(id, tray);
         }
         float dur = (float) Math.max(MIN_ADD_SECONDS, d);
-        if (mode == FlowMode.DENGELI) line.setAutoDone();
+        if (mode != FlowMode.RAHAT) line.setAutoDone();
         line.setRunning(ti, true);
         blocked.remove(o.id);
-        Step syn = new Step(mode == FlowMode.RAHAT ? "Malzemeleri ekle" : "Varsayılan malzemeleri ekle", Station.SOS, dur,
+        Step syn = new Step(autoName(mode), Station.SOS, dur,
                 Collections.<String, Integer>emptyMap());
         ActiveStep a = new ActiveStep(o, li, ti, syn, dur, freeSlot(), 0, null, null, false);
         a.autoAdded = add;
@@ -1088,6 +1102,7 @@ public final class GameEngine {
         boolean running = line.isStepRunning(ti);
         boolean slot = slotFree();
         String lockedReason = "Önce kalemin diğer adımları bitmeli";
+        if (autoAvailable(line)) out.add(autoOption(line, who, locked, running, slot, lockedReason));
         for (String id : line.getPool()) {
             Ingredient ing = Catalog.ingredient(id);
             int cnt = line.addedCount(id);
@@ -1127,30 +1142,9 @@ public final class GameEngine {
         boolean running = line.isStepRunning(ti);
         boolean slot = slotFree();
         String lockedReason = "Önce kalemin diğer adımları bitmeli";
-        if (autoAvailable(line)) {
-            List<String> add = autoAddList(line);
-            List<String> rem = autoRemoveList(line);
-            boolean oos = !save.inventory.hasAll(autoNeeds(line));
-            String name = m == FlowMode.RAHAT ? "Malzemeleri ekle" : "Varsayılan malzemeleri ekle";
-            StringBuilder d = new StringBuilder(who).append(name).append(", otomatik");
-            if (!add.isEmpty()) d.append(": ").append(Narrator.joinNames(add));
-            else if (rem.isEmpty()) d.append(", eklenecek malzeme yok");
-            if (!rem.isEmpty()) d.append(", çıkarılacak: ").append(Narrator.joinNames(rem));
-            d.append(", ").append(Narrator.fmtSeconds(autoPreviewSeconds(add)));
-            if (oos) d.append(", malzeme yok");
-            String reason = locked ? lockedReason : running ? "Ekleme sürüyor" : LOCK_SLOT;
-            out.add(new StationOption("auto", StationOption.Group.STEP, who + name, d.toString(),
-                    !locked && !running && slot, reason, null, oos));
-        }
+        if (autoAvailable(line)) out.add(autoOption(line, who, locked, running, slot, lockedReason));
         if (m == FlowMode.DENGELI && (line.isAutoDone() || line.addedTotal() > 0)) {
-            String busy = running ? "Ekleme sürüyor" : null;
-            for (String id : line.getPool()) {
-                if (line.addedCount(id) <= 0) continue;
-                Ingredient ing = Catalog.ingredient(id);
-                String name = ing.name + " çıkar";
-                out.add(new StationOption("remove:" + id, StationOption.Group.REMOVE, who + name,
-                        who + name + ", eklendi, stoğa döner", busy == null && !locked, locked ? lockedReason : busy, id, false));
-            }
+            removeOptions(out, line, who, locked, running, lockedReason);
             for (String id : line.getPool()) {
                 if (line.addedCount(id) > 0) continue;
                 Ingredient ing = Catalog.ingredient(id);
@@ -1171,6 +1165,44 @@ public final class GameEngine {
         }
         out.add(new StationOption("read:target", StationOption.Group.READ, "Hedefi oku", "Hedefi oku, müşterinin istediği malzemeler",
                 true, null, null, false));
+    }
+
+    /** Eklenmiş her malzeme için "X çıkar" (remove:x) seçenekleri (Dengeli istek farkı; Gerçekçi standart setten sonra). */
+    private void removeOptions(List<StationOption> out, OrderLine line, String who, boolean locked, boolean running, String lockedReason) {
+        for (String id : line.getPool()) {
+            if (line.addedCount(id) <= 0) continue;
+            Ingredient ing = Catalog.ingredient(id);
+            String name = ing.name + " çıkar";
+            out.add(new StationOption("remove:" + id, StationOption.Group.REMOVE, who + name,
+                    who + name + (line.addedCount(id) >= 2 ? ", bol eklendi" : ", eklendi") + ", stoğa döner",
+                    !locked && !running, locked ? lockedReason : "Ekleme sürüyor", id, false));
+        }
+    }
+
+    /** Akışa göre otomatik ekleme işinin adı: Rahat "Malzemeleri ekle", Dengeli "Varsayılan…", Gerçekçi "Standart…". */
+    static String autoName(FlowMode m) {
+        switch (m) {
+            case RAHAT: return "Malzemeleri ekle";
+            case DENGELI: return "Varsayılan malzemeleri ekle";
+            default: return "Standart malzemelerle bitir";
+        }
+    }
+
+    private StationOption autoOption(OrderLine line, String who, boolean locked, boolean running, boolean slot, String lockedReason) {
+        FlowMode m = getFlowMode();
+        List<String> add = autoAddList(line);
+        List<String> rem = autoRemoveList(line);
+        boolean oos = !save.inventory.hasAll(autoNeeds(line));
+        String name = autoName(m);
+        StringBuilder d = new StringBuilder(who).append(name).append(m == FlowMode.GERCEKCI ? ", çırak hazırladı" : ", otomatik");
+        if (!add.isEmpty()) d.append(": ").append(Narrator.joinNames(add));
+        else if (rem.isEmpty()) d.append(", eklenecek malzeme yok");
+        if (!rem.isEmpty()) d.append(", çıkarılacak: ").append(Narrator.joinNames(rem));
+        d.append(", ").append(Narrator.fmtSeconds(autoPreviewSeconds(add)));
+        if (oos) d.append(", malzeme yok");
+        String reason = locked ? lockedReason : running ? "Ekleme sürüyor" : LOCK_SLOT;
+        return new StationOption("auto", StationOption.Group.STEP, who + name, d.toString(),
+                !locked && !running && slot, reason, null, oos);
     }
 
     // ---- hazırlık seçenekleri
@@ -1704,7 +1736,8 @@ public final class GameEngine {
         OrderLine line = o.getLine(a.itemIndex);
         if (a.autoAdded != null) { // otomatik malzeme işi bitti
             line.setRunning(a.stepIndex, false);
-            boolean finish = a.autoMode == FlowMode.RAHAT || line.getAddedSet().equals(line.getTarget());
+            // Rahat ve Gerçekçi (standart setle bitir): adım biter; Dengeli: yalnızca istek farkı yoksa biter
+            boolean finish = a.autoMode != FlowMode.DENGELI || line.getAddedSet().equals(line.getTarget());
             List<Ingredient> added = ingredients(a.autoAdded), removed = ingredients(a.autoRemoved);
             for (GameListener l : snap()) l.onToppingsAutoAdded(o, a.itemIndex, added, removed, finish);
             if (finish) {
@@ -1918,9 +1951,10 @@ public final class GameEngine {
     }
 
     private Order addOrder(String name, CustomerType type, List<Product> items, List<Request> reqs, List<PortionSize> sizes) {
-        double work = Order.estimateWork(items, sizes);
-        if (!v06Balance) work += Order.interactionWork(items, sizes, reqs, day, getFlowMode());
-        double pat = (type.patienceSeconds * cfg.patienceFactor + work * cfg.workPatience)
+        // v0.7: akışın gerektirdiği elle dokunuşlar (boy seçimi, bitirme, istek farkları) insan süresidir; yükseltmeyle
+        // kısalmaz, bu yüzden günle azalan workPatience yerine sabit çarpanla sabra eklenir.
+        double hands = v06Balance ? 0.0 : Order.interactionWork(items, sizes, reqs, day, getFlowMode()) * Order.INTERACTION_PATIENCE;
+        double pat = (type.patienceSeconds * cfg.patienceFactor + Order.estimateWork(items, sizes) * cfg.workPatience + hands)
                 * upgrades.patienceMult() * save.tempo * (v06Balance ? 1.0 : getFlowMode().patienceMult);
         Customer c = new Customer(name, type, (float) pat);
         Order o = new Order(nextOrderId++, c, items, reqs, day, sizes);

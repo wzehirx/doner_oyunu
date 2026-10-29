@@ -11,6 +11,7 @@ import android.widget.TextView;
 import android.content.res.ColorStateList;
 
 import com.doner.oyunu.MainActivity;
+import com.doner.oyunu.engine.FlowMode;
 import com.doner.oyunu.engine.Narrator;
 import com.doner.oyunu.engine.SaveData;
 
@@ -34,6 +35,8 @@ public final class SettingsScreen extends Screen {
         root.addView(makeTitle("Ayarlar"));
         LinearLayout body = scrollBody(root);
         final SaveData s = a.save;
+
+        addFlowChooser(body, s);
 
         addStepper(body, new Value("Müzik sesi", 0, 1, 0.1) {
             double get() { return s.musicVolume; }
@@ -113,6 +116,49 @@ public final class SettingsScreen extends Screen {
             @Override public void run() { a.saveNow(); a.show(new MenuScreen(a)); }
         }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 8, 0, 0));
         return root;
+    }
+
+    /** v0.7 oyun akışı seçimi: üç büyük düğme (Rahat / Dengeli / Gerçekçi), seçili olan altın ve "seçili" okunur. */
+    private final java.util.Map<FlowMode, Button> flowButtons = new java.util.EnumMap<>(FlowMode.class);
+
+    private void addFlowChooser(LinearLayout body, final SaveData s) {
+        TextView h = Ui.label(ctx, "Oyun akışı", 21, Theme.GOLD, true);
+        Ui.heading(h);
+        h.setPadding(dp(4), dp(4), dp(4), dp(2));
+        body.addView(h);
+        TextView note = Ui.label(ctx, "Malzemelerin ve döner boyunun ne kadarını senin yapacağını seç. Oyun sırasında Duraklat menüsünden de değiştirebilirsin.", 15, Theme.MUTED, false);
+        note.setFocusable(true);
+        body.addView(note, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 4, 0, 4, 4));
+        for (final FlowMode m : FlowMode.values()) {
+            Button b = button(m.displayName, Ui.SECONDARY, new Runnable() {
+                @Override public void run() { chooseFlow(s, m); }
+            });
+            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 19);
+            flowButtons.put(m, b);
+            body.addView(b, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 4));
+        }
+        refreshFlow(s);
+    }
+
+    private void chooseFlow(SaveData s, FlowMode m) {
+        s.flowMode = m;
+        s.flowChosen = true;
+        a.saveNow();
+        refreshFlow(s);
+        a.sound.play("sfx_tap");
+        a.speaker.announce(m.spoken(), true);
+    }
+
+    private void refreshFlow(SaveData s) {
+        for (java.util.Map.Entry<FlowMode, Button> e : flowButtons.entrySet()) {
+            boolean sel = e.getKey() == s.flowMode;
+            Button b = e.getValue();
+            b.setText(e.getKey().displayName + (sel ? " (seçili)" : ""));
+            b.setContentDescription(Texts.flowOptionDescription(e.getKey(), sel));
+            b.setBackground(Ui.buttonBg(ctx, sel ? Ui.GOLD : Ui.SECONDARY));
+            b.setTextColor(sel ? Theme.DARK : Theme.CREAM);
+            b.setSelected(sel);
+        }
     }
 
     private void addSwitch(LinearLayout body, String label, boolean checked, CompoundButton.OnCheckedChangeListener l) {

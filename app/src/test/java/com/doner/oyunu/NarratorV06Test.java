@@ -18,6 +18,7 @@ public class NarratorV06Test {
 
     private GameEngine engine(int day) {
         SaveData s = SaveData.newGame();
+        s.flowMode = FlowMode.GERCEKCI; // v0.6 akışı = v0.7 Gerçekçi
         s.day = day;
         s.stars = 5.0;
         s.money = 50000;

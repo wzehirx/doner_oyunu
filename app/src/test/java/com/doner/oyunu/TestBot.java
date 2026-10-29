@@ -107,6 +107,27 @@ public final class TestBot {
                 return Float.compare(a.customer.getPatienceLeft(), b.customer.getPatienceLeft());
             }
         });
+        if (humanLike && panelKey != null) {
+            // Panel açıkken (gerçek arayüzde) önce paneldeki seçim yapılır; teslim vb. panel kapanınca.
+            Order po = e.getOrder(Integer.parseInt(panelKey.substring(0, panelKey.indexOf(':'))));
+            Step ps = po == null || po.isReady() ? null : po.nextStep();
+            if (ps != null && e.getFreeSlots() > 0) {
+                StartResult r = doStep(e, po, ps);
+                if (r == StartResult.STARTED || r == StartResult.INFO) return true;
+            }
+            panelKey = null; // seçenek uygulanamadı: panel kapatıldı (Kapat bir dokunuş)
+            taps++;
+            return true;
+        }
+        if (humanLike) {
+            // İnsan gibi: seçili siparişi bitirmeye çalışır; yalnızca sabrı çok azalan (≤%25) bir sipariş araya girer.
+            Order sel = e.getSelectedOrder();
+            if (sel != null && !sel.isReady() && sel.nextStep() != null && sel.customer.patienceFraction() > 0f) {
+                boolean urgent = false;
+                for (Order o : list) if (o != sel && !o.isReady() && o.nextStep() != null && o.customer.patienceFraction() <= 0.25f) urgent = true;
+                if (!urgent) { list.remove(sel); list.add(0, sel); }
+            }
+        }
         for (Order o : list) {
             if (o.isReady()) {
                 int v04 = 2; // v0.4 eşdeğeri: seç + teslim + kalem başına (her adım bir dokunuş + kalem paketi)
@@ -186,7 +207,10 @@ public final class TestBot {
     private StartResult toppings(GameEngine e, Order o, int li) {
         OrderLine line = o.getLine(li);
         List<StationOption> ops = e.getStationOptions(o.id, li, Station.SOS.id);
-        if (has(ops, "auto")) {
+        // Gerçekçi kısayolu ("Standart malzemelerle bitir") adımı bitirir: dikkatli bot yalnızca istek farkı yoksa kullanır
+        boolean shortcutOk = e.getFlowMode() != com.doner.oyunu.engine.FlowMode.GERCEKCI || !careful
+                || line.getTarget().equals(line.getDefaults());
+        if (has(ops, "auto") && shortcutOk) {
             StartResult r = apply(e, o, li, Station.SOS, "auto");
             if (r == StartResult.OUT_OF_STOCK && e.emergencyBuyMissing(o.id)) { emergencyBuys++; taps++; return StartResult.STARTED; }
             return r;

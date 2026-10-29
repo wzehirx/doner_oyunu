@@ -30,6 +30,13 @@ final class UiHarness {
 
     UiHarness() { this(false); }
 
+    /** Belirli oyun akışıyla (v0.7): ayar yeni oyunda korunur; v0.6 akış testleri GERCEKCI kullanır. */
+    UiHarness(boolean animations, com.doner.oyunu.engine.FlowMode flow) {
+        this(animations);
+        act.save.flowMode = flow;
+        act.save.flowChosen = true;
+    }
+
     /** animations=false: geçiş animasyonları kapalı (animasyonlu mod: kare başına bir ilerleme). */
     UiHarness(boolean animations) {
         org.robolectric.shadows.ShadowChoreographer.setPaused(true);

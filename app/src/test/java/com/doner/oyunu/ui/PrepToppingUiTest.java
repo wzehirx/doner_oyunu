@@ -10,6 +10,7 @@ import android.view.accessibility.AccessibilityManager;
 import android.widget.TextView;
 
 import com.doner.oyunu.engine.ActiveStep;
+import com.doner.oyunu.engine.FlowMode;
 import com.doner.oyunu.engine.GameEngine;
 import com.doner.oyunu.engine.Order;
 import com.doner.oyunu.engine.OrderLine;
@@ -33,7 +34,7 @@ import java.util.List;
 public class PrepToppingUiTest {
 
     private UiHarness prep() {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.click("Güne başla"); h.settle();
         assertEquals(GameEngine.State.PREP, h.engine().getState());
@@ -41,7 +42,7 @@ public class PrepToppingUiTest {
     }
 
     private UiHarness day() {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.startDay();
         h.engine().setSpawning(false);
@@ -164,7 +165,7 @@ public class PrepToppingUiTest {
             ShadowAccessibilityManager sam = shadowOf(am);
             sam.setEnabled(true);
             sam.setTouchExplorationEnabled(true);
-            UiHarness h = new UiHarness(false);
+            UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
             h.click("Yeni oyun"); h.settle();
             h.act.save.upgradeLevels.put("cirak", 1);
             h.act.save.tutorialDone = true;
@@ -484,7 +485,7 @@ public class PrepToppingUiTest {
     }
 
     @Test public void apprenticeStepsPlayQuietCenteredSound() {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.act.save.upgradeLevels.put("cirak", 1);
         h.click("Güne başla"); h.settle();
@@ -524,7 +525,7 @@ public class PrepToppingUiTest {
     // ------------------------------------------------------------------ tam gün: hazırlık -> boy -> tek tek malzeme -> bitir -> paketle -> teslim
     /** Bir gün (4. gün: yarım/tam/duble boylar açık, ketçap/mayonez açık) iki yolla oynanır; sonuçlar aynı kalitede olmalı. */
     private void fullDayWithSizesAndToppings(boolean viaActions) {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.act.save.day = 4;
         h.act.save.money = 30_000;
@@ -589,7 +590,7 @@ public class PrepToppingUiTest {
     @Test public void fullDayPrepSizeToppingsFinishPackDeliverViaTalkBackActions() { fullDayWithSizesAndToppings(true); }
 
     @Test public void settingsHasApprenticeAnnounceSwitchThatPersists() {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Ayarlar"); h.settle();
         View sw = null;
         for (View v : UiHarness.visibleViews(h.root())) if (v instanceof android.widget.Switch && ((android.widget.Switch) v).getText().toString().startsWith("Çırak duyuruları")) sw = v;
@@ -604,7 +605,7 @@ public class PrepToppingUiTest {
     }
 
     @Test public void marketExplainsApprenticeLevels() {
-        UiHarness h = new UiHarness(false);
+        UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.click("Yeni oyun"); h.settle();
         h.click("Markete git"); h.settle();
         h.click("Mutfak aletleri"); h.settle();

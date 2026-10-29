@@ -342,11 +342,13 @@ public class Narrator implements GameListener {
     }
 
     // ---- v0.7: otomatik malzeme ve oyun akışı
-    /** "Malzemeler ekleniyor, 1,7 saniye." / Dengeli: "Varsayılan malzemeler ekleniyor, 1,7 saniye." */
+    private FlowMode mode() { return engine == null ? FlowMode.DEFAULT : engine.getFlowMode(); }
+
+    /** "Malzemeler ekleniyor, 1,7 saniye." / Dengeli "Varsayılan…" / Gerçekçi "Standart…". */
     public String autoToppingsStarted(Order o, int itemIndex, List<Ingredient> adding, float seconds) {
         String who = o.lineCount() > 1 ? o.getLine(itemIndex).product.name + ": " : "";
-        boolean rahat = engine == null || engine.getFlowMode() == FlowMode.RAHAT;
-        return who + (rahat ? "Malzemeler ekleniyor, " : "Varsayılan malzemeler ekleniyor, ") + fmtSeconds(seconds) + ".";
+        String what = mode() == FlowMode.RAHAT ? "Malzemeler" : mode() == FlowMode.DENGELI ? "Varsayılan malzemeler" : "Standart malzemeler";
+        return who + what + " ekleniyor, " + fmtSeconds(seconds) + ".";
     }
 
     private static List<String> ids(List<Ingredient> l) {
@@ -356,19 +358,21 @@ public class Narrator implements GameListener {
     }
 
     /**
-     * Otomatik ekleme bitti: Rahat "Malzemeler eklendi: domates ve marul. İstek uygulandı: soğansız."; Dengeli
-     * "Varsayılan malzemeler eklendi: domates, marul ve soğan." + istek farkı varsa "İstek: soğansız. Farkı sen yap, sonra Malzemeleri bitir."
+     * Otomatik ekleme bitti. Rahat: "Malzemeler eklendi: domates ve marul. İstek uygulandı: soğansız."; Dengeli:
+     * "Varsayılan malzemeler eklendi: domates, marul ve soğan." + istek farkı varsa "İstek: soğansız. Farkı sen yap, sonra
+     * Malzemeleri bitir."; Gerçekçi: "Standart malzemeler eklendi: …. Gerekirse farkı yap, sonra Malzemeleri bitir."
+     * (istek olup olmadığını ele vermez).
      */
     public String toppingsAutoAdded(Order o, int itemIndex, List<Ingredient> added, List<Ingredient> removed, boolean finished) {
         OrderLine l = o.getLine(itemIndex);
-        String who = o.lineCount() > 1 ? l.product.name + ": " : "";
-        StringBuilder sb = new StringBuilder(who);
-        boolean def = engine != null && engine.getFlowMode() == FlowMode.DENGELI;
-        if (added.isEmpty()) sb.append(def ? "Eklenecek varsayılan malzeme yok." : "Eklenecek malzeme yok.");
-        else sb.append(def ? "Varsayılan malzemeler eklendi: " : "Malzemeler eklendi: ").append(joinNames(ids(added))).append('.');
+        FlowMode m = mode();
+        StringBuilder sb = new StringBuilder(o.lineCount() > 1 ? l.product.name + ": " : "");
+        String what = m == FlowMode.RAHAT ? "Malzemeler" : m == FlowMode.DENGELI ? "Varsayılan malzemeler" : "Standart malzemeler";
+        if (added.isEmpty()) sb.append(m == FlowMode.RAHAT ? "Eklenecek malzeme yok." : "Eklenecek " + what.toLowerCase(new java.util.Locale("tr")).replace("malzemeler", "malzeme") + " yok.");
+        else sb.append(what).append(" eklendi: ").append(joinNames(ids(added))).append('.');
         if (!removed.isEmpty()) sb.append(" Çıkarıldı: ").append(joinNames(ids(removed))).append('.');
         if (finished) {
-            if (!def && o.hasRequests() && !l.getTarget().equals(l.getDefaults())) sb.append(" İstek uygulandı: ").append(o.requestsText()).append('.');
+            if (m == FlowMode.RAHAT && o.hasRequests() && !l.getTarget().equals(l.getDefaults())) sb.append(" İstek uygulandı: ").append(o.requestsText()).append('.');
         } else {
             sb.append(" İstek: ").append(o.hasRequests() ? o.requestsText() : "farklı").append(". Farkı sen yap, sonra Malzemeleri bitir.");
         }

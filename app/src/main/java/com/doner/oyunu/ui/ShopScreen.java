@@ -132,7 +132,7 @@ public final class ShopScreen extends Screen {
                 Ui.dim(recommended, cost <= 0);
             }
         });
-        for (final Ingredient ing : Catalog.ingredients()) addIngredientRow(ing);
+        for (final Ingredient ing : Shop.availableIngredients(a.save)) addIngredientRow(ing);
     }
 
     private void addIngredientRow(final Ingredient ing) {

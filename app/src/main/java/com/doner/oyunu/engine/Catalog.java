@@ -29,6 +29,11 @@ public final class Catalog {
         INGREDIENTS.put(id, new Ingredient(id, name, unit, price, cat));
     }
 
+    /** Gün gün açılan sos/salata malzemesi (design_v06 §3). */
+    private static void ing(String id, String name, String unit, int price, Ingredient.Category cat, int unlockDay) {
+        INGREDIENTS.put(id, new Ingredient(id, name, unit, price, cat, unlockDay));
+    }
+
     private static Step st(String name, Station station, double sec, Object... needs) {
         return new Step(name, station, (float) sec, needMap(needs));
     }
@@ -82,42 +87,47 @@ public final class Catalog {
         ing("lavas", "Dürüm lavaşı", "adet", 5, EKM);
         ing("pirinc", "Pilavlık pirinç", "porsiyon", 6, DIG);
         ing("tereyagi", "Tereyağı", "porsiyon", 11, DIG);
-        ing("domates", "Domates", "porsiyon", 2, SAL);
-        ing("sogan", "Soğan", "porsiyon", 1, SAL);
-        ing("marul", "Marul", "adet", 4, SAL);
-        ing("yogurt", "Süzme yoğurt", "porsiyon", 4, SOSC);
+        // Sos/salata malzemeleri gün gün açılır (design_v06 §3 takvimi):
+        // 1 domates, marul, soğan; 3 ketçap, mayonez; 5 acı sos; 7 turşu; 9 nar ekşisi; 11 sumak, biber;
+        // 13 sarımsaklı yoğurt sos; 15 közlenmiş biber/domates. Ek: süzme yoğurt 8 (zurna ile), limon 14 (lahmacun ile).
+        ing("domates", "Domates", "porsiyon", 2, SAL, 1);
+        ing("sogan", "Soğan", "porsiyon", 1, SAL, 1);
+        ing("marul", "Marul", "adet", 4, SAL, 1);
+        ing("yogurt", "Süzme yoğurt", "porsiyon", 4, SOSC, 8);
         ing("kadayif", "Tel kadayıf", "porsiyon", 17, TAT);
         ing("peynir", "Künefe peyniri", "porsiyon", 38, TAT);
         ing("lahmacun_harci", "Lahmacun harcı", "porsiyon", 27, DIG);
         ing(AYRAN, "Ayran şişesi", "adet", 14, ICE);
         ing("kutu_icecek", "Kutu içecek", "adet", 22, ICE);
-        // v0.5 sos ve salata malzemeleri (topping)
-        ing("ketcap", "Ketçap", "porsiyon", 2, SOSC);
-        ing("mayonez", "Mayonez", "porsiyon", 3, SOSC);
-        ing("aci_sos", "Acı sos", "porsiyon", 2, SOSC);
-        ing("nar_eksisi", "Nar ekşisi", "porsiyon", 3, SOSC);
-        ing("tursu", "Turşu", "porsiyon", 3, SAL);
-        ing("biber", "Yeşil biber", "porsiyon", 2, SAL);
-        ing("limon", "Limon", "porsiyon", 2, SAL);
+        ing("ketcap", "Ketçap", "porsiyon", 2, SOSC, 3);
+        ing("mayonez", "Mayonez", "porsiyon", 3, SOSC, 3);
+        ing("aci_sos", "Acı sos", "porsiyon", 2, SOSC, 5);
+        ing("tursu", "Turşu", "porsiyon", 3, SAL, 7);
+        ing("nar_eksisi", "Nar ekşisi", "porsiyon", 3, SOSC, 9);
+        ing("biber", "Yeşil biber", "porsiyon", 2, SAL, 11);
+        ing("sumak", "Sumak", "porsiyon", 2, SAL, 11);
+        ing("sarimsakli_yogurt", "Sarımsaklı yoğurt sos", "porsiyon", 4, SOSC, 13);
+        ing("limon", "Limon", "porsiyon", 2, SAL, 14);
+        ing("kozlenmis", "Közlenmiş biber ve domates", "porsiyon", 4, SAL, 15);
 
         prod("ekmek_arasi", "Ekmek arası döner", 1, 240,
                 l("domates", "marul", "sogan", "ketcap"),
-                l("domates", "marul", "sogan", "ketcap", "mayonez", "aci_sos", "tursu"),
+                l("domates", "marul", "sogan", "ketcap", "mayonez", "aci_sos", "tursu", "sumak"),
                 st("Ekmeği ısıt", EKMEK, 3.5, "ekmek", 1),
                 st("Döneri dilimle", DONER, 3.5, "et_doner", 1),
                 top("Malzemeleri ekle", 2.0));
         prod(AYRAN, "Ayran", 2, 45,
                 st("Ayranı doldur", ICECEK, 1.8, AYRAN, 1));
         prod("pilav_ustu", "Pilav üstü döner", 3, 320,
-                l("domates", "biber", "tursu"),
-                l("domates", "biber", "sogan", "tursu", "aci_sos"),
+                l("domates", "sogan", "tursu"),
+                l("domates", "sogan", "ketcap", "mayonez", "aci_sos", "tursu", "biber", "kozlenmis"),
                 st("Pilavı tabağa al", IZGARA, 3.0, "pirinc", 1),
                 st("Tereyağını gezdir", IZGARA, 2.0, "tereyagi", 1),
                 st("Döneri dilimle", DONER, 4.5, "et_doner", 2),
                 top("Garnitürü ekle", 2.0));
         prod("tavuk_durum", "Tavuk dürüm", 4, 210,
                 l("marul", "domates", "mayonez"),
-                l("marul", "domates", "sogan", "mayonez", "ketcap", "aci_sos", "tursu"),
+                l("marul", "domates", "sogan", "mayonez", "ketcap", "aci_sos", "tursu", "sarimsakli_yogurt"),
                 st("Lavaşı ısıt", EKMEK, 3.0, "lavas", 1),
                 st("Tavuğu dilimle", DONER, 3.5, "tavuk_doner", 1),
                 top("Malzemeleri ekle", 2.0));
@@ -125,39 +135,39 @@ public final class Catalog {
                 st("Dolaptan al", ICECEK, 1.0, "kutu_icecek", 1));
         prod("hatay_durum", "Hatay usulü dürüm", 6, 260,
                 l("sogan", "domates", "tursu", "aci_sos", "nar_eksisi"),
-                l("sogan", "domates", "tursu", "aci_sos", "nar_eksisi", "marul", "biber"),
+                l("sogan", "domates", "tursu", "aci_sos", "nar_eksisi", "marul", "biber", "sumak"),
                 st("Lavaşı ısıt", EKMEK, 3.0, "lavas", 1),
                 st("Harç ve döner ekle", DONER, 4.0, "lahmacun_harci", 1, "et_doner", 1),
                 st("Izgarada mühürle", IZGARA, 3.5),
                 top("Malzemeleri ekle", 2.0));
         prod("tavuk_ekmek", "Ekmek arası tavuk döner", 7, 190,
                 l("marul", "domates", "mayonez"),
-                l("marul", "domates", "sogan", "mayonez", "ketcap", "aci_sos", "tursu"),
+                l("marul", "domates", "sogan", "mayonez", "ketcap", "aci_sos", "tursu", "sarimsakli_yogurt"),
                 st("Ekmeği ısıt", EKMEK, 3.0, "ekmek", 1),
                 st("Tavuğu dilimle", DONER, 3.0, "tavuk_doner", 1),
                 top("Malzemeleri ekle", 1.8));
         prod("zurna_durum", "Zurna dürüm", 8, 340,
                 l("yogurt", "domates", "sogan"),
-                l("yogurt", "domates", "sogan", "marul", "aci_sos", "tursu", "biber"),
+                l("yogurt", "domates", "sogan", "marul", "aci_sos", "tursu", "biber", "sarimsakli_yogurt"),
                 st("Lavaşı ısıt ve tereyağı sür", EKMEK, 3.5, "lavas", 1, "tereyagi", 1),
                 st("Döneri dilimle", DONER, 5.0, "et_doner", 1),
                 top("Malzemeleri ekle", 2.0));
         prod("iskender", "İskender", 10, 420,
                 l("yogurt", "domates", "biber"),
-                l("yogurt", "domates", "biber", "aci_sos", "tursu"),
+                l("yogurt", "domates", "biber", "aci_sos", "tursu", "sarimsakli_yogurt", "kozlenmis", "sumak"),
                 st("Ekmeği küp doğra", EKMEK, 3.5, "ekmek", 1),
                 st("Döneri dilimle ve ser", DONER, 6.0, "et_doner", 2),
                 st("Tereyağı ve domates sosunu gezdir", IZGARA, 5.0, "tereyagi", 2, "domates", 2),
                 top("Yoğurt ve garnitürü ekle", 2.0));
         prod("porsiyon_doner", "Porsiyon döner", 12, 380,
                 l("domates", "sogan", "biber"),
-                l("domates", "sogan", "marul", "biber", "tursu", "aci_sos", "ketcap"),
+                l("domates", "sogan", "marul", "biber", "tursu", "aci_sos", "ketcap", "kozlenmis"),
                 st("Ekmeği ısıt", EKMEK, 3.0, "ekmek", 1),
                 st("Döneri dilimle", DONER, 5.0, "et_doner", 2),
                 top("Garnitürü diz", 2.0));
         prod("lahmacun", "Lahmacun", 14, 120,
                 l("sogan", "domates", "limon"),
-                l("sogan", "domates", "limon", "marul", "tursu", "aci_sos"),
+                l("sogan", "domates", "limon", "marul", "tursu", "aci_sos", "sumak"),
                 st("Harcı lavaşa yay", SOS, 3.0, "lavas", 1, "lahmacun_harci", 1),
                 seq("Fırına ver", IZGARA, 6.0),
                 top("Malzemeleri ekle", 1.8));
@@ -205,25 +215,25 @@ public final class Catalog {
 
         // Müşteri tipleri (sabır sn). Ağırlıklar araştırma oranlarından.
         TYPES.add(new CustomerType("acele", "Acele eden iş insanı", 1, 20, 25f, 0.0f, 0.0f,
-                "Acelesi var.", "ekmek_arasi", "tavuk_ekmek"));
+                "Acelesi var.", "ekmek_arasi", "tavuk_ekmek").sizes(0.15f, 0.1f));
         TYPES.add(new CustomerType("aile", "Sabırlı aile", 1, 15, 60f, 1.0f, 0.5f,
-                "Sabırlı bir aile, birden fazla ürün isteyebilir.", "pilav_ustu", "porsiyon_doner", "ayran"));
+                "Sabırlı bir aile, birden fazla ürün isteyebilir.", "pilav_ustu", "porsiyon_doner", "ayran").sizes(0.15f, 0.3f));
         TYPES.add(new CustomerType("ogrenci", "Öğrenci", 1, 15, 40f, 0.3f, 0.1f,
-                "Öğrenci, bahşişi az.", "tavuk_ekmek", "kutu_icecek"));
+                "Öğrenci, bahşişi az.", "tavuk_ekmek", "kutu_icecek").sizes(0.45f, 0.05f));
         TYPES.add(new CustomerType("taksi", "Taksi şoförü", 2, 7, 30f, 0.8f, 0.0f,
-                "Taksi şoförü, çabuk olmalı.", "tavuk_durum", "kutu_icecek"));
+                "Taksi şoförü, çabuk olmalı.", "tavuk_durum", "kutu_icecek").sizes(0.1f, 0.15f));
         TYPES.add(new CustomerType("yasli", "Yaşlı müşteri", 3, 10, 70f, 1.0f, 0.0f,
-                "Yavaş ama sabırlı biri.", "ekmek_arasi", "ayran"));
+                "Yavaş ama sabırlı biri.", "ekmek_arasi", "ayran").sizes(0.5f, 0.0f));
         TYPES.add(new CustomerType("turist", "Turist", 5, 10, 45f, 1.8f, 0.3f,
-                "Turist, bol bahşiş verebilir.", "lahmacun", "iskender", "kunefe"));
+                "Turist, bol bahşiş verebilir.", "lahmacun", "iskender", "kunefe").sizes(0.1f, 0.25f));
         TYPES.add(new CustomerType("esnaf", "Komşu esnaf", 7, 5, 50f, 1.0f, 0.1f,
-                "Komşu esnaf, her gün gelir.", "ekmek_arasi", "ayran"));
+                "Komşu esnaf, her gün gelir.", "ekmek_arasi", "ayran").sizes(0.3f, 0.1f));
         TYPES.add(new CustomerType("sikayetci", "Şikayetçi müşteri", 9, 5, 20f, 0.5f, 0.0f,
-                "Şikayetçi, çok bekletme.", new String[0]));
+                "Şikayetçi, çok bekletme.", new String[0]).sizes(0.2f, 0.1f));
         TYPES.add(new CustomerType("gece", "Gece vardiyası işçisi", 13, 8, 35f, 1.0f, 0.2f,
-                "Gece vardiyasından geliyor.", "porsiyon_doner", "hatay_durum"));
+                "Gece vardiyasından geliyor.", "porsiyon_doner", "hatay_durum").sizes(0.1f, 0.35f));
         TYPES.add(new CustomerType("influencer", "Influencer", 19, 5, 30f, 1.5f, 0.2f,
-                "Influencer, servis hızına dikkat eder.", "iskender", "kunefe"));
+                "Influencer, servis hızına dikkat eder.", "iskender", "kunefe").sizes(0.05f, 0.4f));
     }
 
     public static List<Ingredient> ingredients() {
@@ -231,6 +241,23 @@ public final class Catalog {
     }
 
     public static Ingredient ingredient(String id) { return INGREDIENTS.get(id); }
+
+    /** Gün N'de açık tüm malzemeler (birikimli; market bunları satar). */
+    public static List<Ingredient> ingredientsForDay(int day) {
+        List<Ingredient> l = new ArrayList<>();
+        for (Ingredient i : INGREDIENTS.values()) if (i.unlockDay <= day) l.add(i);
+        return l;
+    }
+
+    /**
+     * Tam o gün açılan yeni sos/salata malzemeleri (brifing duyurusu için). 1. günde açılış malzemeleri
+     * (domates, marul, soğan) da döner; temel malzemeler (et, ekmek...) dahil değildir.
+     */
+    public static List<Ingredient> newIngredientsOnDay(int day) {
+        List<Ingredient> l = new ArrayList<>();
+        for (Ingredient i : INGREDIENTS.values()) if (i.isTopping() && i.unlockDay == day) l.add(i);
+        return l;
+    }
 
     public static List<Product> products() {
         return Collections.unmodifiableList(new ArrayList<>(PRODUCTS.values()));

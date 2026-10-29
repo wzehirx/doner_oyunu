@@ -84,6 +84,41 @@ public class SimulationTest {
         assertEquals("istekleri uygulayan bot hata yapmaz", 0, carefulMistakes);
     }
 
+    @Test public void carelessSizeBotMakesSizeMistakesAndCarefulBotDoesNot() {
+        int careless = 0, careful = 0, carefulMistakes = 0;
+        for (long seed = 1; seed <= 3; seed++) {
+            Campaign a = new Campaign(), b = new Campaign();
+            a.run(10, seed, 0.8f, false, 3, true, false); // her zaman tam ekmek dilimler
+            b.run(10, seed, 0.8f, false, 3, true, true);
+            for (DaySummary d : a.results) careless += d.sizeMistakes;
+            for (DaySummary d : b.results) { careful += d.sizeMistakes; carefulMistakes += d.mistakes; }
+        }
+        assertTrue("yarım/duble istenince her zaman tam dilimleyen bot boy hatası yapar: " + careless, careless > 0);
+        assertEquals("istenen boyu seçen bot boy hatası yapmaz", 0, careful);
+        assertEquals(0, carefulMistakes);
+    }
+
+    @Test public void botsPlayDays1To40OnSeveralSeedsAtHumanPace() {
+        for (long seed = 11; seed <= 14; seed++) {
+            Campaign c = new Campaign();
+            int failedDay = c.run(40, seed, 1.0f, true, 3, true, true);
+            if (failedDay != -1) fail("1,0 sn bot seed " + seed + " gün " + failedDay + " geçemedi: " + c.results.get(c.results.size() - 1));
+        }
+    }
+
+    @Test public void idleBotFailsWithinFiveDaysOnEverySeed() {
+        for (long seed = 1; seed <= 6; seed++) {
+            SaveData s = SaveData.newGame();
+            int failedAt = -1;
+            for (int d = 1; d <= 40 && failedAt < 0; d++) {
+                GameEngine e = new GameEngine(seed * 100 + d, s);
+                e.tick(2000f);
+                if (e.getSummary().failed) failedAt = d;
+            }
+            assertTrue("seed " + seed + " başarısız gün: " + failedAt, failedAt > 0 && failedAt <= 5);
+        }
+    }
+
     @Test public void dayOneIsComfortableForSlowPlayer() {
         for (long seed = 1; seed <= 10; seed++) {
             SaveData s = SaveData.newGame();

@@ -24,8 +24,12 @@ public final class Order {
     boolean readyToPackAnnounced;
     int position;
 
-    Order(int id, Customer customer, List<Product> items, List<Request> requests) {
+    /** Siparişin verildiği gün (açık malzemeler için). */
+    public final int day;
+
+    Order(int id, Customer customer, List<Product> items, List<Request> requests, int day, List<PortionSize> sizes) {
         this.id = id;
+        this.day = day;
         this.customer = customer;
         this.items = Collections.unmodifiableList(new ArrayList<>(items));
         this.requests = Collections.unmodifiableList(new ArrayList<>(requests));
@@ -34,15 +38,18 @@ public final class Order {
         for (int i = 0; i < items.size(); i++) {
             Product p = items.get(i);
             Set<String> target = new LinkedHashSet<>();
+            List<String> pool = p.toppingPool(day);
+            Set<String> defaults = p.defaultToppings(day);
             if (p.hasToppings()) {
-                target.addAll(p.defaultToppings);
-                for (Request r : requests) r.apply(p, target);
+                target.addAll(defaults);
+                for (Request r : requests) r.apply(pool, target);
                 // havuz sırasında tut
                 Set<String> ordered = new LinkedHashSet<>();
-                for (String id2 : p.toppingPool) if (target.contains(id2)) ordered.add(id2);
+                for (String id2 : pool) if (target.contains(id2)) ordered.add(id2);
                 target = ordered;
             }
-            ls.add(new OrderLine(p, i, target));
+            PortionSize sz = sizes != null && i < sizes.size() ? sizes.get(i) : PortionSize.FULL;
+            ls.add(new OrderLine(p, i, target, pool, defaults, sz));
             all.addAll(p.steps);
         }
         this.lines = Collections.unmodifiableList(ls);
@@ -53,10 +60,18 @@ public final class Order {
 
     static float packSeconds(int itemCount) { return 1.5f + 0.5f * itemCount; }
 
-    /** Müşteri oluşmadan önce sabır hesabı için tahmini iş yükü (sn). */
-    static float estimateWork(List<Product> items) {
+    /** Müşteri oluşmadan önce sabır hesabı için tahmini iş yükü (sn); boy dilimleme/ısıtma süresini ölçekler. */
+    static float estimateWork(List<Product> items, List<PortionSize> sizes) {
         float t = packSeconds(items.size());
-        for (Product p : items) t += p.workSeconds();
+        for (int i = 0; i < items.size(); i++) {
+            Product p = items.get(i);
+            PortionSize sz = sizes != null && i < sizes.size() && p.hasMeat() ? sizes.get(i) : PortionSize.FULL;
+            for (Step s : p.steps) {
+                float w = s.baseSeconds + (s.isTopping() ? Product.TOPPING_WORK_EACH * p.defaultToppings.size() : 0f);
+                if (s.isSized() || s.isBreadStep()) w *= sz.timeMult;
+                t += w;
+            }
+        }
         return t;
     }
 
@@ -137,20 +152,25 @@ public final class Order {
     /** Kalemin hedef malzeme kümesi (varsayılan ± istekler). */
     public Set<String> targetToppings(int lineIndex) { return lines.get(lineIndex).getTarget(); }
 
+    /** Toplam fiyat (boya göre kalem fiyatlarının toplamı). */
     public int price() {
         int t = 0;
-        for (Product p : items) t += p.price;
+        for (OrderLine l : lines) t += l.price();
         return t;
     }
 
-    public float workSeconds() { return estimateWork(items); }
+    public float workSeconds() {
+        List<PortionSize> sz = new ArrayList<>();
+        for (OrderLine l : lines) sz.add(l.getSize());
+        return estimateWork(items, sz);
+    }
 
-    /** "Ekmek arası döner, Ayran" gibi. */
+    /** "Ekmek arası döner (yarım ekmek) ve Ayran" gibi; tam ekmek ayrıca belirtilmez. */
     public String itemsText() {
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < items.size(); i++) {
-            if (i > 0) sb.append(i == items.size() - 1 ? " ve " : ", ");
-            sb.append(items.get(i).name);
+        for (int i = 0; i < lines.size(); i++) {
+            if (i > 0) sb.append(i == lines.size() - 1 ? " ve " : ", ");
+            sb.append(lines.get(i).displayName());
         }
         return sb.toString();
     }

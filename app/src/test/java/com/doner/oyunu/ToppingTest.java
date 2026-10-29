@@ -41,7 +41,8 @@ public class ToppingTest {
 
     // ------------------------------------------------------------ istekler ve hedef
     @Test public void requestsChangeTheTargetSet() {
-        GameEngine e = new GameEngine(1, day(3));
+        // v0.6: acı sos 5. günde açılır; 5. günde ekmek arası döner havuzu: domates, marul, soğan, ketçap, mayonez, acı sos
+        GameEngine e = new GameEngine(1, day(5));
         e.setSpawning(false);
         Order o = e.spawnOrder(Collections.singletonList("ekmek_arasi"), Arrays.asList("soğansız", "acılı"));
         assertNotNull(o);
@@ -56,7 +57,7 @@ public class ToppingTest {
         Order plain = e.spawnOrder(Collections.singletonList("ekmek_arasi"), NONE);
         assertFalse(plain.hasRequests());
         assertEquals("", plain.requestsText());
-        assertEquals(Catalog.product("ekmek_arasi").defaultToppings, e.getToppingTarget(plain.id, 0));
+        assertEquals(Catalog.product("ekmek_arasi").defaultToppings(5), e.getToppingTarget(plain.id, 0));
         assertNull("bilinmeyen istek", e.spawnOrder(Collections.singletonList("ekmek_arasi"), Collections.singletonList("uçuk")));
         assertNull("bilinmeyen ürün", e.spawnOrder(Collections.singletonList("yok"), NONE));
     }
@@ -102,7 +103,7 @@ public class ToppingTest {
                 if (!o.hasRequests()) continue;
                 boolean anyDiff = false;
                 for (int li = 0; li < o.lineCount(); li++) {
-                    if (!o.getLine(li).getTarget().equals(o.getLine(li).product.defaultToppings)) anyDiff = true;
+                    if (!o.getLine(li).getTarget().equals(o.getLine(li).getDefaults())) anyDiff = true;
                 }
                 assertTrue("istek hedefi değiştirmeli: " + o.requestsText(), anyDiff);
                 assertTrue(o.requests.size() <= 2);
@@ -129,7 +130,7 @@ public class ToppingTest {
     }
 
     @Test public void confirmStartsStepWithTimeAndConsumesOnlySelected() {
-        SaveData s = day(1);
+        SaveData s = day(3); // ketçap 3. günde açılır
         GameEngine e = new GameEngine(1, s);
         Order o = openTopping(e, NONE);
         final float[] sl = {0};
@@ -205,19 +206,20 @@ public class ToppingTest {
             e.setSpawning(false);
             Order o = e.spawnOrder(Collections.singletonList("ekmek_arasi"), NONE);
             List<ToppingOption> opts = e.getToppingOptions(o.id, 0);
-            assertEquals(Catalog.product("ekmek_arasi").toppingPool.size(), opts.size());
+            // yalnızca günün açık malzemeleri sunulur
+            assertEquals(Catalog.product("ekmek_arasi").toppingPool(d).size(), opts.size());
             Set<String> init = e.getInitialToppings(o.id, 0);
-            if (d <= 3) assertEquals("gün " + d, Catalog.product("ekmek_arasi").defaultToppings, init);
+            if (d <= 3) assertEquals("gün " + d, Catalog.product("ekmek_arasi").defaultToppings(d), init);
             else assertTrue("gün " + d + " boş başlar", init.isEmpty());
             for (ToppingOption op : opts) {
                 assertTrue(op.available);
-                assertEquals(Catalog.product("ekmek_arasi").defaultToppings.contains(op.ingredient.id), op.isDefault);
+                assertEquals(Catalog.product("ekmek_arasi").defaultToppings(d).contains(op.ingredient.id), op.isDefault);
             }
         }
     }
 
     @Test public void optionsShowAvailabilityFromStockAndTray() {
-        SaveData s = day(1);
+        SaveData s = day(7); // turşu 7. günde açılır
         s.inventory.set("tursu", 0);
         GameEngine e = new GameEngine(1, s);
         e.setSpawning(false);
@@ -259,7 +261,7 @@ public class ToppingTest {
 
     @Test public void correctToppingsGivePerfectBonus() {
         double[] d = new double[1];
-        Rec r = deliverWith(set("domates", "marul", "sogan", "ketcap"), NONE, day(1), d);
+        Rec r = deliverWith(set("domates", "marul", "sogan", "ketcap"), NONE, day(3), d);
         assertTrue(r.perfect);
         assertEquals(-1, r.mistakes);
         assertTrue("normal kazanç + 0,02 bonus: " + d[0], d[0] >= 0.12 + 0.02 - 1e-9);
@@ -268,7 +270,7 @@ public class ToppingTest {
 
     @Test public void wrongToppingsPenalisedAndTipHalved() {
         double[] good = new double[1], bad = new double[1];
-        Rec rg = deliverWith(set("domates", "marul", "sogan", "ketcap"), NONE, day(1), good);
+        Rec rg = deliverWith(set("domates", "marul", "sogan", "ketcap"), NONE, day(3), good);
         // 1 hata: soğansız istenmişti
         Rec r1 = deliverWith(set("domates", "marul", "sogan", "ketcap"), Collections.singletonList("soğansız"), day(3), bad);
         assertEquals(1, r1.mistakes);
@@ -286,7 +288,7 @@ public class ToppingTest {
     @Test public void penaltyCapsAtThreeMistakes() {
         double[] d = new double[1];
         // hiç seçme: 4 eksik
-        Rec r = deliverWith(set(), NONE, day(1), d);
+        Rec r = deliverWith(set(), NONE, day(3), d);
         assertEquals(4, r.mistakes);
         assertEquals(0.15, r.penalty, 1e-9);
         for (ToppingCheck.Mistake m : r.check.getMistakes()) assertFalse(m.extra);
@@ -295,7 +297,7 @@ public class ToppingTest {
 
     @Test public void extraAndMissingBothCount() {
         double[] d = new double[1];
-        Rec r = deliverWith(set("domates", "marul", "sogan", "mayonez"), NONE, day(1), d);
+        Rec r = deliverWith(set("domates", "marul", "sogan", "mayonez"), NONE, day(3), d);
         // ketçap eksik + mayonez fazla
         assertEquals(2, r.mistakes);
         assertEquals(0.10, r.penalty, 1e-9);
@@ -309,7 +311,7 @@ public class ToppingTest {
 
     @Test public void addRequestMissingIsFlaggedAsRequested() {
         double[] d = new double[1];
-        Rec r = deliverWith(set("domates", "marul", "sogan", "ketcap"), Collections.singletonList("acılı"), day(3), d);
+        Rec r = deliverWith(set("domates", "marul", "sogan", "ketcap"), Collections.singletonList("acılı"), day(5), d);
         assertEquals(1, r.mistakes);
         ToppingCheck.Mistake m = r.check.getMistakes().get(0);
         assertEquals("aci_sos", m.ingredientId);
@@ -376,7 +378,7 @@ public class ToppingTest {
 
     // ------------------------------------------------------------ anlatım
     @Test public void narratorTargetAndToggleTexts() {
-        SaveData s = day(3);
+        SaveData s = day(5);
         GameEngine e = new GameEngine(1, s);
         e.setSpawning(false);
         Narrator n = new Narrator(e);
@@ -422,7 +424,7 @@ public class ToppingTest {
     }
 
     @Test public void complaintWordsRequestedRemovalAndAddition() {
-        SaveData s = day(3);
+        SaveData s = day(5);
         GameEngine e = new GameEngine(1, s);
         e.setSpawning(false);
         Narrator n = new Narrator(e);

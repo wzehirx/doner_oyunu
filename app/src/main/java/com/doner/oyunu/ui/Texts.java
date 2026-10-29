@@ -396,6 +396,10 @@ public final class Texts {
             for (Product p : news) n.add(p.name + " (" + p.price + " lira)");
             l.add("Yeni ürün: " + join(n) + ".");
         }
+        String newIng = Narrator.newIngredientsText(save.day);
+        if (!newIng.isEmpty()) l.add(newIng);
+        String newSize = Narrator.newSizesText(save.day);
+        if (!newSize.isEmpty()) l.add(newSize);
         List<String> ups = new ArrayList<>();
         for (Upgrade u : Catalog.upgrades()) {
             for (int k = 0; k < u.maxLevel(); k++) {

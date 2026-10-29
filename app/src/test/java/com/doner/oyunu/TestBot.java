@@ -4,8 +4,10 @@ import com.doner.oyunu.engine.GameEngine;
 import com.doner.oyunu.engine.Ingredient;
 import com.doner.oyunu.engine.Order;
 import com.doner.oyunu.engine.OrderLine;
+import com.doner.oyunu.engine.PortionSize;
 import com.doner.oyunu.engine.PrepKind;
 import com.doner.oyunu.engine.PrepResult;
+import com.doner.oyunu.engine.Station;
 import com.doner.oyunu.engine.Product;
 import com.doner.oyunu.engine.Step;
 import com.doner.oyunu.engine.StartResult;
@@ -21,15 +23,19 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Test botu: belirli bir tepki süresiyle (insan gibi) siparişleri en sabırsızdan başlayarak hazırlar.
- * prep: gün öncesi hazırlık aşamasını ve gün içi boşta hazırlığı yapar. careful: malzeme seçiminde müşteri isteklerini
- * uygular (false: yalnızca varsayılan küme -> istekli siparişler hatalı olur).
+ * Test botu (v0.6 API): belirli bir tepki süresiyle (insan gibi) siparişleri en sabırsızdan başlayarak hazırlar.
+ * Her eylem (boy seçimi, TEK malzeme ekleme, "Malzemeleri bitir", adım başlatma) bir tepki süresi alır.
+ * prep: gün öncesi hazırlık aşamasını ve gün içi boşta hazırlığı yapar. careful: müşteri isteklerini ve istenen boyu
+ * uygular (false: yalnızca varsayılan malzeme kümesi ve her zaman TAM ekmek -> istekli/boylu siparişler hatalı olur).
  */
 public final class TestBot {
     private final float reaction;
     private final boolean prep;
     private final boolean careful;
+    /** Tek tek malzeme eklemede aynı menüde ardışık eylem: tepki süresinin bu oranı (kas hafızası). */
+    static final float ADD_REACTION_FACTOR = 0.5f;
     private float cooldown;
+    private float delay;
     public int emergencyBuys;
     public int prepActions;
 
@@ -38,6 +44,7 @@ public final class TestBot {
 
     public TestBot(float reactionSeconds, boolean prep, boolean careful) {
         this.reaction = reactionSeconds;
+        this.delay = reactionSeconds;
         this.prep = prep;
         this.careful = careful;
     }
@@ -61,7 +68,7 @@ public final class TestBot {
         }
         guard = 0;
         while (e.isRunning() && guard < 1000f) {
-            if (cooldown <= 0f && act(e)) cooldown = reaction;
+            if (cooldown <= 0f && act(e)) { cooldown = delay; delay = reaction; }
             e.tick(0.1f);
             cooldown -= 0.1f;
             guard += 0.1f;
@@ -84,12 +91,8 @@ public final class TestBot {
                 Step s = o.nextStep();
                 if (s == null) continue;
                 if (e.getSelectedOrderId() != o.id) e.selectOrder(o.id);
-                StartResult r = e.startStep(o.id, -1, s.station.id);
+                StartResult r = doStep(e, o, s);
                 if (r == StartResult.STARTED) return true;
-                if (r == StartResult.NEEDS_TOPPINGS) {
-                    if (confirm(e, o)) return true;
-                    continue;
-                }
                 if (r == StartResult.OUT_OF_STOCK) {
                     if (e.emergencyBuyMissing(o.id)) { emergencyBuys++; return true; }
                 }
@@ -99,26 +102,42 @@ public final class TestBot {
         return false;
     }
 
-    private boolean confirm(GameEngine e, Order o) {
-        int li = e.openToppingItem(o.id);
-        if (li < 0) return false;
-        Set<String> pick = new LinkedHashSet<>(careful ? e.getToppingTarget(o.id, li) : o.getLine(li).product.defaultToppings);
-        for (int tries = 0; tries < 8; tries++) {
-            StartResult r = e.confirmToppings(o.id, li, pick);
-            if (r == StartResult.STARTED) return true;
-            if (r != StartResult.OUT_OF_STOCK) return false;
-            // stokta olmayan malzeme: acil al, olmazsa seçimden çıkar
-            boolean fixed = false;
-            for (String id : new ArrayList<>(pick)) {
-                if (e.getSave().inventory.get(id) <= 0 && e.getTrayUses(id) <= 0) {
-                    if (e.emergencyBuy(id)) { emergencyBuys++; fixed = true; }
-                    else { pick.remove(id); fixed = true; }
-                    break;
-                }
-            }
-            if (!fixed) return false;
+    /** Önerilen adımı yeni API ile yapar: boy seçimi, tek tek ekleme, bitir, ya da genel adım. */
+    private StartResult doStep(GameEngine e, Order o, Step s) {
+        if (s == o.getPackStep()) return e.applyStationOption(o.id, -1, Station.PAKET.id, "step");
+        int li = lineOfOpenStep(o, s);
+        if (li < 0) return StartResult.INVALID;
+        if (s.isTopping()) return toppings(e, o, li);
+        if (s.isSized()) {
+            OrderLine line = o.getLine(li);
+            PortionSize pick = careful ? line.getSize() : PortionSize.FULL;
+            return e.applyStationOption(o.id, li, Station.DONER.id, "size:" + pick.id);
         }
-        return false;
+        return e.applyStationOption(o.id, li, s.station.id, "step");
+    }
+
+    private static int lineOfOpenStep(Order o, Step s) {
+        for (OrderLine l : o.getLines()) {
+            for (int i = 0; i < l.stepCount(); i++) if (l.step(i) == s && l.isStepOpen(i)) return l.index;
+        }
+        return -1;
+    }
+
+    /** Hedef (veya dikkatsizse varsayılan) malzemelerden eksik olanı ekler; hepsi eklenince "Malzemeleri bitir". */
+    private StartResult toppings(GameEngine e, Order o, int li) {
+        OrderLine line = o.getLine(li);
+        Set<String> want = new LinkedHashSet<>(careful ? line.getTarget() : line.getDefaults());
+        for (String id : want) {
+            if (line.addedCount(id) > 0) continue;
+            StartResult r = e.applyStationOption(o.id, li, Station.SOS.id, "add:" + id);
+            if (r == StartResult.OUT_OF_STOCK) {
+                if (e.emergencyBuy(id)) { emergencyBuys++; return StartResult.STARTED; }
+                return StartResult.OUT_OF_STOCK;
+            }
+            if (r == StartResult.STARTED) delay = reaction * ADD_REACTION_FACTOR;
+            return r;
+        }
+        return e.applyStationOption(o.id, li, Station.SOS.id, "finish");
     }
 
     /** Hazırlık sırası: içecek, döner, tepsi. Pre-day: hedef daha yüksek. */
@@ -136,7 +155,7 @@ public final class TestBot {
                 }
             }
             Map<String, Integer> freq = new LinkedHashMap<>();
-            for (Product p : Catalog.productsForDay(e.getDay())) for (String id : p.defaultToppings) {
+            for (Product p : Catalog.productsForDay(e.getDay())) for (String id : p.defaultToppings(e.getDay())) {
                 Integer v = freq.get(id);
                 freq.put(id, v == null ? 1 : v + 1);
             }

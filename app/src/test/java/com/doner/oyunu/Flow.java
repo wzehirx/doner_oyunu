@@ -21,28 +21,36 @@ final class Flow {
         assertFalse("iş bitmedi", o.isRunning());
     }
 
-    /** Verilen kalemin verilen istasyondaki adımını başlatır (topping ise hedef kümeyi onaylar) ve bitirir. */
-    static void doItemStation(GameEngine e, Order o, int item, Station st) {
-        StartResult r = e.startStep(o.id, item, st.id);
-        if (r == StartResult.NEEDS_TOPPINGS) {
-            assertEquals(StartResult.STARTED, e.confirmToppings(o.id, item, e.getToppingTarget(o.id, item)));
-        } else {
-            assertEquals(StartResult.STARTED, r);
+    /** Kalemin hedef malzemelerini TEK TEK ekler (v0.6) ve "Malzemeleri bitir" der. Her ekleme bitene kadar beklenir. */
+    static void addTargetAndFinish(GameEngine e, Order o, int item) {
+        for (String id : e.getToppingTarget(o.id, item)) {
+            assertEquals("ekleme " + id, StartResult.STARTED, e.addTopping(o.id, item, id));
+            waitDone(e, o);
         }
+        assertEquals(StartResult.STARTED, e.finishToppings(o.id, item));
+    }
+
+    /** Verilen kalemin verilen istasyondaki adımını başlatır (topping ise hedef kümeyi tek tek ekleyip bitirir) ve bitirir. */
+    static void doItemStation(GameEngine e, Order o, int item, Station st) {
+        if (st == Station.SOS && o.getLine(item).product.hasToppings() && o.getLine(item).isStepOpen(o.getLine(item).product.toppingStepIndex())) {
+            addTargetAndFinish(e, o, item);
+            return;
+        }
+        assertEquals(StartResult.STARTED, e.startStep(o.id, item, st.id));
         waitDone(e, o);
     }
 
-    /** Siparişin önerilen sıradaki adımını yapar (topping: hedef küme). */
+    /** Siparişin önerilen sıradaki adımını yapar (topping: hedef küme tek tek eklenir). */
     static void doNext(GameEngine e, Order o) {
         Step s = o.nextStep();
         assertNotNull("öneri yok", s);
-        StartResult r = e.startStep(o.id, -1, s.station.id);
-        if (r == StartResult.NEEDS_TOPPINGS) {
+        if (s.isTopping()) {
             int li = e.openToppingItem(o.id);
             assertTrue(li >= 0);
-            r = e.confirmToppings(o.id, li, e.getToppingTarget(o.id, li));
+            addTargetAndFinish(e, o, li);
+            return;
         }
-        assertEquals(StartResult.STARTED, r);
+        assertEquals(StartResult.STARTED, e.startStep(o.id, -1, s.station.id));
         waitDone(e, o);
     }
 

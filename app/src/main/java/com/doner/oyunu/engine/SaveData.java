@@ -50,7 +50,7 @@ public final class SaveData {
 
     public String serialize() {
         StringBuilder sb = new StringBuilder();
-        sb.append("v=2\n");
+        sb.append("v=3\n"); // v=1 (v0.4) ve v=2 (v0.5) kayıtları da yüklenir
         sb.append("day=").append(day).append('\n');
         sb.append("bestDay=").append(bestDay).append('\n');
         sb.append("money=").append(money).append('\n');

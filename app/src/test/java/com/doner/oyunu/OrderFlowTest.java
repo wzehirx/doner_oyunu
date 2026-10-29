@@ -170,7 +170,8 @@ public class OrderFlowTest {
         GameEngine e = engine(3);
         Order o = e.spawnOrder(Arrays.asList("ekmek_arasi", "ayran"), NONE);
         assertEquals(240 + 45, o.price());
-        float expected = 3.5f + 3.5f + (2.0f + 4 * 0.3f) + 1.8f + (1.5f + 0.5f * 2);
+        // v0.6: tek tek ekleme; tahmini iş yükü malzeme başına 1,5 sn (ekleme + oyuncu eylemi)
+        float expected = 3.5f + 3.5f + (2.0f + 4 * 1.5f) + 1.8f + (1.5f + 0.5f * 2);
         assertEquals(expected, o.workSeconds(), 0.01f);
         assertEquals(2.5f, o.getPackStep().baseSeconds, 1e-6f);
         assertEquals(Station.PAKET, o.getPackStep().station);

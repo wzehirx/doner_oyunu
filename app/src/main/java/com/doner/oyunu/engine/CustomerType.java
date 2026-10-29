@@ -13,6 +13,9 @@ public final class CustomerType {
     public final String[] preferred;
     /** Duyuru için kısa tanım: "Acelesi var." */
     public final String hint;
+    /** Döner kaleminde yarım / duble boy isteme olasılığı (boy açıldıktan sonra; kalan olasılık tam ekmek). */
+    public float halfChance = 0.2f;
+    public float doubleChance = 0.15f;
 
     public CustomerType(String id, String name, int minDay, int weight, float patienceSeconds,
                         float tipMult, float extraItemChance, String hint, String... preferred) {
@@ -25,6 +28,13 @@ public final class CustomerType {
         this.extraItemChance = extraItemChance;
         this.hint = hint;
         this.preferred = preferred;
+    }
+
+    /** Yarım/duble boy olasılıklarını ayarlar (katalog kurulumu). */
+    CustomerType sizes(float half, float dbl) {
+        this.halfChance = half;
+        this.doubleChance = dbl;
+        return this;
     }
 
     public boolean prefers(String productId) {

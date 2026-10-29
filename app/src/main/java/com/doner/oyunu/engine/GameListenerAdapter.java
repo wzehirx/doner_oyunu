@@ -34,4 +34,11 @@ public class GameListenerAdapter implements GameListener {
     @Override public void onOutOfStock(Order order, Ingredient ingredient) {}
     @Override public void onEmergencyPurchase(Ingredient ingredient, int qty, int cost) {}
     @Override public void onNotEnoughMoney(int needed) {}
+    @Override public void onToppingAddStarted(Order order, int itemIndex, Ingredient ingredient, int count, float seconds) {}
+    @Override public void onToppingAdded(Order order, int itemIndex, Ingredient ingredient, int count) {}
+    @Override public void onToppingRemoved(Order order, int itemIndex, Ingredient ingredient, int remaining) {}
+    @Override public void onToppingsFinished(Order order, int itemIndex, java.util.Set<String> chosen) {}
+    @Override public void onSizeChosen(Order order, int itemIndex, PortionSize ordered, PortionSize chosen) {}
+    @Override public void onStationInfo(Order order, int itemIndex, String optionId) {}
+    @Override public void onOptionRejected(Order order, String optionId, StartResult reason) {}
 }

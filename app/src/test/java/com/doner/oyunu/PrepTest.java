@@ -196,7 +196,7 @@ public class PrepTest {
 
     // ------------------------------------------------------------ tepsi
     @Test public void trayMakesToppingSelectionFasterAndUsesTrayInsteadOfStock() {
-        SaveData s = day(1);
+        SaveData s = day(3); // ketçap 3. günde açılır
         GameEngine e = new GameEngine(1, s);
         e.beginPrep();
         List<String> ids = Arrays.asList("domates", "marul", "sogan", "ketcap");
@@ -224,7 +224,7 @@ public class PrepTest {
     }
 
     @Test public void partiallyCoveredByTrayIsPartiallyFaster() {
-        SaveData s = day(1);
+        SaveData s = day(3);
         GameEngine e = new GameEngine(1, s);
         e.beginPrep();
         assertEquals(PrepResult.STARTED, e.startPrepTray(Arrays.asList("domates", "marul")));

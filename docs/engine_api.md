@@ -1,285 +1,236 @@
-# Engine API v0.5 (paket `com.doner.oyunu.engine`, saf Java, android.* yok, deterministik)
+# Engine API v0.6 (paket `com.doner.oyunu.engine`, saf Java, android.* yok, deterministik)
 
-Bu belge UI geliştirmesi için TEK kaynaktır. Şartname: `docs/design_v05.md` (akış), `docs/spec.md` (genel), `docs/research.md` (veri).
+Bu belge UI geliştirmesi için TEK kaynaktır. Şartname: `docs/design_v06.md` (v0.6: eylem menüleri, tek tek malzeme, boy, sos takvimi), `docs/design_v05.md` (akış), `docs/spec.md` (genel), `docs/research.md` (veri).
 Para birimi TL (int). Tüm olaylar `tick()`/eylemi çağıran iş parçacığında, eylem metodunun içinde (eşzamanlı) gelir.
 
-## 0. v0.4 -> v0.5 özet (UI'nın bilmesi gerekenler)
-| Konu | v0.4 | v0.5 |
+## 0. v0.5 -> v0.6 özet (UI'nın bilmesi gerekenler)
+| Konu | v0.5 | v0.6 |
 |---|---|---|
-| Sipariş | ürünlerin adımları düz sıra, kalem-içi "Paketle" | **kalem (OrderLine) bazlı, serbest sıra**; kalem-içi paket YOK; tek ortak **"Siparişi paketle"** (PAKET) adımı |
-| Sosuz/salata | otomatik | **topping (malzeme) seçimi** adımı: `startStep` → `NEEDS_TOPPINGS` → panel → `confirmToppings` |
-| Hazırlık | yok | **hazır döner / hazır içecek / salata-sos tepsisi**, gün öncesi **PREP aşaması** (`beginPrep`, `startDay`) |
-| Çırak | +1 yuva | **otomatik işçi** (seviye 1-3), yuva eklemez; olay: `onApprenticeAction` |
-| `startStep` | `(orderId, stationId)` | `(orderId, stationId)` (eski, kalem otomatik) **veya** `(orderId, itemIndex, stationId)` |
-| `Order.nextStep()` | zorunlu sıradaki adım | **ÖNERİLEN** adım (motor sıra dayatmaz); paketleme önerisi `order.getPackStep()` |
-| Özet | – | `DaySummary.wastedPortions/wastedCost/mistakes/perfect/prepBatches/apprenticeTasks` |
-| Kayıt | `v=1` | `v=2` (+`readyDrinks`, `apprenticeAnnounce`); v1 kayıtlar yüklenir |
+| Malzeme ekleme | SOS'ta toplu panel: `NEEDS_TOPPINGS` -> `confirmToppings(ids)` | **Tek tek**: `addTopping(orderId,item,ingId)` (0,5-0,6 sn, tüketir, olay), **bol = 2 kez**, `removeLastTopping`, `finishToppings` ("Malzemeleri bitir"). Eski toplu API geriye uyum için DURUR (bkz. §9) |
+| İstasyon menüsü | yok | **`getStationOptions(orderId,item,stationId)`** -> `List<StationOption>` ve **`applyStationOption(orderId,item,stationId,optionId)`** (TEK giriş noktası: TalkBack eylemi de, panel de bunu çağırır) |
+| Döner boyu | yok | Her döner içeren kalem **boy** taşır: Yarım / Tam / Duble. DONER istasyonunda boy SEÇİLİR (`size:*` seçenekleri); yanlış boy = boy hatası (teslimde ceza) |
+| Hazır döner | porsiyon sayacı | **yarım porsiyon sayacı** (`getReadyMeatHalves`), hazırlık 4 veya 2 porsiyon |
+| Sos/salata | hepsi 1. günden | **Gün gün açılır** (`Ingredient.unlockDay`); istek/varsayılan/seçenek/market/öneri yalnızca açık malzemeyle |
+| Yeni olaylar | – | `onToppingAddStarted/Added/Removed/Finished`, `onSizeChosen`, `onStationInfo`, `onOptionRejected` |
+| `StartResult` | … | + `LOCKED, MAX_REACHED, NOTHING_TO_UNDO, FULL, INFO, UNKNOWN_OPTION` |
+| Kayıt | `v=2` | `v=3` (alan değişmedi); `v=1` ve `v=2` kayıtlar yüklenir |
 
-Geriye dönük uyumlu kalanlar (UI ince adaptörle derlenir): `Order.items/steps/nextStep()/isRunning()/isReady()/getNextStepIndex()/getPosition()`,
-`startStep(orderId, stationId)`, `getActiveFor(orderId)`, `getFreeSlots()/getSlotCount()`, `missingIngredient(s)`, `emergencyBuy*`.
-**Davranış değişiklikleri:** `Order.isRunning()` artık "siparişte herhangi bir iş sürüyor" demektir (kalemler paralel yürüyebilir);
-`getNextStepIndex()` biten adım sayısıdır (paketleme dahil), `order.steps` tüm kalem adımları + sondaki paketleme adımıdır.
+Geriye uyumlu kalanlar: `startStep(...)`, `confirmToppings(...)`, `getToppingOptions/getInitialToppings/getToppingTarget/openToppingItem`, `Order.items/steps/nextStep()/...`, `getReadyMeat(meatId)` (tam porsiyon, yarım aşağı yuvarlanır), `emergencyBuy*`.
+**Davranış değişiklikleri:** (1) `Order.price()` ve `Order.itemsText()` boy dahil ("Ekmek arası döner (yarım ekmek)"); (2) malzeme adımı artık ZAMANLI bir iş değildir: tek tek eklemeler kısa işlerdir (`ActiveStep.isToppingAdd()`), adım `finishToppings` ile anında biter (`onStepFinished` gelir, `onStepStarted` gelmez); (3) `startStep` ile DONER dilimleme istenen boyu varsayar (boy hatası olmaz) — boy seçmek için `applyStationOption(..., "size:...")`; (4) `getReadyDoner()` tam porsiyon (yarım aşağı).
 
 ## 1. Tipik akış (UI)
 ```java
-SaveData save = SaveData.parse(prefsString);             // null/boş => yeni oyun; v0.4 kaydı da yüklenir
-// MARKET: Shop.buyRecommended(save); Shop.buyUpgrade(save, "cirak"); Shop.buyIngredient(save, "ketcap", 10);
+SaveData save = SaveData.parse(prefsString);             // null/boş => yeni oyun; v0.4/v0.5 kaydı da yüklenir
+// MARKET: Shop.availableIngredients(save) (yalnızca açık malzemeler); Shop.buyRecommended(save); Shop.buyUpgrade(save, "cirak");
 GameEngine engine = new GameEngine(System.nanoTime(), save);   // save'i doğrudan günceller
 Narrator narrator = new Narrator(engine, (text, urgent) -> speaker.say(text, urgent));
 engine.addListener(narrator);                                   // + kendi GameListener'ın (ses/titreşim/görsel)
 
-// --- GÜN ÖNCESİ HAZIRLIK (isteğe bağlı; gün süresine sayılmaz, sınırsız süre) ---
-engine.beginPrep();                                   // state PREP, onPrepPhaseStarted
-engine.startPrepDoner("et_doner");                    // PrepResult.STARTED ...
-engine.startPrepDrink();
-engine.startPrepTray(Arrays.asList("domates","marul","sogan","ketcap"));
-engine.tick(dt);                                      // PREP'te de çağır: hazırlık işleri/çırak ilerler, saat AKMAZ
-engine.startDay();                                    // "Dükkânı aç" (onPrepPhaseEnded + onDayStarted). Atlamak için doğrudan startDay()
+// --- GÜN ÖNCESİ HAZIRLIK (isteğe bağlı; gün süresine sayılmaz) --- (seçenek menüsü sipariş olmadan da çalışır)
+engine.beginPrep();
+for (StationOption op : engine.getStationOptions(-1, -1, Station.DONER.id)) { /* "4 porsiyon dilimle", "2 porsiyon dilimle" */ }
+engine.applyStationOption(-1, -1, Station.DONER.id, "prep:doner:et_doner:4");
+engine.applyStationOption(-1, -1, Station.ICECEK.id, "prep:drink");
+engine.applyStationOption(-1, -1, Station.SOS.id, "prep:tray");
+engine.tick(dt);                                      // PREP'te de çağır
+engine.startDay();                                    // "Dükkânı aç"
 
 // --- GÜN (her karede) ---
 engine.tick(dt);
-engine.selectOrder(id);                // kart dokunuşu; onOrderSelected + onNextStepHint
-engine.selectItem(1);                  // (isteğe bağlı) seçili siparişte kalem seç
-StartResult r = engine.startStep(orderId, itemIndex /* -1 = otomatik */, stationId);
-if (r == StartResult.NEEDS_TOPPINGS) {                // SOS istasyonu: malzeme paneli aç
-    List<ToppingOption> opts = engine.getToppingOptions(orderId, engine.openToppingItem(orderId));
-    // kullanıcı düğmelerle seçer; "Hedefi oku" -> narrator.toppingTarget(order, itemIndex)
-    engine.confirmToppings(orderId, itemIndex, selectedIds);   // "Tamam" -> STARTED veya OUT_OF_STOCK/INVALID/NO_SLOT...
-}
+engine.selectOrder(id);  engine.selectItem(1);        // kart / kalem dokunuşu (isteğe bağlı)
+
+// İstasyon düğmesi: menüyü OLUŞTUR (TalkBack eylemleri VE panel aynı listeyi kullanır)
+List<StationOption> ops = engine.getStationOptions(orderId, -1 /*otomatik kalem*/, stationId);
+//  TalkBack:  her op için AccessibilityAction(label = op.label())  -> seçilince applyStationOption(orderId, -1, stationId, op.id)
+//  Panel:     her op için büyük düğme (contentDescription = op.label(); !op.enabled ise soluk + lockReason)
+StartResult r = engine.applyStationOption(orderId, -1, stationId, op.id);   // iki yol da BUNU çağırır
+
+// SOS örneği (tek tek):
+engine.applyStationOption(oid, li, Station.SOS.id, "add:domates");   // 0,6 sn sonra onToppingAdded "Domates eklendi"
+engine.applyStationOption(oid, li, Station.SOS.id, "add:domates");   // 2. kez -> bol (onToppingAdded count=2)
+engine.applyStationOption(oid, li, Station.SOS.id, "undo");          // son ekleneni geri al (stok iade)
+engine.applyStationOption(oid, li, Station.SOS.id, "read:added");    // onStationInfo -> Narrator "Eklenenler: ..."
+engine.applyStationOption(oid, li, Station.SOS.id, "finish");        // "Malzemeleri bitir"
+// DONER örneği (boy seçimi):
+engine.applyStationOption(oid, li, Station.DONER.id, "size:yarim");  // yarim | tam | duble
+// Tek eylemli istasyon (PAKET): getStationOptions tek eleman döner -> UI menü açmadan doğrudan uygular
 engine.deliver(orderId);               // sipariş paketlenince (isReady) teslim
 // bitince onDayFinished/onDayFailed -> prefs.putString(save.serialize())
 ```
-Gün bitince motor `save.day`'i artırır, kirayı düşer. Gün BAŞARISIZ olursa para/stok/hazır içecek gün başına döner (hazırlık harcamaları dahil),
-yıldız en az 1.5 olur, `save.day` aynı kalır.
+Gün bitince motor `save.day`'i artırır, kirayı düşer. Gün BAŞARISIZ olursa para/stok/hazır içecek gün başına döner (hazırlık harcamaları dahil), yıldız en az 1.5 olur, `save.day` aynı kalır.
 
 ## 2. Durum makinesi
-`READY → (PREP) → RUNNING → FINISHED | FAILED`
-- `READY`: yeni motor. `tick()` veya sipariş eylemi (`startStep/confirmToppings/spawnOrder`) günü kendiliğinden başlatır (`onDayStarted` tam bir kez); **`startPrep` READY'yi PREP'e geçirir**.
-- `PREP`: müşteri gelmez, saat akmaz (`getElapsed()==0`, `getTimeLeft()==duration`). Yalnızca hazırlık (oyuncu + çırak). Sipariş yok → sipariş eylemleri `NO_ORDER`.
-- `RUNNING`: normal gün. Hazırlık de yapılabilir (boş yuva varsa).
-- `isRunning()` = READY, PREP veya RUNNING (gün bitmedi). `isPrepPhase()`.
-- `beginPrep()` : READY → PREP (false: zaten başladı). `startDay()`: READY/PREP → RUNNING (false: zaten başladı).
-- Hazırlık işi PREP'te başlayıp gün başladığında bitmediyse gün içinde devam eder.
+`READY → (PREP) → RUNNING → FINISHED | FAILED` (v0.5 ile aynı)
+- `READY`: yeni motor. `tick()` veya sipariş eylemi günü kendiliğinden başlatır (`onDayStarted` bir kez); `startPrep*`/`applyStationOption("prep:...")` READY'yi PREP'e geçirir.
+- `PREP`: müşteri gelmez, saat akmaz. Yalnızca hazırlık (oyuncu + çırak). Sipariş yok. `getStationOptions(-1,…)` yalnızca hazırlık seçeneklerini verir.
+- `RUNNING`: normal gün; hazırlık da yapılabilir (boş yuva varsa).
+- `isRunning()` = READY, PREP veya RUNNING. `isPrepPhase()`. `beginPrep()`, `startDay()`.
 
-## 3. Sınıflar
+## 3. Sınıflar (yeni/değişen)
 | Sınıf | Açıklama |
 |---|---|
-| `Station` (enum) | DONER=1, EKMEK=2, SOS=3, IZGARA=4, PAKET=5, ICECEK=6, TATLI=7; `id`, `displayName`, `byId(int)` |
-| `Ingredient` | `id,name,unit,price,category`; `Category{ET,EKMEK,SOS,SALATA,ICECEK,TATLI,DIGER}`; `isTopping()` (SOS/SALATA); `emergencyPrice()`; `EMERGENCY_BATCH=3`. 22 malzeme (yeni: `ketcap,mayonez,aci_sos,nar_eksisi` SOS; `tursu,biber,limon` SALATA; `yogurt` SOS; `domates,sogan,marul` SALATA) |
-| `Step` | `name,station,baseSeconds,needs,kind,sequential`; `Kind{NORMAL,TOPPING}`; `isTopping()`, `meatId()` (hazır döner ile hızlanan adım), `isDrinkFill()` |
-| `Product` | `id,name,openDay,price,steps`, **`defaultToppings`** (sıralı küme), **`toppingPool`** (4-8 malzeme); `hasToppings()`, `toppingStepIndex()`, `workSeconds()`, `totalNeeds()` (varsayılan topping dahil), `ingredientCost()` |
-| `OrderLine` | siparişin kalemi: `product,index`; `stepCount(), step(i), isStepDone(i), isStepRunning(i), isStepUnlocked(i), isStepOpen(i), firstOpenStep(), isDone(), isRunning(), doneCount()`, `getTarget()` (hedef malzeme kümesi), `getChosen()` (oyuncunun seçimi; topping başlamadıysa null) |
-| `Order` | `id,customer,items(List<Product>),requests(List<Request>),steps`; `lineCount(), getLine(i), getLines()`, `getPackStep()`, `allLinesDone()`, `canPack()`, `isPacking()`, `isReady()` (paketlendi), `isRunning()`, `nextStep()` (önerilen), `getNextStepIndex()`, `getPosition()` (1..; stereo pan), `hasRequests()`, `requestsText()` ("soğansız, acılı"), `targetToppings(lineIndex)`, `price()`, `itemsText()`, `workSeconds()` |
-| `Request` | müşteri isteği; `text` ("soğansız","domatessiz","marulsuz","turşusuz","acılı","acısız","sosuz","bol soslu"); `Request.all()` |
-| `ToppingOption` | panel düğmesi: `ingredient, available, selected (başlangıç durumu), isDefault, stock, trayUses` |
-| `ToppingCheck` | teslim doğrulaması: `getMistakes()` (`Mistake{ingredientId, extra, requested, productName}`), `mistakes()`, `getToppingLines()`, `perfect()` |
-| `ActiveStep` | çalışan iş: `order` (hazırlıkta null), `step`, `total`, `slot` (çırakta -1), `worker` (0 oyuncu, 1-3 çırak), `itemIndex` (-1: paketleme/hazırlık), `prep` (PrepKind veya null); `getRemaining(), progress(), isApprentice(), isPrep(), isPack()` |
-| `PrepKind` (enum) | `DONER` (4 porsiyon, 6 sn, DONER ist.), `DRINK` (4 bardak, 4 sn, ICECEK), `TRAY` (malzeme başına 6 kullanım, 5 sn, SOS); `displayName, station, batch, baseSeconds` |
-| `PrepResult` (enum) | STARTED, NOT_ALLOWED, NO_SLOT, OUT_OF_STOCK, FULL, INVALID |
-| `StartResult` (enum) | STARTED, NO_ORDER, WRONG_STATION, NO_SLOT, OUT_OF_STOCK, ORDER_BUSY, ORDER_READY, NOT_RUNNING, **NEEDS_TOPPINGS, STEP_LOCKED, INVALID** |
-| `ApprenticeAction` | `worker, started, order (hazırlıkta null), itemIndex, step, prep, pack, seconds`; `isPrep()` |
-| `DaySummary` | `day, failed, revenue, tips, emergencySpend, rent, rentDue, rentUnpaid(), delivered, lost, wrongTaps, startStars, endStars, moneyAfter, newProductsNext`, **`wastedPortions, wastedCost, mistakes, perfect, prepBatches, apprenticeTasks`**; `profit()` (israf ayrıca düşülmez: malzeme zaten harcanmıştı) |
-| `Catalog` | statik: `ingredients(), ingredient(id), products(), product(id), productsForDay(day), newProductsOnDay(day), upgrades(), upgrade(id), customerTypes(), typesForDay(day)`; `Catalog.AYRAN="ayran"` |
-| `Upgrade` / `Upgrades` | `Upgrades.slots()` (hep 1, çırak yuva eklemez), **`apprenticeLevel()`** (0..3), **`readyCapacity(PrepKind)`**, `speedMult(Station)`, `patienceMult(), arrivalMult(), tipMult(), starGainMult(), touristMult(), queueBonus(), stockCap()` |
-| `Shop` | `buyIngredient, buyUpgrade, recommendedPurchase/Cost, buyRecommended` (artık seçilebilir topping'ler için küçük pay içerir) |
-| `DayConfig` | aynı + `requestChance(day)` (1:0, 2:%20, 3+:%45), `toppingsPreselected(day)` (1-3 true) |
-| `SaveData` | + `apprenticeAnnounce` (ayar, varsayılan true), `readyDrinks` (gün sonunda atılmaz) |
+| `PortionSize` (enum) | `HALF("yarim","Yarım ekmek")`, `FULL("tam","Tam ekmek")`, `DOUBLE("duble","Duble")`; `id, displayName, halves` (yarım porsiyon birimi 1/2/4), `priceMult` (0,60/1,00/1,70), `timeMult` (0,6/1,0/1,5), `unlockDay` (2/1/4); `portions()`, `isOpen(day)`, `spoken()` ("yarım ekmek"), `byId(id)`, statik `halvesText(halves)` ("3,5"). Sıra HALF<FULL<DOUBLE |
+| `StationOption` | menü seçeneği: `id`, `group` (`STEP, SIZE, ADD, CONTROL, READ, PREP`), `name` ("Domates ekle"), `description` (durumlu: "Ketçap ekle, stokta 5"), `enabled`, `lockReason` (kilitliyse; yoksa null), `ingredientId` (ADD/PREP), `outOfStock`; `label()` = enabled ? description : name + ", " + lockReason (TalkBack etiketi) |
+| `Ingredient` | + `unlockDay`, `isOpen(day)`, `scalesWithSize()` (ET ve EKMEK kategorisi). 25 malzeme |
+| `Product` | + `defaultToppings(day)`, `toppingPool(day)` (yalnızca günün AÇIK malzemeleri), `hasMeat()`, `sizedStepIndex()`, `totalNeeds(day)`. Alanlar `defaultToppings`/`toppingPool` TAM (kilitler dahil) kümelerdir |
+| `Step` | + `isSized()` (DONER istasyonunda et tüketen adım: boy seçilir), `isBreadStep()` (EKMEK istasyonunda ekmek/lavaş tüketen adım: istenen boy uygulanır) |
+| `OrderLine` | + `getSize()` (istenen boy), `getChosenSize()` (oyuncunun seçtiği; dilimleme başlamadıysa null), `hasSize()`, `sizeMismatch()`, `price()` (boya göre), `displayName()` ("Ekmek arası döner (yarım ekmek)"; tam ekmek eklenmez), `getPool()`/`getDefaults()` (siparişin gününe göre açık küme), `getAddedCounts()` (id -> 1|2), `getAddedList()`, `addedCount(id)`, `addedTotal()`. `getChosen()`: hiç eklenmediyse ve bitirilmediyse null, eklemeler sürerken kısmi küme, bitince son küme |
+| `Order` | + `day`; `price()` boy dahil toplam; `itemsText()` boylu; `workSeconds()` boy ve tek tek ekleme dahil |
+| `ToppingCheck` | + `getSizeMistakes()` (`SizeMistake{productName, ordered, served, tooMuch()}`), `ingredientMistakes()`, `sizeMistakeCount()`, `getSizedLines()`; **`mistakes()` = malzeme + boy hataları**; `perfect()` hepsi doğru |
+| `ActiveStep` | + `isToppingAdd()`, `getAddedIngredient()`, `getSize()` (dilimleme/ekmek adımında kullanılan boy), `getAmount()` (hazırlık miktarı) |
+| `StartResult` | STARTED, NO_ORDER, WRONG_STATION, NO_SLOT, OUT_OF_STOCK, ORDER_BUSY, ORDER_READY, NOT_RUNNING, NEEDS_TOPPINGS, STEP_LOCKED, INVALID, **LOCKED, MAX_REACHED, NOTHING_TO_UNDO, FULL, INFO, UNKNOWN_OPTION** |
+| `CustomerType` | + `halfChance`, `doubleChance` (boy olasılığı; kalan tam ekmek) |
+| `DaySummary` | + `sizeMistakes` (boy hatalı teslim sayısı; `mistakes`'e de dahil), `newIngredientsNext` ("ketçap, mayonez") |
+| `Catalog` | + `ingredientsForDay(day)`, **`newIngredientsOnDay(day)`** (sos/salata; 1. günde domates, soğan, marul) |
+| `Shop` | + `availableIngredients(save)`; `buyIngredient` kapalı malzemede `LOCKED`; öneri yalnızca açık malzeme + boy talebi |
 
-### Ürünler ve adımlar (paket adımı kalem içinde YOK)
-| Ürün (açılış) | Adımlar (istasyon, sn) | Varsayılan topping → havuz |
+### Sos/salata takvimi (`Ingredient.unlockDay`)
+| Gün | Açılan malzeme |
+|---|---|
+| 1 | domates, soğan, marul |
+| 3 | ketçap, mayonez |
+| 5 | acı sos |
+| 7 | turşu |
+| 8 | süzme yoğurt (zurna dürüm ile) |
+| 9 | nar ekşisi |
+| 11 | yeşil biber, sumak (yeni) |
+| 13 | sarımsaklı yoğurt sos (yeni) |
+| 14 | limon (lahmacun ile) |
+| 15 | közlenmiş biber ve domates (yeni) |
+Müşteri istekleri (`acılı` 5., `turşusuz` 7. günden…), ürün varsayılan kümeleri (`pilav üstü` varsayılanı artık domates, soğan, turşu), seçenek listesi (`getStationOptions`, `getToppingOptions`), hazır tepsi seçimi (`getPrepTrayChoices`), market ve öneri YALNIZCA açık malzemeyi kullanır. Havuz tam açıkken ürün başına ≤ 8 malzeme. Duyuru: `Narrator.newIngredientsText(day)` ("Yeni malzemeler: ketçap ve mayonez." / "Yeni malzeme: acı sos."), `Narrator.dayStarted` bunu içerir, `DaySummary.newIngredientsNext` + `Narrator.dayFinished` ("Yarın yeni malzeme: …"), `Texts.briefingLines` satırı.
+
+### Ürünler (boy, adım, varsayılan topping — tam liste için `Catalog`)
+Boylu ürünler (döner/tavuk içeren): ekmek arası döner, pilav üstü, tavuk dürüm, Hatay dürüm, ekmek arası tavuk, zurna, iskender, porsiyon döner. Boysuz: ayran, kutu içecek, lahmacun, künefe.
+Açılış günleri/adımlar v0.5 ile aynı. Pilav üstü varsayılan: domates, soğan, turşu.
+
+## 4. Döner porsiyon boyu
+| Boy | Porsiyon | Fiyat | Dilimleme/ısıtma süresi | Açılış |
+|---|---|---|---|---|
+| Yarım ekmek | 0,5 | ürün fiyatının %60'ı | ×0,6 | 2. gün |
+| Tam ekmek | 1 | %100 | ×1,0 | 1. gün |
+| Duble | 2 | %170 | ×1,5 | 4. gün |
+- Müşteri boy ister (tip başına olasılık; `rollSizes`): 1. gün yalnızca tam, 2-3. gün yarım, 4. gün + duble. Sipariş duyurusu/kartı "Ekmek arası döner (yarım ekmek)", "(duble)"; tam ekmek ayrıca söylenmez.
+- **DONER istasyonunda oyuncu boyu SEÇER**: `applyStationOption(o, li, DONER, "size:yarim|tam|duble")`. Seçilen boy ≠ istenen = **boy hatası**: teslimde `onOrderMistake` (ceza 0,05 yıldız/hata, tavan 0,15, bahşiş yarıya), `ToppingCheck.getSizeMistakes()`, `DaySummary.sizeMistakes`. Doğru boy kusursuzluğa sayılır. Seçenekler hangisinin doğru olduğunu belli etmez.
+- Kilit: boy kendi açılış gününden önce seçilemez (`LOCKED`, `onOptionRejected`), **sipariş edilen boy istisna** (çıkmaz olmasın).
+- **Et ve ekmek tüketimi boya göre** (yarım porsiyon sayacı, `ceil` yok): ihtiyaç = adımın miktarı × `halves`. Dilimleme adımında et (DONER, `Step.isSized()`) SEÇİLEN boyla; ekmek/lavaş ısıtmada (`Step.isBreadStep()`) İSTENEN boyla (ısıtma boy seçimi gerektirmez). Karışık malzemeler (harç, tereyağı, pirinç) ölçeklenmez. Stoktan düşen birim tamdır; yarım kalan "açık yarım" olarak motorda tutulur (sonraki yarım kullanır, gün sonunda silinir): 2 yarım ekmek = 1 ekmek.
+- **Hazır dilimlenmiş döner yarım-porsiyon sayacıdır**: `getReadyMeatHalves(meatId)` (2 = 1 porsiyon), `getReadyDonerHalves()`; `getReadyMeat/getReadyDoner` = tam porsiyon (aşağı yuvarlanır). Boyla dilimleme hazırdan yeterliyse (`ihtiyaç ≤ hazır`) hazırdan düşer: süre = 0,8 × `timeMult` (en az 0,5 sn); yetmezse hazıra dokunulmaz, stoktan normal süreyle yapılır. `Narrator.readyStockText`: "Hazır: döner 3,5 porsiyon."
+- **Hazırlık**: `startPrepDoner(meatId)` = 4 porsiyon (6 sn), `startPrepDoner(meatId, 2)` = 2 porsiyon (3,6 sn); başka miktar `INVALID`. Kapasite 8 porsiyon/malzeme (yarım porsiyon hassasiyetiyle kontrol). Menü seçeneği: "4 porsiyon dilimle", "2 porsiyon dilimle" (menüde birden çok et varsa "4 porsiyon et döner dilimle").
+- Gün sonu israf: hazır yarımlar yukarı yuvarlanarak `wastedPortions`, değeri `wastedCost` (yarım için fiyatın yarısı).
+- Çırak (seviye 2/3) dilimleme/ısıtmayı İSTENEN boyla yapar (hatasız).
+- Ekonomi: ortalama fiyat/talep ~dengeli; market önerisi 4. günden itibaren et/ekmek talebini %12 artırır (`Shop.sizeDemand`).
+
+## 5. Tek tek malzeme ekleme (SOS istasyonu)
+```java
+StartResult addTopping(int orderId, int itemIndex, String ingredientId)   // itemIndex<0: otomatik kalem
+StartResult removeLastTopping(int orderId, int itemIndex)
+StartResult finishToppings(int orderId, int itemIndex)
+Map<String,Integer> getAddedToppings(int orderId, int itemIndex)         // id -> 1|2
+```
+- Önkoşul: kalemin diğer adımları (ısıt, dilimle...) bitmiş (`STEP_LOCKED` + `onStepLocked` aksi halde). Ekleme **kısa bir iştir**: salata (SALATA kategorisi) 0,6 sn, sos (SOS) 0,5 sn; hazır tepsiden eklenirse yarısı (0,3 / 0,25); istasyon hızı ve tempo uygulanır (en az 0,25 sn). Oyuncu yuvasını kullanır; ekleme sürerken kalem meşguldür.
+- **Tüketim hemen** (tepsi varsa önce tepsiden 1 kullanım, yoksa stoktan 1). Stok yoksa `OUT_OF_STOCK` + `onToppingsRejected(order,item,OUT_OF_STOCK,ing)`; hiçbir şey tüketilmez (UI `emergencyBuy(ingId)` önerir).
+- **Bol**: aynı malzeme ikinci kez eklenince `count=2` (bol, +1 birim). Üçüncüsü `MAX_REACHED` + `onToppingsRejected(...,MAX_REACHED,ing)`. Bol, hedef doğrulamasını değiştirmez (yalnızca masraf/zaman).
+- Havuz dışı / kapalı (kilitli gün) malzeme `INVALID` + `onToppingsRejected`.
+- **Geri al**: son eklenen malzemeyi stoğa (tepsiden geldiyse tepsiye) iade eder; yalnızca malzeme adımı bitmemişken ve ekleme sürmüyorken. `NOTHING_TO_UNDO` / `ORDER_BUSY` + `onOptionRejected("undo", …)`.
+- **Malzemeleri bitir**: adımı anında tamamlar (boş küme geçerli = sosuz). `onToppingsFinished` + `onStepFinished` + (kalem hazırsa) `onItemFinished`, `onOrderReadyToPack`, `onNextStepHint`. Ekleme sürerken `ORDER_BUSY`, kilitliyse `STEP_LOCKED`.
+- **Doğrulama eski gibi TESLİMDE** (`deliver`): eklenen küme (bol sayılmaz) ≠ hedef küme (günün açık varsayılanı ± istekler) -> malzeme başına −0,05 yıldız (tavan −0,15), bahşiş yarıya; tam doğruysa `onOrderPerfect` + bonus. Boy hataları aynı sayaçta toplanır.
+- `getToppingTarget(orderId,item)` ve `Narrator.toppingTarget` = "Hedefi oku"; "Eklenenleri oku" = `Narrator.addedText` ("Eklenenler: domates bol ve marul."; hedefle karşılaştırma YAPMAZ).
+- Hazır tepsi varsa ilgili ekleme süresi yarıya iner (v0.6 §2).
+
+## 6. İstasyon eylem menüsü
+```java
+List<StationOption> getStationOptions(int orderId, int itemIndex, int stationId)
+StartResult applyStationOption(int orderId, int itemIndex, int stationId, String optionId)
+int resolveStationItem(int orderId, int itemIndex, int stationId)   // menünün baktığı kalem (-1: yok / PAKET)
+```
+- `orderId < 0` veya sipariş yok/hazır: yalnızca **hazırlık** seçenekleri. `itemIndex < 0`: kalem otomatik (seçili kalem, sonra istasyonda açık adımı olan ilk kalem, sonra kilitli/sürenler). Gün bitti: boş liste.
+- Kilitli seçenekler listede kalır (`enabled=false`, `lockReason`): "2. günde açılır", "Çalışıyor", "Bir işlem sürüyor", "Önce kalemin diğer adımları bitmeli", "Önce tüm kalemler hazır olmalı", "Paketleme sürüyor", "Ekleme sürüyor", "En fazla bol, iki kez eklenir", "Henüz malzeme eklenmedi", "Hazır stok dolu", "Malzeme yetmiyor: …", "Yeterli malzeme yok". Kilitli seçeneği yine de uygulamak durumu değiştirmez ve nedeni Narrator ile duyurur.
+- **Stok yetersizliği seçeneği KİLİTLEMEZ**: `enabled=true, outOfStock=true` (açıklama "… stokta yok" / "… malzeme yok"); uygulanınca `OUT_OF_STOCK` + olay; UI acil alımı önerir (`emergencyBuy(op.ingredientId)` veya `emergencyBuyMissing(orderId)`). Hazırlık seçenekleri stok yoksa kilitlenir (acil alım yok).
+- Birden çok kalemli siparişte ad/açıklama kalem adı önekiyle gelir ("Ekmek arası döner: Ekmeği ısıt").
+
+| İstasyon | Seçenekler (id) | Not |
 |---|---|---|
-| Ekmek arası döner (1) | Ekmeği ısıt (EKMEK 3,5), Döneri dilimle (DONER 3,5), **Malzemeleri ekle (SOS, topping 2,0)** | domates, marul, soğan, ketçap → +mayonez, acı sos, turşu |
-| Ayran (2) | Ayranı doldur (ICECEK 1,8) | – |
-| Pilav üstü döner (3) | Pilavı tabağa al (IZGARA 3), Tereyağını gezdir (IZGARA 2), Döneri dilimle (DONER 4,5), Garnitürü ekle (topping 2) | domates, biber, turşu → +soğan, acı sos |
-| Tavuk dürüm (4) | Lavaşı ısıt, Tavuğu dilimle, topping | marul, domates, mayonez → +soğan, ketçap, acı sos, turşu |
-| Kutu içecek (5) | Dolaptan al (ICECEK 1) | – |
-| Hatay usulü dürüm (6) | Lavaşı ısıt, Harç ve döner ekle (DONER, 2 malzeme), Izgarada mühürle, topping | soğan, domates, turşu, acı sos, nar ekşisi → +marul, biber |
-| Ekmek arası tavuk (7) | Ekmeği ısıt, Tavuğu dilimle, topping | marul, domates, mayonez → …|
-| Zurna dürüm (8) | Lavaşı ısıt+tereyağı, Döneri dilimle, topping | yoğurt, domates, soğan → +marul, acı sos, turşu, biber |
-| İskender (10) | Ekmeği küp doğra, Döneri dilimle ve ser, Tereyağı ve domates sosu (IZGARA), topping | yoğurt, domates, biber → +acı sos, turşu |
-| Porsiyon döner (12) | Ekmeği ısıt, Döneri dilimle, topping | domates, soğan, biber → +marul, turşu, acı sos, ketçap |
-| Lahmacun (14) | Harcı lavaşa yay (SOS), Fırına ver (IZGARA, sıralı), topping | soğan, domates, limon → +marul, turşu, acı sos |
-| Künefe (16) | Kadayıfı yoğur, Peyniri ser, Fırında pişir, Çevir ve servis et (hepsi TATLI/IZGARA, sıralı) | – |
+| DONER | `size:yarim`, `size:tam`, `size:duble` (dilimleme adımı açıkken), `prep:doner:<et>:4`, `prep:doner:<et>:2` | açıklama: "Duble, 2 porsiyon, 5 saniye" (+ ", hazır dilimden", ", malzeme yok") |
+| EKMEK, IZGARA, TATLI, ICECEK | `step` (istasyondaki ilk açık adım, ad = adım adı); ICECEK + `prep:drink` ("4 bardak ayran doldur", ayran menüdeyse) | `step` = `startStep` ile aynı |
+| SOS | `add:<malzeme>` (açık havuz sırasında), `undo`, `finish`, `read:added`, `read:target`, `prep:tray`; lahmacun harcı için `step` | ikinci eklemede ad "Domates bol ekle"; açıklama "Domates bol ekle, 1 kez eklendi, stokta 4"; tepsi: "…hazır tepside 6" |
+| PAKET | `step` ("Siparişi paketle") | tek eylem: UI doğrudan uygular |
 
-**Bağımlılık kuralları:** `Step.sequential` olan adım, kalemin önceki TÜM adımları bitince açılır (künefe, lahmacun fırın). **Topping adımı** kalemin diğer tüm adımları bitince açılır. Diğer adımlar herhangi sırada ve (çırak varsa) paralel yapılabilir. **Paketleme** tüm kalemler bitince açılır; süre = 1,5 + 0,5 × kalem sayısı.
+`applyStationOption` sonuçları: uygulandıysa `STARTED` (zamanlı iş başladı veya anında eylem tamam), `INFO` (read:*; `onStationInfo`), aksi halde neden: `NO_ORDER, ORDER_READY, NOT_RUNNING, WRONG_STATION` (−0,02 yıldız, istasyonda o kalemde iş yok), `STEP_LOCKED, ORDER_BUSY, NO_SLOT, OUT_OF_STOCK, LOCKED` (boy kilitli), `MAX_REACHED, NOTHING_TO_UNDO, FULL` (hazır stok dolu), `INVALID` (havuz dışı), `UNKNOWN_OPTION`. İlgili red olayı her zaman verilir (Narrator duyurur): `onToppingsRejected`, `onOptionRejected`, `onOutOfStock`, `onStepLocked`, `onNoFreeSlot`, `onWrongStation`, `onPrepRejected`.
 
-## 4. GameEngine
+## 7. GameEngine (yeni/önemli üyeler; v0.5 üyeleri geçerli)
 ```java
 GameEngine(long seed, SaveData save)
-void addListener(GameListener) / removeListener(GameListener)
-void tick(float dt)                                 // büyük dt içeride 0,1 sn alt adımlara bölünür
-// --- aşamalar
-boolean beginPrep();  boolean startDay();           // bkz. §2
-State getState(); boolean isRunning(); boolean isPrepPhase()
-// --- seçim
-boolean selectOrder(int orderId)                    // onOrderSelected + onNextStepHint
-boolean selectNextOrder()                           // döngüsel
-boolean selectItem(int itemIndex)                   // seçili siparişte kalem (-1 otomatik); onItemSelected
-int getSelectedOrderId(); int getSelectedItem(); Order getSelectedOrder()
-// --- sipariş adımları
-StartResult startStep(int orderId, int stationId)                  // kalem otomatik (seçili kalem öncelikli)
-StartResult startStep(int orderId, int itemIndex, int stationId)   // itemIndex<0: otomatik; PAKET istasyonu itemIndex'ten bağımsız ortak paketlemedir
-StartResult confirmToppings(int orderId, int itemIndex, Collection<String> ingredientIds)
-List<ToppingOption> getToppingOptions(int orderId, int itemIndex)  // havuz sırasında
-Set<String> getInitialToppings(int orderId, int itemIndex)         // panel açılışında seçili (1-3. gün varsayılan, sonra boş)
-Set<String> getToppingTarget(int orderId, int itemIndex)           // hedef küme (varsayılan ± istekler)
-int openToppingItem(int orderId)                                   // topping bekleyen ilk kalem, yoksa -1
-boolean deliver(int orderId)                                       // paketlenmediyse false
-// --- hazırlık
-PrepResult startPrep(PrepKind kind, Collection<String> ids)
-PrepResult startPrepDoner(String meatId); PrepResult startPrepDrink(); PrepResult startPrepTray(Collection<String> ingredientIds)
-int getReadyMeat(String meatId); int getReadyDoner(); int getReadyDrinks(); int getTrayUses(String ingId); int getTrayTotal()
-int getReadyCapacity(PrepKind kind)
-List<Ingredient> getPrepMeats()          // menüde kullanılan döner malzemeleri (hazırlanabilir)
-List<Ingredient> getPrepTrayChoices()    // tepsiye konabilecekler (menü topping havuzlarının birleşimi)
-boolean menuHasDrinkPrep()               // menüde ayran var mı
-// --- stok / acil alım
-boolean emergencyBuy(String ingredientId)           // 3 birim x (+%50)
-Ingredient missingIngredient(int orderId); List<Ingredient> missingIngredients(int orderId)
-int emergencyCostForMissing(int orderId); boolean emergencyBuyMissing(int orderId)
-// --- sorgular
-int getDay(); DayConfig getConfig(); SaveData getSave(); int getMoney(); double getStars()
-float getElapsed(); float getTimeLeft(); boolean isOvertime()
-int getSlotCount()      // oyuncu yuvası: hep 1
-int getFreeSlots()      // oyuncunun boş yuvası (çırak işleri yuva kullanmaz; hazırlık kullanır)
-int getApprenticeLevel()
-DaySummary getSummary(); Upgrades getUpgrades()
-List<Order> getOrders(); Order getOrder(int); 
-List<ActiveStep> getActiveSteps()                   // TÜM çalışan işler (oyuncu + çırak + hazırlık)
-ActiveStep getActiveFor(int orderId)                // siparişin ilk işi (oyuncu işi öncelikli)
-ActiveStep getActiveForItem(int orderId, int itemIndex)   // kalem adımı; paketleme için itemIndex=-1
-// --- senaryo/öğretici/test yardımcıları
-Order spawnOrder(List<String> productIds, List<String> requestTexts)  // anında sipariş (gün başlamadıysa başlatır); bilinmeyen ürün/istek -> null
-void setSpawning(boolean on)                        // otomatik müşteri gelişini kapat/aç (varsayılan açık)
+// --- v0.6 eylem menüsü ve tek tek ekleme
+List<StationOption> getStationOptions(int orderId, int itemIndex, int stationId)
+StartResult applyStationOption(int orderId, int itemIndex, int stationId, String optionId)
+int resolveStationItem(int orderId, int itemIndex, int stationId)
+StartResult addTopping(int orderId, int itemIndex, String ingredientId)
+StartResult removeLastTopping(int orderId, int itemIndex)
+StartResult finishToppings(int orderId, int itemIndex)
+Map<String,Integer> getAddedToppings(int orderId, int itemIndex)
+// --- boy ve hazır döner
+PrepResult startPrepDoner(String meatId)                 // 4 porsiyon
+PrepResult startPrepDoner(String meatId, int portions)   // 4 veya 2
+int getReadyMeat(String meatId)  / getReadyMeatHalves(String meatId)   // tam porsiyon / yarım sayacı
+int getReadyDoner() / getReadyDonerHalves()
+Order spawnOrder(List<String> productIds, List<String> requestTexts)                       // tüm boylar TAM
+Order spawnOrder(List<String> productIds, List<String> requestTexts, List<PortionSize> sizes) // senaryo/test (boy açılış gününe bakmaz)
+// --- v0.5'ten (değişmeyen): beginPrep/startDay, tick, selectOrder/selectNextOrder/selectItem, startStep(2 ve 3 argümanlı),
+//     deliver, startPrep*, getReadyDrinks/getTrayUses/getTrayTotal/getReadyCapacity, getPrepMeats/getPrepTrayChoices (artık günün açık malzemeleri),
+//     emergencyBuy*, missingIngredient(s) (boya göre), get* sorgular, setSpawning
 ```
 
-### startStep sonuçları
-| Sonuç | Anlamı | Yan etki / olay |
-|---|---|---|
-| `STARTED` | adım yuvada başladı | `onStepStarted` |
-| `NEEDS_TOPPINGS` | SOS'taki topping adımı: zamanlayıcı BAŞLAMADI | `onToppingSelectionNeeded(order,itemIndex)` → UI paneli açar → `confirmToppings` |
-| `STEP_LOCKED` | o istasyonda adım var ama kilitli (topping için önce ısıt/dilimle, paketleme için tüm kalemler) | `onStepLocked`; yıldız cezası YOK |
-| `WRONG_STATION` | o istasyonda hiçbir kalemin açık adımı yok | `onWrongStation`, −0,02 yıldız, `wrongTaps++` |
-| `ORDER_BUSY` | uygun adım(lar) zaten sürüyor | – |
-| `NO_SLOT` | oyuncu yuvası dolu | `onNoFreeSlot` |
-| `OUT_OF_STOCK` | malzeme yok | `onOutOfStock(order, ing)`; sonra `emergencyBuyMissing(orderId)` |
-| `ORDER_READY` / `NO_ORDER` / `NOT_RUNNING` / `INVALID` | sipariş zaten hazır / yok / gün bitti / geçersiz kalem | – |
-İstasyon, kalemde o istasyonda birden çok açık adım varsa İLK açık adıma çözülür. Seçili kalem (`selectItem`) önceliklidir.
-
-### confirmToppings
-- Önkoşul: kalemin topping adımı açık (diğer adımlar bitmiş). Seçilenler havuzda olmalı (aksi `INVALID`, `onToppingsRejected`).
-- Seçilen her malzeme stokta veya hazır tepside olmalı; yoksa `OUT_OF_STOCK` + `onToppingsRejected(order,itemIndex,OUT_OF_STOCK,ingredient)`, **hiçbir şey tüketilmez**.
-- Boş seçim geçerlidir (sosuz). Tüketim: seçilen her malzemeden 1 birim (tepsi varsa önce tepsiden 1 kullanım).
-- Süre = (adım tabanı + 0,3 sn × seçili sayısı) × (1 − 0,5 × tepsiyle karşılanan oran) × istasyon hız × tempo, en az 0,8 sn. `onStepStarted` verilir.
-- Seçim `OrderLine.getChosen()`'e yazılır; **doğrulama TESLİMDE** (`deliver`) yapılır, hedefle kıyaslanır.
-- Teslim doğrulaması: hatalı malzeme sayısı M (eksik + fazla). M>0: `onOrderMistake(order, check, penalty)`, ceza = min(0,15, 0,05·M) yıldız, bahşiş yarıya iner, `onOrderDelivered(... happy=false)`. M=0 ve topping kalemi var: `onOrderPerfect`, +0,02 yıldız bonusu (×starGain). Topping'siz sipariş (sadece içecek vb.) etkilenmez.
-
-### Müşteri istekleri
-`Order.requests`. Olasılık: 1. gün 0, 2. gün %20, 3+ gün %45 (1 veya %30 olasılıkla 2 istek; yalnızca hedef kümeyi gerçekten değiştirenler seçilir). `Order.requestsText()` kartta ve duyuruda gösterilir.
-Etkiler: soğansız/domatessiz/marulsuz/turşusuz (malzemeyi çıkarır), acılı (+acı sos, havuzda varsa), acısız (−acı sos), sosuz (acı hariç tüm SOS kategorisini çıkarır), bol soslu (havuzdaki acı-olmayan SOS'ları ekler).
-`OrderLine.getTarget()` = varsayılan ± istekler (havuz sırasında).
-
-### Hazırlık (PrepKind)
-| Tür | Parti | Süre | Tüketir | Siparişte etkisi | Kapasite (buzdolabı sv0; +4 / +6 her seviye) |
-|---|---|---|---|---|---|
-| DONER (`ids={"et_doner"}` veya `"tavuk_doner"`) | 4 porsiyon | 6 sn × DONER hız × tempo | o malzemeden 4 | aynı malzemeyi isteyen "dilimle" adımı **0,8 sn**, porsiyon düşer, stoktan düşmez | 8 (malzeme başına) |
-| DRINK (ids yok sayılır) | 4 bardak | 4 sn | ayran × 4 | "Ayranı doldur" **0,5 sn**; hazır içecek `SaveData.readyDrinks`'te, **gün sonunda ve kayıtta KALIR** | 8 |
-| TRAY (`ids` = SOS/SALATA malzemeleri) | malzeme başına 6 kullanım | 5 sn | seçilen her malzemeden 6 | topping adımı kısalır (yukarıdaki formül) | malzeme başına 12 |
-- Malzeme başlarken tüketilir; bitişte hazır stok artar (`onPrepFinished`). Yuva (oyuncu) kullanılır; boş yuva yoksa `NO_SLOT`. Kapasite devam eden hazırlıkları da sayar (`FULL`). Yetersiz stok: `OUT_OF_STOCK`. Geçersiz malzeme: `INVALID`. Reddedilen her hazırlık için `onPrepRejected`.
-- **Gün sonunda hazır döner ve tepsi atılır = israf**: `DaySummary.wastedPortions` (porsiyon + tepsi kullanımı), `wastedCost` (TL). Yarım kalan hazırlık da israftır. Başarısız günde hazırlık harcamaları geri döner.
-- Hazırlık gün içinde de yapılabilir (boş yuva varsa).
-
-### Çırak (otomatik işçi)
-`Upgrades.apprenticeLevel()` = `cirak` yükseltmesinin seviyesi (0-3) = eşzamanlı çırak sayısı ve yetenek seviyesi. Fiyat/gün: 3000@3, 9000@8, 24000@16. Yuva EKLEMEZ (oyuncu yuvası hep 1).
-| Seviye | Üstlendiği iş |
-|---|---|
-| 1 | "Siparişi paketle", ICECEK adımları (ayran doldur, dolaptan al); boştayken hazırlık (içecek, döner) |
-| 2 | + EKMEK adımları (ekmek/lavaş ısıt); boştayken tepsi hazırlığı |
-| 3 | + DONER, IZGARA, TATLI ve SOS-harç adımları |
-| – | **Topping seçimi HER ZAMAN oyuncuda** |
-Kurallar: oyuncudan %20 yavaş (süre ×1,2), hatasız, stok normal tüketilir (stok yoksa sessizce atlar, acil alım yapmaz). Önce **en sabırsız** (kalan sabır en az) sipariş; **oyuncunun SEÇİLİ siparişine dokunmaz** (seçili sipariş yoksa tümü uygun). Sipariş işi yoksa hazırlık: içecek (hazır ≤4 iken parti), döner (porsiyon ≤3 iken; gün sonuna 25 sn kala yapmaz), tepsi (seviye 2+, menünün en sık varsayılan 5 malzemesi). Hazırlık aşamasında (PREP) da aynı şekilde çalışır. Çırak işleri `getActiveSteps()`'te `isApprentice()` ile görünür; `onStepStarted/onStepFinished` YALNIZCA oyuncu işleri içindir, çırak işleri `onApprenticeAction` ile gelir (UI sesi: kısık/uzak, pan merkez, %60).
-`SaveData.apprenticeAnnounce` kapalıysa Narrator çırak duyurusu yapmaz (UI olayı yine alır). Duyurular kısıtlanır (≥4 sn aralık; paketleme bitişi her zaman).
-
-## 5. GameListener (hepsi `GameListenerAdapter`'da boş)
+## 8. GameListener (yeni olaylar; hepsi `GameListenerAdapter`'da boş)
 ```java
-// gün
-void onPrepPhaseStarted(int day);     // beginPrep
-void onPrepPhaseEnded(int day);       // startDay (PREP'ten); hemen ardından onDayStarted
-void onDayStarted(int day, DayConfig config);
-void onDayFinished(DaySummary summary);  void onDayFailed(DaySummary summary);
-// sipariş / müşteri
-void onCustomerArrived(Order order);
-void onOrderSelected(Order order);       void onItemSelected(Order order, int itemIndex);
-void onNextStepHint(Order order, Step step);          // ÖNERİLEN adım (sıra dayatma yok); paketleme: step == order.getPackStep()
-void onPatienceWarning(Order order, int level);       // 1 azalıyor, 2 kritik
-void onCustomerLeft(Order order);
-// adımlar (yalnızca OYUNCU işleri)
-void onStepStarted(Order order, Step step, int slot, float seconds);
-void onStepFinished(Order order, Step step, boolean orderComplete);  // orderComplete: paketleme bitti
-void onWrongStation(Order order, Station tapped /*null olabilir*/, Station expected);
-void onStepLocked(Order order, Step step);
-void onNoFreeSlot(Order order);
-// kalem / paketleme / teslim (oyuncu ya da çırak fark etmez)
-void onItemFinished(Order order, int itemIndex);      // kalem hazır
-void onOrderReadyToPack(Order order);                 // tüm kalemler hazır -> "Siparişi paketle" açıldı
-void onOrderReady(Order order);                       // paketlendi -> teslim et
-void onOrderDelivered(Order order, int money, int tip, boolean happy);
-// malzeme seçimi
-void onToppingSelectionNeeded(Order order, int itemIndex);      // paneli aç
-void onToppingsRejected(Order order, int itemIndex, StartResult reason, Ingredient ingredient);
-void onOrderMistake(Order order, ToppingCheck check, double penalty);   // teslimde; onOrderDelivered'dan ÖNCE
-void onOrderPerfect(Order order);
-// hazırlık
-void onPrepStarted(PrepKind kind, boolean byApprentice, float seconds);
-void onPrepFinished(PrepKind kind, boolean byApprentice, int amount);
-void onPrepRejected(PrepKind kind, PrepResult reason, Ingredient ingredient);
-// çırak
-void onApprenticeAction(ApprenticeAction action);     // started=true/false; order==null -> hazırlık
-// diğer
-void onStarsChanged(double oldStars, double newStars);
-void onOutOfStock(Order order, Ingredient ingredient);
-void onEmergencyPurchase(Ingredient ingredient, int qty, int cost);
-void onNotEnoughMoney(int needed);
+// tek tek ekleme
+void onToppingAddStarted(Order order, int itemIndex, Ingredient ing, int count /*2=bol*/, float seconds); // ses/animasyon başlat (kısa)
+void onToppingAdded(Order order, int itemIndex, Ingredient ing, int count);       // "Domates eklendi" (Narrator); bol: "bol eklendi"
+void onToppingRemoved(Order order, int itemIndex, Ingredient ing, int remaining);  // geri alındı, stok döndü
+void onToppingsFinished(Order order, int itemIndex, Set<String> chosen);           // "Malzemeleri bitir"; ardından onStepFinished gelir
+// boy
+void onSizeChosen(Order order, int itemIndex, PortionSize ordered, PortionSize chosen);  // dilimleme başladı (yalnızca oyuncu); hata ipucu VERMEZ
+// menü
+void onStationInfo(Order order, int itemIndex, String optionId);   // read:added / read:target -> Narrator metni okur
+void onOptionRejected(Order order, String optionId, StartResult reason);  // LOCKED, NOTHING_TO_UNDO, ORDER_BUSY, UNKNOWN_OPTION...
 ```
-Ses için ipucu (design_v05 §5): `onStepStarted` → istasyon efekti adım süresince (`seconds`); `onStepFinished` → keser/`sfx_step_done`; çırak: `onApprenticeAction(started)` kısık/pan merkez; hazırlık `onPrepStarted/Finished` ilgili istasyon sesi + `sfx_step_done`.
+Olay sırası (tek tek ekleme): `onToppingAddStarted` -> (süre) -> `onToppingAdded`; bitirme: `onToppingsFinished` -> `onStepFinished(step "Malzemeleri ekle")` -> `onItemFinished` -> `onOrderReadyToPack` -> `onNextStepHint`. Dilimleme: `onSizeChosen` -> `onStepStarted` (süre boya göre). `onToppingsRejected` artık `MAX_REACHED` da taşır. v0.5 olayları (hazırlık, çırak, sabır…) aynıdır; eski `onToppingSelectionNeeded` yalnızca `startStep`→`NEEDS_TOPPINGS` eski akışında gelir.
+Ses ipucu: ekleme için `onToppingAddStarted` -> kısa tek atış (`seconds`); `onToppingAdded` -> "eklendi" sesi; çırak/hazırlık sesleri v0.5 gibi. Malzeme adımı artık `onStepStarted` GÖNDERMEZ (yalnızca `onStepFinished` gelir) — süre tabanlı ses döngüsünü `onStepStarted`'a bağlıysa malzeme adımında bitiş olayının başlangıçsız gelebileceğini unutma.
 
-## 6. Narrator
-`new Narrator(engine)` / `new Narrator(engine, output)`; `setOutput`. `Output.say(String text, boolean urgent)`. GameListener olarak tüm olayları Türkçe konuşur. Metin üreticiler herkese açık (UI isterse doğrudan kullanır):
-`prepPhaseStarted, prepPhaseEnded, dayStarted, customerArrived, orderSelected, itemSelected, nextStepHint, stepStarted, stepFinished, wrongStation, stepLocked, noFreeSlot, itemFinished, orderReadyToPack, orderReady, orderDelivered, toppingSelectionNeeded, toppingTarget, toppingState, toppingSelectionSummary, toppingsRejected, orderMistake, orderPerfect, prepStarted, prepFinished, prepRejected, readyStockText, apprenticeAction, patienceWarning, customerLeft, starsChanged, outOfStock, emergencyPurchase, notEnoughMoney, dayFinished, dayFailed, statusText, stationLabel, startResultText`.
-- `toppingTarget(order, itemIndex)` — **"Hedefi oku"**: "Hedef, Ekmek arası döner: domates, marul, ketçap ve acı sos. Müşteri isteği: soğansız, acılı."
-- `toppingState(ingredient, selected, available)` — düğme durumu: "Soğan, eklenmedi" / "Soğan, eklendi" / "Soğan, stokta yok".
-- `toppingSelectionSummary(ids)` — "Seçili: domates ve marul. Toplam 2 malzeme."
-- `customerArrived`: "Yeni müşteri: Ahmet, Ekmek arası döner ve Ayran istiyor. 2 kalem. İstek: soğansız. Acelesi var. Sipariş 2."
-- `nextStepHint`: "Önerilen: Ekmeği ısıt. Ekmek ısıtıcı istasyonuna dokun." (çok kalemli siparişte ürün adı öneki: "Ayran: Ayranı doldur.")
-- `stepFinished`: "Ekmeği ısıt bitti. Önerilen: Döneri dilimle, Döner makinesi."
-- `orderMistake`: "Hatalı sipariş. Soğan istememiştim. Ketçap eksik olmuş. Yıldız düştü, bahşiş yarıya indi."
-- `apprenticeAction`: "Çırak 3 numaralı siparişi paketledi." / "Çırak ayran dolduruyor." / "Çırak 2 numaralı siparişte: Ekmeği ısıt."
-- `readyStockText()`: "Hazır: döner 4 porsiyon, ayran 3 bardak, salata ve sos tepsisi 24 kullanım." (hiç yoksa "")
-- `statusText()`: para, yıldız, kalan süre (veya "hazırlık aşaması, süre akmıyor"), bekleyen sipariş, seçili siparişin kalemleri/önerisi/istekleri, hazır stok.
-- `stationLabel(st)`: "Döner makinesi istasyonu, boş, Ekmek arası döner Döneri dilimle için gerekli, hazır döner 4" (kalem adı yalnızca çok kalemli siparişte).
-- `startResultText(StartResult)`: tüm sonuçlar için kısa metin (NEEDS_TOPPINGS, STEP_LOCKED, INVALID dahil).
-- Statik: `fmtStars(double)`, `fmtSeconds(float)`, `fmtMoney(int)`, `joinNames(Collection<String> ids)`.
-- Çırak duyuruları `engine.getSave().apprenticeAnnounce` ayarına bakar.
+## 9. Eski toplu API (geriye uyum; yeni UI kullanmaz)
+- `startStep(SOS)` topping adımı için hâlâ `NEEDS_TOPPINGS` + `onToppingSelectionNeeded` verir; `confirmToppings(orderId,item,ids)` eskisi gibi seçimi tek hamlede yapar (süre 2,0 + 0,3×n, tepsi %50'ye kadar kısaltır, tüketim, `onStepStarted`). Kalemde `addTopping` ile ekleme başlamışsa `INVALID`.
+- `getToppingOptions` (günün açık havuzu), `getInitialToppings` (1-3. gün önceden seçili), `ToppingOption` aynen durur.
+- `startStep(orderId,item,DONER)` boy seçmez: istenen boyu varsayar (boy hatası yok). Boy seçimi yalnızca `applyStationOption("size:…")` ile yapılır.
+- Bunlar test/bot geriye uyumu içindir; UI yeniden tasarımında kaldırılabilir.
 
-## 7. SaveData (`v=2`)
-Alanlar: `day,bestDay,money,stars,inventory,upgradeLevels`, ayarlar `tempo,speechOn,speechRate,vibration,musicVolume,sfxVolume,tutorialDone`, **`apprenticeAnnounce`** (kayıt anahtarı `apprenticeAnnounce=1/0`), **`readyDrinks`** (0-40). `parse` hataya toleranslıdır; **v0.4 (`v=1`) kayıtları** yüklenir, yeni alanlar varsayılan (çırak duyuruları açık, hazır içecek 0). Eski kayıtta yeni malzeme stoğu 0'dır (Market'ten alınır; gün başında "Önerilen malzemeleri al").
-Hazır döner ve tepsi KAYDEDİLMEZ (gün içi durum).
+## 10. Narrator
+`new Narrator(engine)` / `new Narrator(engine, output)`. Yeni metin üreticiler (hepsi herkese açık):
+`toppingAdded(ing,count)`, `toppingRemoved(ing,remaining)`, `toppingsFinished(order,item,chosen)`, `addedText(order,item)` ("Eklenenleri oku"), `stationInfo(order,item,optionId)`, `sizeChosen(size)`, `optionRejected(order,optionId,reason)`, `optionLabel(StationOption)`, statik `newIngredientsText(day)`, statik `newSizesText(day)`.
+- Sipariş duyurusu boy ve istekleri söyler: "Yeni müşteri: Ahmet, Ekmek arası döner (yarım ekmek) ve Ayran istiyor. 2 kalem. İstek: soğansız. …".
+- Öneri: "Önerilen: Döneri dilimle, yarım ekmek. Döner makinesi istasyonuna dokun." Başlama: "Döneri dilimle başladı, duble, 5 saniye." (2. günden itibaren seçilen "tam ekmek" de söylenir; 1. gün boy anılmaz).
+- Ekleme: "Domates eklendi." / "Domates bol eklendi." / "Domates zaten bol, en fazla iki kez eklenir." / "Domates geri alındı, stoğa döndü." / "Geri alınacak malzeme yok." / "Bir ekleme sürüyor, bitmesini bekle."
+- Boy hatası şikâyeti: "Hatalı sipariş. Yarım ekmek istemiştim, duble yapmışsın. Çok fazla. … Yıldız düştü, bahşiş yarıya indi."
+- Brifing: `dayStarted` "… Yeni ürün: …. Yeni malzemeler: ketçap ve mayonez. Yeni boy: yarım ekmek. Döner makinesinde boyu sen seçersin."; `dayFinished` "Yarın yeni malzeme: …" ve "Yanlış boyda dilimlenen sipariş: N."
+- `Narrator` kendisi `onToppingAdded/Removed`, `onStationInfo`, `onOptionRejected`'ı konuşur; `onToppingAddStarted`, `onToppingsFinished`, `onSizeChosen` sessizdir (bilgi `onStepStarted/Finished` metinlerinde).
+- Hazır döner "döner 3,5 porsiyon" biçimindedir (`readyStockText`, `stationLabel`, `prepFinished`, `statusText`).
 
-## 8. Denge (bot simülasyonu; testler `SimulationTest`, `HumanSimTest`)
-- Başlangıç parası 5000. Fiyatlar/süreler v0.4 ile aynı; yeni süre kalemleri: topping +0,3 sn/malzeme, paketleme 1,5+0,5/kalem, çırak ×1,2.
-- Hazırlık yapan + yükseltme alan bot (0,8 sn tepki): gün 1–40 geçer (≥32 gün ilk denemede). Hazırlıksız bot da yükseltmeyle 1–40'ı geçer. Yavaş (1,5 sn) bot yükseltmeyle 1–40'ı geçer.
-- Yükseltmesiz bot gün ~23–26'da takılır; hazırlıksız/yükseltmesiz bot gün 1–5'i geçer.
-- 15 gün yükseltmesiz: hazırlık yapan bot hazırlıksızdan ≈%7–11 daha çok kazanır. Fazla hazırlık israf yaratır (gün 1'de bot ~170 TL).
-- Hiç hareket etmeyen bot ≤5 günde başarısız olur.
-- Çırak 3. seviyeye (24000 TL, 16. gün) çıkınca oyun belirgin kolaylaşır; yükseltme sırası: önce çırak.
+## 11. SaveData (`v=3`)
+Alanlar v0.5 ile aynı (`day,bestDay,money,stars,inventory,upgradeLevels,tempo,speechOn,speechRate,vibration,musicVolume,sfxVolume,tutorialDone,apprenticeAnnounce,readyDrinks`). Yazılan sürüm `v=3`; `parse` v=1 (v0.4), v=2 (v0.5) ve bilinmeyen sürüm/anahtarları tolere eder. Yeni malzemelerin (sumak, sarımsaklı yoğurt sos, közlenmiş biber/domates) eski kayıtta stoğu 0'dır (Market alır; gün başında "Önerilen malzemeleri al"). Hazır döner/tepsi/açık yarım KAYDEDİLMEZ.
 
-## 9. UI'nın yapması gerekenler (özet)
-1. Hazırlık ekranı: market sonrası `beginPrep()` → hazırlık kontrolleri (döner/içecek/tepsi `startPrep*`, hazır stok göstergeleri, "Dükkânı aç" = `startDay()`, "Hazırlık yapmadan aç" = doğrudan `startDay()`); PREP'te de `tick(dt)` çağır.
-2. Sipariş kartı: kalem listesi (`order.getLine(i)`, kalem adım durumu), istekler (`requestsText()`), "Siparişi paketle" durumu; kalem seçimi `selectItem`.
-3. SOS istasyonu: `NEEDS_TOPPINGS` → malzeme paneli (`getToppingOptions`, aç/kapa düğmeleri, `Narrator.toppingState`, "Hedefi oku" = `Narrator.toppingTarget`, "Tamam" = `confirmToppings`; `OUT_OF_STOCK` için `emergencyBuy`).
-4. `startStep(orderId, itemIndex, stationId)` kullan; yeni sonuçlar `STEP_LOCKED`, `NEEDS_TOPPINGS`.
-5. Yeni olayları işle (özellikle `onApprenticeAction`, `onPrepStarted/Finished`, `onToppingsRejected`, `onOrderMistake`, `onOrderPerfect`); GameListenerAdapter'dan türet.
-6. Gün özeti: israf satırı (`wastedPortions`, `wastedCost`), hatalı/kusursuz sipariş sayıları.
-7. Ayarlar: "Çırak duyuruları" anahtarı → `save.apprenticeAnnounce`.
-8. Ses: istasyon sesi adım süresince (`seconds`); çırak/hazırlık sesleri.
-9. "Durumu oku": `narrator.statusText()` hazırlık/kalem/hedef bilgisini içerir.
+## 12. Denge (bot simülasyonu; testler `SimulationTest`, `HumanSimTest`, `Campaign`/`TestBot`)
+- `TestBot` v0.6 API'siyle oynar: her eylem (boy seçimi, TEK malzeme ekleme, "Malzemeleri bitir", adım) bir tepki süresi alır; ardışık eklemelerde tepki süresi `ADD_REACTION_FACTOR=0,5` ile çarpılır (aynı menüde kas hafızası). `careful=false`: her zaman TAM ekmek ve yalnızca varsayılan malzemeler (boy/malzeme hatası yapar).
+- Müşteri sabrı tahmini için malzeme başına iş yükü 1,5 sn (`Product.TOPPING_WORK_EACH`).
+- Sonuçlar (hazırlık yapan + yükseltme alan bot): tepki 0,8 sn ve 1,0 sn botları tüm denenen tohumlarda gün 1–40'ı geçer; 1,5 sn (yavaş) bot da geçer. Yükseltmesiz bot ~gün 24–29'da takılır (>10 şart). Hazırlıksız/yükseltmesiz bot 1–5. günleri geçer. Hiç hareket etmeyen bot ≤5 günde başarısız olur. Hazırlık yapan bot yapmayandan kazançlıdır (>%3).
+- Yarım ekmek %60 fiyat / %50 et / %60 süre; duble %170 fiyat / %200 et / %150 süre (yarım ve duble birbirini dengeler; ortalama fiyat/talep ~1,0).
+
+## 13. UI'nın yapması gerekenler (özet liste)
+1. **Eylem menüsü, her istasyon düğmesi için** (DONER, EKMEK, SOS, IZGARA, PAKET, ICECEK, TATLI + hazırlık düğmeleri): `getStationOptions(selectedOrderId, selectedItem, station.id)`; durum her değiştiğinde (olay/tick) `AccessibilityDelegate`'in eylem listesi YENİDEN kurulmalı.
+   - **TalkBack Eylemleri**: her `StationOption` için `AccessibilityAction` (etiket = `op.label()`, Türkçe, durumlu); seçilince `applyStationOption(orderId, item, stationId, op.id)`; etkin olmayanlar da listede kalabilir (etikette neden) — uygulanırsa motor nedenini duyurur.
+   - **Seçenek paneli**: TalkBack kapalıyken tek dokunuş, açıkken varsayılan çift dokunuş paneli açar; büyük düğmeler (≥56dp), her düğme tek dokunma = `applyStationOption`, "Kapat", odak başlıkta; panel kapanmadan listeyi tazele (SOS'ta art arda ekleme). Tek eylemli istasyon (PAKET) menü açmadan doğrudan uygulanır (`options.size()==1 && enabled`).
+   - `OUT_OF_STOCK` sonrası `outOfStock` bayraklı seçenek için acil alım önerisi (`emergencyBuy(op.ingredientId)` / `emergencyBuyMissing(orderId)`).
+2. **SOS panelini kaldır** (`SelectionPanel` toplu mod, `NEEDS_TOPPINGS`/`confirmToppings` yolu): yerine tek tek ekleme eylemleri; ekleme sesi `onToppingAddStarted`/`onToppingAdded`, geri al, "Eklenenleri oku", "Hedefi oku", "Malzemeleri bitir". Kalem kartında eklenenleri göster (`OrderLine.getAddedCounts()`, bol işareti).
+3. **Boy**: sipariş kartında/kalem satırında boy (`OrderLine.displayName()`, `getSize()`), kalem fiyatı `OrderLine.price()`; DONER menüsünde boy seçimi; boy hatasını teslim sonucunda göster (`onOrderMistake` + `ToppingCheck.getSizeMistakes()`); gün özetinde `sizeMistakes`.
+4. **Hazır döner** göstergesi yarım porsiyonla (`Narrator.readyStockText()` / `getReadyDonerHalves()`); hazırlık ekranı: "4 porsiyon dilimle", "2 porsiyon dilimle" (`prep:doner:<et>:4|2` seçenekleri veya `startPrepDoner(id, 2|4)`).
+5. **Market**: yalnızca `Shop.availableIngredients(save)` (kapalı malzeme `LOCKED`); brifing/özet ekranlarına yeni malzeme/boy satırı (`Narrator.newIngredientsText/newSizesText`, `DaySummary.newIngredientsNext`).
+6. **Öğretici**: boy seçimi ve tek tek malzeme eklemeyi öğret (`spawnOrder(products, requests, sizes)`; 1. günde boy yok, 2. günde yarım).
+7. Yeni olayları işle (`GameListenerAdapter`): `onToppingAddStarted/Added/Removed/Finished`, `onSizeChosen`, `onStationInfo`, `onOptionRejected`; malzeme adımı `onStepStarted` göndermez (ses döngüsü kurarken dikkat).
+8. `A11yAudit`: istasyon düğmelerinin `getActionList()` içinde beklenen özel eylemler, etiketler Türkçe/boş değil, `performAccessibilityAction` panel olmadan uyguluyor, panel yolu aynı sonucu veriyor.
+9. "Durumu oku" (`narrator.statusText()`) hazırlık/kalem/hedef bilgisini içerir; eklenenleri okumak için `Narrator.addedText`.

@@ -24,11 +24,15 @@ public final class DaySummary {
     /** Hatalı malzemeli teslim sayısı / kusursuz malzemeli teslim sayısı. */
     public int mistakes;
     public int perfect;
+    /** Boy hatası içeren teslim sayısı (mistakes sayısına da dahildir). */
+    public int sizeMistakes;
     /** Biten hazırlık işi sayısı (oyuncu + çırak) ve çırağın bitirdiği sipariş adımı sayısı. */
     public int prepBatches;
     public int apprenticeTasks;
     /** Sonraki gün açılan yeni ürünler (adlar). */
     public String newProductsNext = "";
+    /** Sonraki gün açılan yeni sos/salata malzemeleri (adlar). */
+    public String newIngredientsNext = "";
 
     /** Para yetmediği için ödenemeyen kira. */
     public int rentUnpaid() { return Math.max(0, rentDue - rent); }

@@ -41,11 +41,11 @@ public final class Request {
     /** Tüm olası isteklerin listesi. */
     public static List<Request> all() { return ALL; }
 
-    /** İsteği ürünün (zaten uygulanmış) hedef kümesine uygular. */
-    void apply(Product p, Set<String> target) {
+    /** İsteği (günün açık) havuz üzerinden hedef kümeye uygular. */
+    void apply(List<String> pool, Set<String> target) {
         switch (kind) {
             case REMOVE: target.remove(ingredientId); break;
-            case ADD: if (p.toppingPool.contains(ingredientId)) target.add(ingredientId); break;
+            case ADD: if (pool.contains(ingredientId)) target.add(ingredientId); break;
             case NO_SAUCE:
                 for (String id : new ArrayList<>(target)) {
                     Ingredient i = Catalog.ingredient(id);
@@ -53,7 +53,7 @@ public final class Request {
                 }
                 break;
             case MORE_SAUCE:
-                for (String id : p.toppingPool) {
+                for (String id : pool) {
                     Ingredient i = Catalog.ingredient(id);
                     if (i != null && i.category == Ingredient.Category.SOS && !id.equals("aci_sos")) target.add(id);
                 }
@@ -63,10 +63,10 @@ public final class Request {
     }
 
     /** Bu istek ürünün hedef kümesini gerçekten değiştirir mi (ürünün varsayılanına göre). */
-    boolean changes(Product p, Set<String> current) {
+    boolean changes(Product p, List<String> pool, Set<String> current) {
         if (!p.hasToppings()) return false;
         Set<String> t = new LinkedHashSet<>(current);
-        apply(p, t);
+        apply(pool, t);
         return !t.equals(current);
     }
 

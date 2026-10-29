@@ -9,6 +9,14 @@ public final class Shop {
 
     public enum BuyResult { OK, NOT_ENOUGH_MONEY, MAX_LEVEL, LOCKED, UNKNOWN, STOCK_FULL }
 
+    /** Marketin bugün sattığı malzemeler (yalnızca açık olanlar; katalog sırası). */
+    public static java.util.List<Ingredient> availableIngredients(SaveData save) {
+        return Catalog.ingredientsForDay(save.day);
+    }
+
+    /** Boy çeşitliliği (yarım/duble) ile et/ekmek talebi: 4. günden itibaren dubleler ortalamayı yükseltir. */
+    static double sizeDemand(int day) { return day >= PortionSize.DOUBLE.unlockDay ? 1.12 : 1.0; }
+
     public static int ingredientCost(String id, int qty) {
         return Catalog.ingredient(id).price * qty;
     }
@@ -24,6 +32,7 @@ public final class Shop {
     public static BuyResult buyIngredient(SaveData save, String id, int qty) {
         Ingredient ing = Catalog.ingredient(id);
         if (ing == null || qty <= 0) return BuyResult.UNKNOWN;
+        if (!ing.isOpen(save.day)) return BuyResult.LOCKED; // gün gün açılan sos/salata malzemeleri
         int cap = new Upgrades(save).stockCap();
         int room = cap - save.inventory.get(id);
         if (room <= 0) return BuyResult.STOCK_FULL;
@@ -58,13 +67,14 @@ public final class Shop {
         java.util.List<Product> menu = Catalog.productsForDay(save.day);
         Map<String, Double> demand = new LinkedHashMap<>();
         for (Product p : menu) {
-            for (Map.Entry<String, Integer> e : p.totalNeeds().entrySet()) {
+            for (Map.Entry<String, Integer> e : p.totalNeeds(save.day).entrySet()) {
                 Double d = demand.get(e.getKey());
-                demand.put(e.getKey(), (d == null ? 0 : d) + e.getValue() * items / menu.size());
+                double mult = Catalog.ingredient(e.getKey()).scalesWithSize() ? sizeDemand(save.day) : 1.0;
+                demand.put(e.getKey(), (d == null ? 0 : d) + e.getValue() * mult * items / menu.size());
             }
-            // seçilebilir (varsayılan olmayan) malzemeler ve müşteri istekleri için küçük pay
-            for (String t : p.toppingPool) {
-                if (p.defaultToppings.contains(t)) continue;
+            // seçilebilir (varsayılan olmayan) malzemeler, bol ekleme ve müşteri istekleri için küçük pay
+            for (String t : p.toppingPool(save.day)) {
+                if (p.defaultToppings(save.day).contains(t)) continue;
                 Double d = demand.get(t);
                 demand.put(t, (d == null ? 0 : d) + 0.25 * items / menu.size());
             }

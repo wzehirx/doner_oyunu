@@ -31,6 +31,12 @@ public final class GameEngine {
     private static final double MISTAKE_PENALTY_EACH = 0.05;
     private static final double MISTAKE_PENALTY_MAX = 0.15;
     private static final double PERFECT_BONUS = 0.02;
+    private static final float ADD_SALAD_SECONDS = 0.6f;
+    private static final float ADD_SAUCE_SECONDS = 0.5f;
+    private static final float MIN_ADD_SECONDS = 0.25f;
+    private static final int MAX_ADD_PER_INGREDIENT = 2;
+    /** 2 porsiyonluk döner hazırlığı, 4 porsiyonluğun süresinin bu oranı kadar sürer. */
+    private static final double PREP_SMALL_BATCH_FACTOR = 0.6;
 
     private final SaveData save;
     private final SaveData snapshot;
@@ -43,11 +49,13 @@ public final class GameEngine {
     private final List<Order> orders = new ArrayList<>();
     private final List<ActiveStep> active = new ArrayList<>();
     private final DaySummary summary = new DaySummary();
-    /** Hazır (dilimlenmiş) döner: döner malzeme id -> porsiyon. Gün sonunda atılır. */
+    /** Hazır (dilimlenmiş) döner: döner malzeme id -> YARIM porsiyon sayacı (2 = 1 porsiyon). Gün sonunda atılır. */
     private final Map<String, Integer> readyMeat = new LinkedHashMap<>();
+    /** Açık yarım: stoktan düşülmüş bir porsiyon/ekmeğin kalan yarısı (0 veya 1 yarım birim), malzeme id -> yarım. Gün içi. */
+    private final Map<String, Integer> halfOpen = new HashMap<>();
     /** Hazır tepsi: malzeme id -> kalan kullanım. Gün sonunda atılır. */
     private final Map<String, Integer> trayUses = new LinkedHashMap<>();
-    /** Son OUT_OF_STOCK'a düşen adım: sipariş id -> {kalem, adım}. */
+    /** Son OUT_OF_STOCK'a düşen adım: sipariş id -> {kalem, adım, boy ordinal (-1: otomatik/istenen)}. */
     private final Map<Integer, int[]> blocked = new HashMap<>();
 
     private State state = State.READY;
@@ -140,9 +148,14 @@ public final class GameEngine {
     }
 
     // ---------------------------------------------------------------- hazır stok sorguları
-    public int getReadyMeat(String meatId) { Integer v = readyMeat.get(meatId); return v == null ? 0 : v; }
-    /** Toplam hazır (dilimlenmiş) döner porsiyonu. */
-    public int getReadyDoner() { int t = 0; for (int v : readyMeat.values()) t += v; return t; }
+    /** Hazır dilimlenmiş döner, TAM porsiyon olarak (yarım porsiyon aşağı yuvarlanır). Tam sayım için {@link #getReadyMeatHalves}. */
+    public int getReadyMeat(String meatId) { return getReadyMeatHalves(meatId) / 2; }
+    /** Hazır dilimlenmiş döner, yarım porsiyon sayacı (2 = 1 porsiyon). */
+    public int getReadyMeatHalves(String meatId) { Integer v = readyMeat.get(meatId); return v == null ? 0 : v; }
+    /** Toplam hazır (dilimlenmiş) döner, tam porsiyon (yarım aşağı yuvarlanır). */
+    public int getReadyDoner() { return getReadyDonerHalves() / 2; }
+    /** Toplam hazır döner, yarım porsiyon sayacı. */
+    public int getReadyDonerHalves() { int t = 0; for (int v : readyMeat.values()) t += v; return t; }
     public int getReadyDrinks() { return save.readyDrinks; }
     /** Hazır tepsideki malzemenin kalan kullanımı. */
     public int getTrayUses(String ingredientId) { Integer v = trayUses.get(ingredientId); return v == null ? 0 : v; }
@@ -166,7 +179,7 @@ public final class GameEngine {
     /** Hazır tepsiye konabilecek malzemeler: bugünün menüsündeki topping havuzlarının birleşimi (katalog sırası). */
     public List<Ingredient> getPrepTrayChoices() {
         Set<String> ids = new LinkedHashSet<>();
-        for (Product p : menu) ids.addAll(p.toppingPool);
+        for (Product p : menu) ids.addAll(p.toppingPool(day));
         List<Ingredient> out = new ArrayList<>();
         for (Ingredient i : Catalog.ingredients()) if (ids.contains(i.id)) out.add(i);
         return out;
@@ -179,19 +192,24 @@ public final class GameEngine {
     }
 
     // ---------------------------------------------------------------- eksik malzeme / acil alım
-    /** Eksik malzeme sorgusunun baktığı adım: son OUT_OF_STOCK adımı, yoksa önerilen adım (topping hariç). */
-    private Step missingStep(int orderId) {
+    /** Eksik malzeme sorgusunun baktığı adım: son OUT_OF_STOCK adımı, yoksa önerilen adım (topping hariç). {kalem, adım, boy ordinal} */
+    private int[] missingRef(int orderId) {
         Order o = getOrder(orderId);
         if (o == null) return null;
         int[] ref = blocked.get(orderId);
         if (ref != null) {
             OrderLine line = o.getLine(ref[0]);
-            if (line.isStepOpen(ref[1])) return line.step(ref[1]);
+            if (line.isStepOpen(ref[1])) return ref;
         }
         int[] r = o.suggest(orderId == selectedId ? selectedItem : -1);
         if (r == null || r[0] < 0) return null;
         Step s = o.getLine(r[0]).step(r[1]);
-        return s.isTopping() ? null : s;
+        return s.isTopping() ? null : new int[]{r[0], r[1], -1};
+    }
+
+    private PortionSize refSize(Order o, int[] ref) {
+        OrderLine line = o.getLine(ref[0]);
+        return needSize(line, line.step(ref[1]), ref[2] < 0 ? null : PortionSize.values()[ref[2]]);
     }
 
     /** Verilen siparişin (son engellenen veya önerilen) adımı için eksik ilk malzeme (yoksa null). */
@@ -203,9 +221,11 @@ public final class GameEngine {
     /** Eksik TÜM malzemeler (eksik yoksa boş liste). */
     public List<Ingredient> missingIngredients(int orderId) {
         List<Ingredient> out = new ArrayList<>();
-        Step s = missingStep(orderId);
-        if (s == null) return out;
-        for (Map.Entry<String, Integer> e : effectiveNeeds(s).entrySet()) {
+        int[] ref = missingRef(orderId);
+        if (ref == null) return out;
+        Order o = getOrder(orderId);
+        Step s = o.getLine(ref[0]).step(ref[1]);
+        for (Map.Entry<String, Integer> e : effectiveNeeds(s, refSize(o, ref)).entrySet()) {
             if (!save.inventory.has(e.getKey(), e.getValue())) {
                 Ingredient ing = Catalog.ingredient(e.getKey());
                 if (ing != null) out.add(ing);
@@ -214,18 +234,21 @@ public final class GameEngine {
         return out;
     }
 
-    private int emergencyBatches(Step s, Ingredient ing) {
-        Integer need = effectiveNeeds(s).get(ing.id);
+    private int emergencyBatches(Map<String, Integer> needs, Ingredient ing) {
+        Integer need = needs.get(ing.id);
         int lack = (need == null ? 1 : need) - save.inventory.get(ing.id);
         return Math.max(1, (lack + Ingredient.EMERGENCY_BATCH - 1) / Ingredient.EMERGENCY_BATCH);
     }
 
     /** Eksik tüm malzemeleri tek seferde acil almanın toplam maliyeti (eksik yoksa 0). */
     public int emergencyCostForMissing(int orderId) {
-        Step s = missingStep(orderId);
+        int[] ref = missingRef(orderId);
+        if (ref == null) return 0;
+        Order o = getOrder(orderId);
+        Map<String, Integer> needs = effectiveNeeds(o.getLine(ref[0]).step(ref[1]), refSize(o, ref));
         int total = 0;
         for (Ingredient ing : missingIngredients(orderId)) {
-            total += ing.emergencyPrice() * Ingredient.EMERGENCY_BATCH * emergencyBatches(s, ing);
+            total += ing.emergencyPrice() * Ingredient.EMERGENCY_BATCH * emergencyBatches(needs, ing);
         }
         return total;
     }
@@ -236,34 +259,80 @@ public final class GameEngine {
      */
     public boolean emergencyBuyMissing(int orderId) {
         if (state == State.FINISHED || state == State.FAILED) return false;
-        Step s = missingStep(orderId);
+        int[] ref = missingRef(orderId);
         List<Ingredient> missing = missingIngredients(orderId);
-        if (s == null || missing.isEmpty()) return false;
+        if (ref == null || missing.isEmpty()) return false;
+        Order o = getOrder(orderId);
+        Map<String, Integer> needs = effectiveNeeds(o.getLine(ref[0]).step(ref[1]), refSize(o, ref));
         int total = emergencyCostForMissing(orderId);
         if (save.money < total) {
             for (GameListener l : snap()) l.onNotEnoughMoney(total);
             return false;
         }
         for (Ingredient ing : missing) {
-            int batches = emergencyBatches(s, ing);
+            int batches = emergencyBatches(needs, ing);
             for (int i = 0; i < batches; i++) emergencyBuy(ing.id);
         }
         return true;
     }
 
-    /** Hazır stok kullanıldığında adımın gerçekten tüketeceği malzemeler. */
-    private Map<String, Integer> effectiveNeeds(Step s) {
-        Map<String, Integer> m = new LinkedHashMap<>(s.needs);
-        if (usesReadyMeat(s)) m.remove(s.meatId());
-        if (usesReadyDrink(s)) m.remove(Catalog.AYRAN);
+    // ---- boy, açık yarım ve stoktan düşülecek miktar
+    /**
+     * Adımın boyu: dilimleme adımında oyuncunun seçtiği (verilmediyse istenen), ekmek/lavaş ısıtmada istenen boy,
+     * diğerlerinde TAM (ölçeklenmez).
+     */
+    private PortionSize needSize(OrderLine line, Step s, PortionSize meatChoice) {
+        if (s.isSized()) return meatChoice != null ? meatChoice : line.getSize();
+        if (s.isBreadStep()) return line.getSize();
+        return PortionSize.FULL;
+    }
+
+    /** Bu adımda bu malzeme boyla ölçeklenir mi (dilimleme adımında et, ekmek adımında ekmek/lavaş). */
+    private static boolean scaled(Step s, String ingredientId) {
+        Ingredient i = Catalog.ingredient(ingredientId);
+        if (i == null) return false;
+        if (s.isSized() && i.category == Ingredient.Category.ET) return true;
+        return s.isBreadStep() && i.category == Ingredient.Category.EKMEK;
+    }
+
+    private int openHalf(String id) { Integer v = halfOpen.get(id); return v == null ? 0 : v; }
+
+    /** Yarım birim ihtiyacı için stoktan düşmesi gereken TAM birim (açık yarım önce kullanılır). */
+    private int rawUnitsFor(String id, int halves) {
+        return Math.max(0, (halves - openHalf(id) + 1) / 2);
+    }
+
+    /** Stoktan yarım birim düşer (gerekirse yeni bir birim açar; kalan yarım "açık yarım" olur). */
+    private void consumeHalves(String id, int halves) {
+        int total = save.inventory.get(id) * 2 + openHalf(id);
+        int rem = Math.max(0, total - halves);
+        save.inventory.set(id, rem / 2);
+        halfOpen.put(id, rem % 2);
+    }
+
+    /** Hazır stok kullanıldığında adımın gerçekten stoktan tüketeceği malzemeler (boy dahil). */
+    private Map<String, Integer> effectiveNeeds(Step s, PortionSize sz) {
+        Map<String, Integer> m = new LinkedHashMap<>();
+        boolean rm = usesReadyMeat(s, sz);
+        for (Map.Entry<String, Integer> e : s.needs.entrySet()) {
+            String id = e.getKey();
+            if (rm && id.equals(s.meatId())) continue;
+            if (s.isDrinkFill() && id.equals(Catalog.AYRAN) && usesReadyDrink(s)) continue;
+            if (scaled(s, id)) {
+                int raw = rawUnitsFor(id, e.getValue() * sz.halves);
+                if (raw > 0) m.put(id, raw);
+            } else {
+                m.put(id, e.getValue());
+            }
+        }
         return m;
     }
 
-    private boolean usesReadyMeat(Step s) {
+    private boolean usesReadyMeat(Step s, PortionSize sz) {
         String meat = s.meatId();
         if (meat == null) return false;
         Integer need = s.needs.get(meat);
-        return need != null && getReadyMeat(meat) >= need;
+        return need != null && getReadyMeatHalves(meat) >= need * sz.halves;
     }
 
     private boolean usesReadyDrink(Step s) {
@@ -331,10 +400,18 @@ public final class GameEngine {
     /**
      * Siparişin (verilen kalemin; itemIndex < 0: herhangi bir kalem; PAKET istasyonu her zaman siparişin ortak paketlemesidir) o istasyondaki açık adımını
      * başlatmayı dener. İstasyon tek bir uygun adıma çözülür. Topping adımında zamanlayıcı BAŞLAMAZ:
-     * NEEDS_TOPPINGS döner ve {@code onToppingSelectionNeeded} verilir; UI malzemeleri seçtirip
-     * {@link #confirmToppings} çağırır.
+     * NEEDS_TOPPINGS döner ve {@code onToppingSelectionNeeded} verilir (eski toplu {@link #confirmToppings} akışı;
+     * v0.6 UI'ı bunun yerine {@link #addTopping}/{@link #finishToppings} veya {@link #applyStationOption} kullanır).
+     * Döner dilimleme adımında boy ÖNCEDEN SEÇİLMEDİYSE müşterinin istediği boy varsayılır (boy hatası olmaz);
+     * boy seçmek için {@code applyStationOption(..., "size:yarim|tam|duble")} kullanılır.
      */
     public StartResult startStep(int orderId, int itemIndex, int stationId) {
+        return startStepImpl(orderId, itemIndex, stationId, null);
+    }
+
+    private boolean sizeAllowed(OrderLine line, PortionSize sz) { return sz.isOpen(day) || sz == line.getSize(); }
+
+    private StartResult startStepImpl(int orderId, int itemIndex, int stationId, PortionSize explicitSize) {
         if (state == State.FINISHED || state == State.FAILED) return StartResult.NOT_RUNNING;
         ensureStarted();
         Order o = getOrder(orderId);
@@ -383,6 +460,13 @@ public final class GameEngine {
             changeStars(-WRONG_STATION_PENALTY);
             return StartResult.WRONG_STATION;
         }
+        if (explicitSize != null) {
+            if (foundLine < 0 || !o.getLine(foundLine).step(foundStep).isSized()) return StartResult.INVALID;
+            if (!sizeAllowed(o.getLine(foundLine), explicitSize)) {
+                for (GameListener l : snap()) l.onOptionRejected(o, "size:" + explicitSize.id, StartResult.LOCKED);
+                return StartResult.LOCKED;
+            }
+        }
         if (playerActiveCount() >= upgrades.slots()) {
             for (GameListener l : snap()) l.onNoFreeSlot(o);
             return StartResult.NO_SLOT;
@@ -397,22 +481,24 @@ public final class GameEngine {
             for (GameListener l : snap()) l.onToppingSelectionNeeded(o, foundLine);
             return StartResult.NEEDS_TOPPINGS;
         }
-        Map<String, Integer> need = effectiveNeeds(step);
+        Map<String, Integer> need = effectiveNeeds(step, needSize(line, step, explicitSize));
         if (!save.inventory.hasAll(need)) {
-            blocked.put(o.id, new int[]{foundLine, foundStep});
+            blocked.put(o.id, new int[]{foundLine, foundStep, explicitSize == null ? -1 : explicitSize.ordinal()});
             Ingredient missing = null;
             for (String id : need.keySet()) if (!save.inventory.has(id, need.get(id))) { missing = Catalog.ingredient(id); break; }
             for (GameListener l : snap()) l.onOutOfStock(o, missing);
             return StartResult.OUT_OF_STOCK;
         }
-        launchLineStep(o, foundLine, foundStep, 0);
+        launchLineStep(o, foundLine, foundStep, 0, explicitSize);
         return StartResult.STARTED;
     }
 
     /**
-     * Malzeme seçimini onaylar ve topping adımını başlatır. Tüm seçilenler stokta (veya hazır tepside) olmalı;
-     * stok seçilenler kadar tüketilir (tepsi varsa önce tepsiden). Süre = temel + 0,3 sn/malzeme; tepsiyle karşılanan
-     * kısım oranında %50'ye kadar kısalır. Doğrulama (hedefle karşılaştırma) TESLİMDE yapılır.
+     * ESKİ toplu malzeme onayı (v0.5; geriye uyum için durur): kalemin malzemelerini tek hamlede seçer ve topping adımını
+     * zamanlı başlatır. Tüm seçilenler stokta (veya hazır tepside) olmalı; stok seçilenler kadar tüketilir (tepsi varsa
+     * önce tepsiden). Süre = temel + 0,3 sn/malzeme; tepsiyle karşılanan kısım oranında %50'ye kadar kısalır.
+     * Kalemde {@link #addTopping} ile tek tek ekleme başlamışsa INVALID döner. Doğrulama (hedefle karşılaştırma) TESLİMDE yapılır.
+     * Yeni UI bunu kullanmaz: {@link #addTopping} + {@link #finishToppings}.
      */
     public StartResult confirmToppings(int orderId, int itemIndex, Collection<String> chosen) {
         if (state == State.FINISHED || state == State.FAILED) return StartResult.NOT_RUNNING;
@@ -423,7 +509,7 @@ public final class GameEngine {
         if (itemIndex < 0 || itemIndex >= o.lineCount()) return StartResult.INVALID;
         OrderLine line = o.getLine(itemIndex);
         int ti = line.product.toppingStepIndex();
-        if (ti < 0 || line.isStepDone(ti)) return StartResult.INVALID;
+        if (ti < 0 || line.isStepDone(ti) || line.addedTotal() > 0) return StartResult.INVALID;
         if (line.isStepRunning(ti)) return StartResult.ORDER_BUSY;
         Step step = line.step(ti);
         if (!line.isStepUnlocked(ti)) {
@@ -432,7 +518,7 @@ public final class GameEngine {
         }
         Set<String> want = new LinkedHashSet<>(chosen == null ? Collections.<String>emptyList() : chosen);
         for (String id : want) {
-            if (!line.product.toppingPool.contains(id)) {
+            if (!line.getPool().contains(id)) {
                 for (GameListener l : snap()) l.onToppingsRejected(o, itemIndex, StartResult.INVALID, Catalog.ingredient(id));
                 return StartResult.INVALID;
             }
@@ -447,9 +533,9 @@ public final class GameEngine {
                 return StartResult.OUT_OF_STOCK;
             }
         }
-        // pool sırasında kaydet
+        // havuz sırasında kaydet
         Set<String> ordered = new LinkedHashSet<>();
-        for (String id : line.product.toppingPool) if (want.contains(id)) ordered.add(id);
+        for (String id : line.getPool()) if (want.contains(id)) ordered.add(id);
         int covered = 0;
         for (String id : ordered) {
             if (getTrayUses(id) > 0) { trayUses.put(id, getTrayUses(id) - 1); covered++; }
@@ -468,31 +554,198 @@ public final class GameEngine {
         return StartResult.STARTED;
     }
 
-    /** Malzeme seçimi panelinin seçenekleri (havuz sırasında). Kalem topping istemiyorsa boş liste. */
+    // ---------------------------------------------------------------- tek tek malzeme ekleme (v0.6)
+    /** Topping için kalem çözümü: itemIndex >= 0 ise o; yoksa seçili kalem, sonra malzeme adımı bitmemiş ilk kalem; yoksa -1. */
+    private int resolveToppingItem(Order o, int itemIndex) {
+        if (itemIndex >= 0) return itemIndex < o.lineCount() ? itemIndex : -1;
+        List<Integer> order = new ArrayList<>();
+        if (o.id == selectedId && selectedItem >= 0 && selectedItem < o.lineCount()) order.add(selectedItem);
+        for (int i = 0; i < o.lineCount(); i++) if (!order.contains(i)) order.add(i);
+        for (int i : order) {
+            OrderLine l = o.getLine(i);
+            int ti = l.product.toppingStepIndex();
+            if (ti >= 0 && !l.isStepDone(ti) && (l.isStepUnlocked(ti) || l.isStepRunning(ti))) return i;
+        }
+        for (int i : order) {
+            OrderLine l = o.getLine(i);
+            int ti = l.product.toppingStepIndex();
+            if (ti >= 0 && !l.isStepDone(ti)) return i;
+        }
+        return -1;
+    }
+
+    /** Tek malzemenin ekleme süresi (sn): salata 0,6, sos 0,5; hazır tepsiden yarısı; istasyon hızı ve tempo uygulanır. */
+    private float addSeconds(Ingredient ing, boolean fromTray) {
+        double d = ing.category == Ingredient.Category.SALATA ? ADD_SALAD_SECONDS : ADD_SAUCE_SECONDS;
+        if (fromTray) d *= 0.5;
+        d *= upgrades.speedMult(Station.SOS) * save.tempo;
+        return (float) Math.max(MIN_ADD_SECONDS, d);
+    }
+
+    /**
+     * SOS/SALATA istasyonu: kalemin topping adımına TEK malzeme ekler. Kısa süre alır (salata 0,6 sn, sos 0,5 sn; hazır
+     * tepsiden yarısı), malzemeyi hemen tüketir ve süre sonunda {@code onToppingAdded} verir. Aynı malzeme ikinci kez
+     * eklenirse "bol" olur; üçüncüsü MAX_REACHED ile reddedilir. Topping adımı kalemin diğer adımları bitince açılır.
+     * itemIndex &lt; 0: otomatik kalem. Sonuçlar: STARTED, NO_ORDER, ORDER_READY, INVALID (havuz dışı/malzeme adımı yok),
+     * ORDER_BUSY (bir ekleme sürüyor), STEP_LOCKED, MAX_REACHED, NO_SLOT, OUT_OF_STOCK, NOT_RUNNING.
+     */
+    public StartResult addTopping(int orderId, int itemIndex, String ingredientId) {
+        if (state == State.FINISHED || state == State.FAILED) return StartResult.NOT_RUNNING;
+        ensureStarted();
+        Order o = getOrder(orderId);
+        if (o == null) return StartResult.NO_ORDER;
+        if (o.ready) return StartResult.ORDER_READY;
+        int li = resolveToppingItem(o, itemIndex);
+        if (li < 0) return StartResult.INVALID;
+        OrderLine line = o.getLine(li);
+        int ti = line.product.toppingStepIndex();
+        if (ti < 0 || line.isStepDone(ti)) return StartResult.INVALID;
+        if (line.isStepRunning(ti)) return StartResult.ORDER_BUSY;
+        Step step = line.step(ti);
+        if (!line.isStepUnlocked(ti)) {
+            for (GameListener l : snap()) l.onStepLocked(o, step);
+            return StartResult.STEP_LOCKED;
+        }
+        Ingredient ing = ingredientId == null ? null : Catalog.ingredient(ingredientId);
+        if (ing == null || !line.getPool().contains(ingredientId)) {
+            for (GameListener l : snap()) l.onToppingsRejected(o, li, StartResult.INVALID, ing);
+            return StartResult.INVALID;
+        }
+        if (line.addedCount(ingredientId) >= MAX_ADD_PER_INGREDIENT) {
+            for (GameListener l : snap()) l.onToppingsRejected(o, li, StartResult.MAX_REACHED, ing);
+            return StartResult.MAX_REACHED;
+        }
+        if (playerActiveCount() >= upgrades.slots()) {
+            for (GameListener l : snap()) l.onNoFreeSlot(o);
+            return StartResult.NO_SLOT;
+        }
+        boolean tray = getTrayUses(ingredientId) > 0;
+        if (!tray && !save.inventory.has(ingredientId, 1)) {
+            for (GameListener l : snap()) l.onToppingsRejected(o, li, StartResult.OUT_OF_STOCK, ing);
+            return StartResult.OUT_OF_STOCK;
+        }
+        if (tray) trayUses.put(ingredientId, getTrayUses(ingredientId) - 1);
+        else save.inventory.add(ingredientId, -1);
+        line.recordAdd(ingredientId, tray);
+        line.setRunning(ti, true);
+        blocked.remove(o.id);
+        float dur = addSeconds(ing, tray);
+        Step syn = new Step(ing.name + " ekle", Station.SOS, dur, Collections.<String, Integer>emptyMap());
+        ActiveStep a = new ActiveStep(o, li, ti, syn, dur, freeSlot(), 0, null, null, false);
+        a.addId = ingredientId;
+        a.addFromTray = tray;
+        active.add(a);
+        int count = line.addedCount(ingredientId);
+        for (GameListener l : snap()) l.onToppingAddStarted(o, li, ing, count, dur);
+        return StartResult.STARTED;
+    }
+
+    /**
+     * Kalemin SON eklenen malzemesini geri alır: malzeme stoğa (tepsiden geldiyse tepsiye) iade edilir. Yalnızca malzeme
+     * adımı bitirilmemişken ve bir ekleme sürmüyorken çalışır. Sonuçlar: STARTED (geri alındı), NOTHING_TO_UNDO,
+     * ORDER_BUSY (ekleme sürüyor), NO_ORDER, ORDER_READY, INVALID, NOT_RUNNING. Reddedilince {@code onOptionRejected("undo", ...)}.
+     */
+    public StartResult removeLastTopping(int orderId, int itemIndex) {
+        if (state == State.FINISHED || state == State.FAILED) return StartResult.NOT_RUNNING;
+        Order o = getOrder(orderId);
+        if (o == null) return StartResult.NO_ORDER;
+        if (o.ready) return StartResult.ORDER_READY;
+        int li = itemIndex;
+        if (li < 0) {
+            li = resolveToppingItem(o, -1);
+            // eklenmiş malzemesi olan ilk kalemi tercih et
+            for (int i = 0; i < o.lineCount(); i++) {
+                OrderLine l = o.getLine(i);
+                int t = l.product.toppingStepIndex();
+                if (t >= 0 && !l.isStepDone(t) && l.addedTotal() > 0) { li = i; break; }
+            }
+        }
+        if (li < 0 || li >= o.lineCount()) return StartResult.INVALID;
+        OrderLine line = o.getLine(li);
+        int ti = line.product.toppingStepIndex();
+        if (ti < 0) return StartResult.INVALID;
+        if (line.isStepDone(ti) || line.addedTotal() == 0) return rejectOption(o, "undo", StartResult.NOTHING_TO_UNDO);
+        if (line.isStepRunning(ti)) return rejectOption(o, "undo", StartResult.ORDER_BUSY);
+        boolean[] wasTray = new boolean[1];
+        String id = line.undoLast(wasTray);
+        if (wasTray[0]) trayUses.put(id, getTrayUses(id) + 1);
+        else save.inventory.add(id, 1);
+        Ingredient ing = Catalog.ingredient(id);
+        int remaining = line.addedCount(id);
+        for (GameListener l : snap()) l.onToppingRemoved(o, li, ing, remaining);
+        return StartResult.STARTED;
+    }
+
+    private StartResult rejectOption(Order o, String optionId, StartResult r) {
+        for (GameListener l : snap()) l.onOptionRejected(o, optionId, r);
+        return r;
+    }
+
+    /**
+     * "Malzemeleri bitir" (eski Tamam): kalemin malzeme adımını tamamlar. Hiç malzeme eklenmemiş olabilir (sosuz).
+     * Doğrulama (hedef küme ile karşılaştırma) eskisi gibi TESLİMDE yapılır. Anında biter (süre yok);
+     * {@code onToppingsFinished} + {@code onStepFinished} (+ kalem/paket olayları) verilir.
+     * Sonuçlar: STARTED (bitti), STEP_LOCKED (diğer adımlar bitmeli), ORDER_BUSY (ekleme sürüyor), INVALID, NO_ORDER,
+     * ORDER_READY, NOT_RUNNING.
+     */
+    public StartResult finishToppings(int orderId, int itemIndex) {
+        if (state == State.FINISHED || state == State.FAILED) return StartResult.NOT_RUNNING;
+        ensureStarted();
+        Order o = getOrder(orderId);
+        if (o == null) return StartResult.NO_ORDER;
+        if (o.ready) return StartResult.ORDER_READY;
+        int li = resolveToppingItem(o, itemIndex);
+        if (li < 0) return StartResult.INVALID;
+        OrderLine line = o.getLine(li);
+        int ti = line.product.toppingStepIndex();
+        if (ti < 0 || line.isStepDone(ti)) return StartResult.INVALID;
+        if (line.isStepRunning(ti)) return rejectOption(o, "finish", StartResult.ORDER_BUSY);
+        Step step = line.step(ti);
+        if (!line.isStepUnlocked(ti)) {
+            for (GameListener l : snap()) l.onStepLocked(o, step);
+            return StartResult.STEP_LOCKED;
+        }
+        line.finishChosen();
+        line.setDone(ti);
+        blocked.remove(o.id);
+        for (GameListener l : snap()) l.onToppingsFinished(o, li, line.getChosen());
+        afterLineStep(o, line, step, 0, 0f);
+        return StartResult.STARTED;
+    }
+
+    /** Kalemin eklenen malzemeleri ve adetleri (ekleme sırasında; 1 normal, 2 bol). Kalem yoksa boş. */
+    public Map<String, Integer> getAddedToppings(int orderId, int itemIndex) {
+        Order o = getOrder(orderId);
+        if (o == null || itemIndex < 0 || itemIndex >= o.lineCount()) return new LinkedHashMap<>();
+        return new LinkedHashMap<>(o.getLine(itemIndex).getAddedCounts());
+    }
+
+    // ---------------------------------------------------------------- malzeme seçimi (eski panel API'si)
+    /** Eski malzeme paneli seçenekleri (havuz sırasında; günün açık malzemeleri). Kalem topping istemiyorsa boş liste. */
     public List<ToppingOption> getToppingOptions(int orderId, int itemIndex) {
         List<ToppingOption> out = new ArrayList<>();
         Order o = getOrder(orderId);
         if (o == null || itemIndex < 0 || itemIndex >= o.lineCount()) return out;
-        Product p = o.getLine(itemIndex).product;
+        OrderLine line = o.getLine(itemIndex);
         boolean pre = DayConfig.toppingsPreselected(day);
-        for (String id : p.toppingPool) {
+        for (String id : line.getPool()) {
             Ingredient ing = Catalog.ingredient(id);
             int stock = save.inventory.get(id);
             int tray = getTrayUses(id);
-            boolean isDef = p.defaultToppings.contains(id);
+            boolean isDef = line.getDefaults().contains(id);
             out.add(new ToppingOption(ing, stock > 0 || tray > 0, pre && isDef, isDef, stock, tray));
         }
         return out;
     }
 
-    /** Panel açıldığında önceden seçili gelen malzemeler (1-3. gün varsayılan küme, sonra boş). */
+    /** Eski panel açıldığında önceden seçili gelen malzemeler (1-3. gün varsayılan küme, sonra boş). */
     public Set<String> getInitialToppings(int orderId, int itemIndex) {
         Set<String> s = new LinkedHashSet<>();
         for (ToppingOption op : getToppingOptions(orderId, itemIndex)) if (op.selected) s.add(op.ingredient.id);
         return s;
     }
 
-    /** Kalemin hedef malzeme kümesi ("Hedefi oku"): varsayılan ± müşteri istekleri. */
+    /** Kalemin hedef malzeme kümesi ("Hedefi oku"): günün açık varsayılanı ± müşteri istekleri. */
     public Set<String> getToppingTarget(int orderId, int itemIndex) {
         Order o = getOrder(orderId);
         if (o == null || itemIndex < 0 || itemIndex >= o.lineCount()) return new LinkedHashSet<>();
@@ -510,6 +763,302 @@ public final class GameEngine {
         return -1;
     }
 
+    // ---------------------------------------------------------------- istasyon eylem menüsü (v0.6)
+    /**
+     * İstasyon eylem menüsünde bu istasyon için kalem çözümü: itemIndex &gt;= 0 ise o kalem; yoksa seçili kalem, sonra
+     * istasyonda açık adımı olan ilk kalem, sonra istasyonda (kilitli/sürüyor da olsa) bitmemiş adımı olan ilk kalem.
+     * Sipariş yoksa, kalemde iş yoksa veya PAKET istasyonuysa -1.
+     */
+    public int resolveStationItem(int orderId, int itemIndex, int stationId) {
+        Order o = getOrder(orderId);
+        Station st = Station.byId(stationId);
+        if (o == null || st == null || st == Station.PAKET) return -1;
+        if (itemIndex >= 0) return itemIndex < o.lineCount() ? itemIndex : -1;
+        List<Integer> order = new ArrayList<>();
+        if (o.id == selectedId && selectedItem >= 0 && selectedItem < o.lineCount()) order.add(selectedItem);
+        for (int i = 0; i < o.lineCount(); i++) if (!order.contains(i)) order.add(i);
+        for (int i : order) {
+            OrderLine l = o.getLine(i);
+            for (int si = 0; si < l.stepCount(); si++) if (l.step(si).station == st && l.isStepOpen(si)) return i;
+        }
+        for (int i : order) {
+            OrderLine l = o.getLine(i);
+            for (int si = 0; si < l.stepCount(); si++) if (l.step(si).station == st && !l.isStepDone(si)) return i;
+        }
+        return -1;
+    }
+
+    private static final String LOCK_SLOT = "Bir işlem sürüyor";
+
+    /**
+     * İstasyonun o anki eylem menüsü (TalkBack özel eylemleri ve seçenek paneli AYNI listeyi kullanır).
+     * orderId &lt; 0 veya sipariş yok: yalnızca hazırlık seçenekleri. itemIndex &lt; 0: kalem otomatik
+     * ({@link #resolveStationItem}). Kilitli seçenekler listede kalır ({@code enabled=false}, {@code lockReason}).
+     * Gün bittiyse boş.
+     */
+    public List<StationOption> getStationOptions(int orderId, int itemIndex, int stationId) {
+        List<StationOption> out = new ArrayList<>();
+        Station st = Station.byId(stationId);
+        if (st == null || state == State.FINISHED || state == State.FAILED) return out;
+        Order o = getOrder(orderId);
+        if (o != null && !o.ready && state == State.RUNNING) {
+            if (st == Station.PAKET) {
+                out.add(packOption(o));
+            } else {
+                int li = resolveStationItem(orderId, itemIndex, stationId);
+                if (li >= 0) lineOptions(out, o, li, st);
+            }
+        }
+        prepOptions(out, st);
+        return out;
+    }
+
+    private boolean slotFree() { return playerActiveCount() < upgrades.slots(); }
+
+    private StationOption packOption(Order o) {
+        Step s = o.getPackStep();
+        boolean ok = o.canPack() && slotFree();
+        String reason = o.isPacking() ? "Paketleme sürüyor" : !o.allLinesDone() ? "Önce tüm kalemler hazır olmalı" : LOCK_SLOT;
+        float sec = (float) Math.max(MIN_STEP_SECONDS, s.baseSeconds * upgrades.speedMult(Station.PAKET) * save.tempo);
+        return new StationOption("step", StationOption.Group.STEP, s.name, s.name + ", " + Narrator.fmtSeconds(sec),
+                ok, reason, null, false);
+    }
+
+    private void lineOptions(List<StationOption> out, Order o, int li, Station st) {
+        OrderLine line = o.getLine(li);
+        String who = o.lineCount() > 1 ? line.product.name + ": " : "";
+        int normal = -1, normalFirstUndone = -1, sized = -1, top = -1;
+        for (int si = 0; si < line.stepCount(); si++) {
+            Step s = line.step(si);
+            if (s.station != st || line.isStepDone(si)) continue;
+            if (s.isTopping()) { if (top < 0) top = si; }
+            else if (s.isSized()) { if (sized < 0) sized = si; }
+            else {
+                if (normalFirstUndone < 0) normalFirstUndone = si;
+                if (normal < 0 && line.isStepOpen(si)) normal = si;
+            }
+        }
+        if (normal < 0) normal = normalFirstUndone;
+        if (normal >= 0) out.add(stepOption(o, line, normal, who));
+        if (sized >= 0) sizeOptions(out, o, line, sized, who);
+        if (top >= 0) toppingOptions(out, o, line, top, who);
+    }
+
+    private StationOption stepOption(Order o, OrderLine line, int si, String who) {
+        Step s = line.step(si);
+        PortionSize sz = needSize(line, s, null);
+        boolean running = line.isStepRunning(si);
+        boolean locked = !line.isStepUnlocked(si);
+        boolean slot = slotFree();
+        boolean ok = !running && !locked && slot;
+        String reason = running ? "Çalışıyor" : locked ? "Önce kalemin önceki adımları bitmeli" : LOCK_SLOT;
+        Map<String, Integer> need = effectiveNeeds(s, sz);
+        boolean out = !save.inventory.hasAll(need);
+        float sec = previewSeconds(line, si, sz);
+        String desc = who + s.name + (s.isBreadStep() && sz != PortionSize.FULL ? ", " + sz.spoken() : "") + ", " + Narrator.fmtSeconds(sec)
+                + (out ? ", malzeme yok" : "");
+        return new StationOption("step", StationOption.Group.STEP, who + s.name, desc, ok, reason, null, out);
+    }
+
+    /** Başlatılsaydı adımın süresi (sn) — hazır stok, boy ve hız dahil. */
+    private float previewSeconds(OrderLine line, int si, PortionSize sz) {
+        Step s = line.step(si);
+        return lineStepSeconds(s, usesReadyMeat(s, sz), usesReadyDrink(s), 0, sz);
+    }
+
+    private void sizeOptions(List<StationOption> out, Order o, OrderLine line, int si, String who) {
+        Step s = line.step(si);
+        boolean running = line.isStepRunning(si);
+        boolean locked = !line.isStepUnlocked(si);
+        boolean slot = slotFree();
+        String meat = s.meatId();
+        int need = meat == null ? 1 : s.needs.get(meat);
+        for (PortionSize sz : PortionSize.values()) {
+            boolean open = sizeAllowed(line, sz);
+            boolean ok = open && !running && !locked && slot;
+            String reason = !open ? sz.unlockDay + ". günde açılır" : running ? "Dilimleme sürüyor"
+                    : locked ? "Önce kalemin önceki adımları bitmeli" : LOCK_SLOT;
+            boolean oos = !save.inventory.hasAll(effectiveNeeds(s, sz));
+            String portions = PortionSize.halvesText(need * sz.halves) + " porsiyon";
+            String desc = who + sz.displayName + ", " + portions + ", " + Narrator.fmtSeconds(previewSeconds(line, si, sz))
+                    + (usesReadyMeat(s, sz) ? ", hazır dilimden" : "") + (oos ? ", malzeme yok" : "");
+            out.add(new StationOption("size:" + sz.id, StationOption.Group.SIZE, sz.displayName, desc, ok, reason, meat, oos));
+        }
+    }
+
+    private void toppingOptions(List<StationOption> out, Order o, OrderLine line, int ti, String who) {
+        boolean locked = !line.isStepUnlocked(ti);
+        boolean running = line.isStepRunning(ti);
+        boolean slot = slotFree();
+        String lockedReason = "Önce kalemin diğer adımları bitmeli";
+        for (String id : line.getPool()) {
+            Ingredient ing = Catalog.ingredient(id);
+            int cnt = line.addedCount(id);
+            int stock = save.inventory.get(id);
+            int tray = getTrayUses(id);
+            boolean oos = stock <= 0 && tray <= 0;
+            boolean maxed = cnt >= MAX_ADD_PER_INGREDIENT;
+            String name = ing.name + (cnt == 1 ? " bol ekle" : " ekle");
+            String state = oos ? ", stokta yok" : tray > 0 ? ", hazır tepside " + tray : ", stokta " + stock;
+            String added = cnt == 1 ? ", 1 kez eklendi" : cnt >= 2 ? ", bol eklendi" : "";
+            boolean ok = !locked && !running && slot && !maxed;
+            String reason = locked ? lockedReason : running ? "Ekleme sürüyor" : maxed ? "En fazla bol, iki kez eklenir" : LOCK_SLOT;
+            out.add(new StationOption("add:" + id, StationOption.Group.ADD, who + name, who + name + added + state,
+                    ok, reason, id, oos));
+        }
+        boolean none = line.addedTotal() == 0;
+        out.add(new StationOption("undo", StationOption.Group.CONTROL, "Son ekleneni geri al",
+                "Son ekleneni geri al" + (none ? ", henüz bir şey eklenmedi" : ""),
+                !none && !running, none ? "Henüz malzeme eklenmedi" : "Ekleme sürüyor", null, false));
+        out.add(new StationOption("finish", StationOption.Group.CONTROL, "Malzemeleri bitir",
+                who + "Malzemeleri bitir, " + line.addedTotal() + " ekleme",
+                !locked && !running, locked ? lockedReason : "Ekleme sürüyor", null, false));
+        out.add(new StationOption("read:added", StationOption.Group.READ, "Eklenenleri oku", "Eklenenleri oku",
+                true, null, null, false));
+        out.add(new StationOption("read:target", StationOption.Group.READ, "Hedefi oku", "Hedefi oku, müşterinin istediği malzemeler",
+                true, null, null, false));
+    }
+
+    // ---- hazırlık seçenekleri
+    private static final int[] DONER_PREP_PORTIONS = {4, 2};
+
+    private void prepOptions(List<StationOption> out, Station st) {
+        boolean slot = slotFree();
+        if (st == Station.DONER) {
+            List<Ingredient> meats = getPrepMeats();
+            for (Ingredient m : meats) {
+                for (int n : DONER_PREP_PORTIONS) {
+                    String name = n + " porsiyon " + (meats.size() > 1 ? m.name.toLowerCase(new java.util.Locale("tr")) + " " : "") + "dilimle";
+                    int cap = upgrades.readyCapacity(PrepKind.DONER) * 2;
+                    boolean full = getReadyMeatHalves(m.id) + 2 * pendingPrep(PrepKind.DONER, m.id) + 2 * n > cap;
+                    boolean lack = !save.inventory.has(m.id, n);
+                    String reason = full ? "Hazır stok dolu" : lack ? "Malzeme yetmiyor: " + m.name : LOCK_SLOT;
+                    String desc = name + ", hazırlık, " + Narrator.fmtSeconds(prepSeconds(PrepKind.DONER, n))
+                            + ", hazır döner " + PortionSize.halvesText(getReadyMeatHalves(m.id)) + " porsiyon";
+                    out.add(new StationOption("prep:doner:" + m.id + ":" + n, StationOption.Group.PREP, name, desc,
+                            slot && !full && !lack, reason, m.id, false));
+                }
+            }
+        } else if (st == Station.ICECEK && menuHasDrinkPrep()) {
+            int cap = upgrades.readyCapacity(PrepKind.DRINK);
+            boolean full = save.readyDrinks + pendingPrep(PrepKind.DRINK, null) + PrepKind.DRINK.batch > cap;
+            boolean lack = !save.inventory.has(Catalog.AYRAN, PrepKind.DRINK.batch);
+            String reason = full ? "Hazır stok dolu" : lack ? "Malzeme yetmiyor: Ayran şişesi" : LOCK_SLOT;
+            String name = PrepKind.DRINK.batch + " bardak ayran doldur";
+            out.add(new StationOption("prep:drink", StationOption.Group.PREP, name,
+                    name + ", hazırlık, " + Narrator.fmtSeconds(prepSeconds(PrepKind.DRINK, PrepKind.DRINK.batch)) + ", hazır ayran " + save.readyDrinks,
+                    slot && !full && !lack, reason, Catalog.AYRAN, false));
+        } else if (st == Station.SOS) {
+            Set<String> pick = trayPick(false);
+            boolean enough = pick.size() >= 2;
+            String name = "Salata ve sos tepsisi hazırla";
+            out.add(new StationOption("prep:tray", StationOption.Group.PREP, name,
+                    name + ", hazırlık, " + (enough ? Narrator.joinNames(pick) : "yeterli malzeme yok"),
+                    slot && enough, enough ? LOCK_SLOT : "Yeterli malzeme yok", null, false));
+        }
+    }
+
+    private float prepSeconds(PrepKind kind, int amount) {
+        double d = kind.baseSeconds * (kind == PrepKind.DONER && amount < kind.batch ? PREP_SMALL_BATCH_FACTOR : 1.0)
+                * upgrades.speedMult(kind.station) * save.tempo;
+        return (float) Math.max(MIN_STEP_SECONDS, d);
+    }
+
+    /** Hazır tepsi için önerilen malzemeler: menünün (günün açık) en sık varsayılan malzemeleri, stokta ≥ 6 olanlar. */
+    private Set<String> trayPick(boolean forApprentice) {
+        Map<String, Integer> freq = new LinkedHashMap<>();
+        for (Product p : menu) for (String id : p.defaultToppings(day)) {
+            Integer v = freq.get(id);
+            freq.put(id, v == null ? 1 : v + 1);
+        }
+        List<String> ids = new ArrayList<>(freq.keySet());
+        final Map<String, Integer> f = freq;
+        Collections.sort(ids, new Comparator<String>() {
+            @Override public int compare(String a, String b) { return f.get(b) - f.get(a); }
+        });
+        Set<String> pick = new LinkedHashSet<>();
+        for (String id : ids) {
+            if (pick.size() >= 5) break;
+            int limit = forApprentice ? 3 : PrepKind.TRAY.batch;
+            if (getTrayUses(id) + pendingPrep(PrepKind.TRAY, id) <= limit && save.inventory.has(id, PrepKind.TRAY.batch + (forApprentice ? 2 : 0))
+                    && getTrayUses(id) + pendingPrep(PrepKind.TRAY, id) + PrepKind.TRAY.batch <= upgrades.readyCapacity(PrepKind.TRAY)) pick.add(id);
+        }
+        return pick;
+    }
+
+    /**
+     * Menü seçeneğini uygular — UI hem TalkBack eylemlerinden hem seçenek panelinden BU TEK GİRİŞ NOKTASINI çağırır.
+     * optionId, {@link StationOption#id} değerlerinden biridir:
+     * <ul>
+     * <li>{@code step}: istasyondaki kalem/paketleme adımını başlatır (startStep ile aynı)</li>
+     * <li>{@code size:yarim|tam|duble}: DONER istasyonunda boyu SEÇEREK dilimlemeyi başlatır (boy hatası teslimde)</li>
+     * <li>{@code add:<malzeme>}: {@link #addTopping}; {@code undo}: {@link #removeLastTopping}; {@code finish}: {@link #finishToppings}</li>
+     * <li>{@code read:added}, {@code read:target}: durum değişmez, {@code onStationInfo} verilir, INFO döner</li>
+     * <li>{@code prep:doner:<et>:<4|2>}, {@code prep:drink}, {@code prep:tray}: hazırlık (sipariş gerekmez)</li>
+     * </ul>
+     * Dönüş: uygulandıysa STARTED (veya INFO); aksi halde reddetme nedeni (OUT_OF_STOCK, NO_SLOT, STEP_LOCKED, LOCKED,
+     * MAX_REACHED, NOTHING_TO_UNDO, FULL, UNKNOWN_OPTION...). Her red için ilgili olay (Narrator duyurur) verilir.
+     * itemIndex &lt; 0: kalem otomatik. Kilitli (enabled=false) seçenek uygulanırsa nedeni duyurulur, durum değişmez.
+     */
+    public StartResult applyStationOption(int orderId, int itemIndex, int stationId, String optionId) {
+        if (state == State.FINISHED || state == State.FAILED) return StartResult.NOT_RUNNING;
+        Station st = Station.byId(stationId);
+        Order o = getOrder(orderId);
+        if (optionId == null || st == null) return rejectOption(o, String.valueOf(optionId), StartResult.UNKNOWN_OPTION);
+        if (optionId.equals("step")) {
+            int li = st == Station.PAKET ? -1 : resolveStationItem(orderId, itemIndex, stationId);
+            return startStepImpl(orderId, li >= 0 ? li : itemIndex, stationId, null);
+        }
+        if (optionId.startsWith("size:")) {
+            PortionSize sz = PortionSize.byId(optionId.substring(5));
+            if (sz == null || st != Station.DONER) return rejectOption(o, optionId, StartResult.UNKNOWN_OPTION);
+            int li = resolveStationItem(orderId, itemIndex, stationId);
+            return startStepImpl(orderId, li >= 0 ? li : itemIndex, stationId, sz);
+        }
+        if (optionId.startsWith("add:")) {
+            if (st != Station.SOS) return rejectOption(o, optionId, StartResult.UNKNOWN_OPTION);
+            return addTopping(orderId, itemIndex, optionId.substring(4));
+        }
+        if (optionId.equals("undo")) return removeLastTopping(orderId, itemIndex);
+        if (optionId.equals("finish")) return finishToppings(orderId, itemIndex);
+        if (optionId.equals("read:added") || optionId.equals("read:target")) {
+            if (o == null) return StartResult.NO_ORDER;
+            int li = resolveToppingItem(o, itemIndex);
+            if (li < 0) return rejectOption(o, optionId, StartResult.INVALID);
+            for (GameListener l : snap()) l.onStationInfo(o, li, optionId);
+            return StartResult.INFO;
+        }
+        if (optionId.startsWith("prep:")) {
+            String[] p = optionId.split(":");
+            PrepResult r;
+            if (p.length == 4 && p[1].equals("doner")) {
+                int n;
+                try { n = Integer.parseInt(p[3]); } catch (NumberFormatException ex) { return rejectOption(o, optionId, StartResult.UNKNOWN_OPTION); }
+                r = startPrepDoner(p[2], n);
+            } else if (p.length == 2 && p[1].equals("drink")) {
+                r = startPrepDrink();
+            } else if (p.length == 2 && p[1].equals("tray")) {
+                Set<String> pick = trayPick(false);
+                r = startPrepTray(pick);
+            } else {
+                return rejectOption(o, optionId, StartResult.UNKNOWN_OPTION);
+            }
+            return fromPrep(r);
+        }
+        return rejectOption(o, optionId, StartResult.UNKNOWN_OPTION);
+    }
+
+    private static StartResult fromPrep(PrepResult r) {
+        switch (r) {
+            case STARTED: return StartResult.STARTED;
+            case NO_SLOT: return StartResult.NO_SLOT;
+            case OUT_OF_STOCK: return StartResult.OUT_OF_STOCK;
+            case FULL: return StartResult.FULL;
+            case INVALID: return StartResult.INVALID;
+            default: return StartResult.NOT_RUNNING;
+        }
+    }
+
     // ---------------------------------------------------------------- hazırlık eylemleri
     /**
      * Hazırlık başlatır (oyuncu, bir yuva kullanır). DONER: ids = {döner malzeme id'si}; DRINK: ids yok sayılır;
@@ -520,39 +1069,50 @@ public final class GameEngine {
         if (state == State.FINISHED || state == State.FAILED) return PrepResult.NOT_ALLOWED;
         if (state == State.READY) beginPrep();
         if (playerActiveCount() >= upgrades.slots()) return PrepResult.NO_SLOT;
-        PrepResult r = launchPrep(kind, ids, 0);
+        PrepResult r = launchPrep(kind, ids, 0, kind.batch);
         return r;
     }
 
+    /** 4 porsiyon dilimle (eski API). */
     public PrepResult startPrepDoner(String meatId) {
-        return startPrep(PrepKind.DONER, Collections.singletonList(meatId));
+        return startPrepDoner(meatId, PrepKind.DONER.batch);
+    }
+
+    /** Hazır dilimlenmiş döner: 4 porsiyon (6 sn) veya 2 porsiyon (3,6 sn). Başka miktar INVALID. */
+    public PrepResult startPrepDoner(String meatId, int portions) {
+        if (state == State.FINISHED || state == State.FAILED) return PrepResult.NOT_ALLOWED;
+        if (state == State.READY) beginPrep();
+        if (portions != 4 && portions != 2) return reject(PrepKind.DONER, PrepResult.INVALID, null);
+        if (playerActiveCount() >= upgrades.slots()) return PrepResult.NO_SLOT;
+        return launchPrep(PrepKind.DONER, Collections.singletonList(meatId), 0, portions);
     }
 
     public PrepResult startPrepDrink() { return startPrep(PrepKind.DRINK, Collections.<String>emptyList()); }
 
     public PrepResult startPrepTray(Collection<String> ingredientIds) { return startPrep(PrepKind.TRAY, ingredientIds); }
 
+    /** Devam eden hazırlıklarla üretilecek miktar (döner: porsiyon, içecek: bardak, tepsi: malzeme başına kullanım). */
     private int pendingPrep(PrepKind kind, String id) {
         int n = 0;
         for (ActiveStep a : active) {
             if (a.prep != kind) continue;
-            if (kind == PrepKind.DRINK || (a.ids != null && a.ids.contains(id))) n += kind.batch;
+            if (kind == PrepKind.DRINK || (a.ids != null && a.ids.contains(id))) n += a.amount;
         }
         return n;
     }
 
-    private Map<String, Integer> prepNeeds(PrepKind kind, Set<String> ids) {
+    private Map<String, Integer> prepNeeds(PrepKind kind, Set<String> ids, int amount) {
         Map<String, Integer> m = new LinkedHashMap<>();
         switch (kind) {
-            case DONER: for (String id : ids) m.put(id, kind.batch); break;
-            case DRINK: m.put(Catalog.AYRAN, kind.batch); break;
-            default: for (String id : ids) m.put(id, kind.batch); break;
+            case DONER: for (String id : ids) m.put(id, amount); break;
+            case DRINK: m.put(Catalog.AYRAN, amount); break;
+            default: for (String id : ids) m.put(id, amount); break;
         }
         return m;
     }
 
     /** Hazırlığı doğrular ve başlatır; worker 0 = oyuncu (yuva zaten kontrol edildi), >0 = çırak. */
-    private PrepResult launchPrep(PrepKind kind, Collection<String> idsIn, int worker) {
+    private PrepResult launchPrep(PrepKind kind, Collection<String> idsIn, int worker, int amount) {
         Set<String> ids = new LinkedHashSet<>(idsIn == null ? Collections.<String>emptyList() : idsIn);
         switch (kind) {
             case DONER: {
@@ -565,7 +1125,7 @@ public final class GameEngine {
                 if (ids.isEmpty()) return reject(kind, PrepResult.INVALID, null);
                 for (String id : ids) {
                     Ingredient i = Catalog.ingredient(id);
-                    if (i == null || !i.isTopping()) return reject(kind, PrepResult.INVALID, null);
+                    if (i == null || !i.isTopping() || !i.isOpen(day)) return reject(kind, PrepResult.INVALID, null);
                 }
                 break;
             }
@@ -576,7 +1136,7 @@ public final class GameEngine {
         switch (kind) {
             case DONER: {
                 String id = ids.iterator().next();
-                if (getReadyMeat(id) + pendingPrep(kind, id) + kind.batch > cap) return reject(kind, PrepResult.FULL, null);
+                if (getReadyMeatHalves(id) + 2 * (pendingPrep(kind, id) + amount) > 2 * cap) return reject(kind, PrepResult.FULL, null);
                 break;
             }
             case DRINK:
@@ -588,17 +1148,18 @@ public final class GameEngine {
                 }
                 break;
         }
-        Map<String, Integer> need = prepNeeds(kind, ids);
+        Map<String, Integer> need = prepNeeds(kind, ids, amount);
         for (Map.Entry<String, Integer> e : need.entrySet()) {
             if (!save.inventory.has(e.getKey(), e.getValue())) {
                 return reject(kind, PrepResult.OUT_OF_STOCK, Catalog.ingredient(e.getKey()));
             }
         }
         save.inventory.consumeAll(need);
-        double d = kind.baseSeconds * upgrades.speedMult(kind.station) * save.tempo * (worker > 0 ? APPRENTICE_SLOWDOWN : 1f);
+        double d = prepSeconds(kind, amount) * (worker > 0 ? APPRENTICE_SLOWDOWN : 1f);
         float dur = (float) Math.max(MIN_STEP_SECONDS, d);
         Step syn = new Step(kind.displayName, kind.station, dur, Collections.<String, Integer>emptyMap());
         ActiveStep a = new ActiveStep(null, -1, -1, syn, dur, worker == 0 ? freeSlot() : -1, worker, kind, ids, false);
+        a.amount = amount;
         active.add(a);
         for (GameListener l : snap()) l.onPrepStarted(kind, worker > 0, dur);
         if (worker > 0) {
@@ -652,6 +1213,7 @@ public final class GameEngine {
         double penalty = Math.min(MISTAKE_PENALTY_MAX, MISTAKE_PENALTY_EACH * mistakes);
         if (mistakes > 0) {
             summary.mistakes++;
+            if (check.sizeMistakeCount() > 0) summary.sizeMistakes++;
             for (GameListener l : snap()) l.onOrderMistake(o, check, penalty);
         } else if (check.perfect()) {
             summary.perfect++;
@@ -671,6 +1233,10 @@ public final class GameEngine {
     private ToppingCheck checkToppings(Order o) {
         ToppingCheck c = new ToppingCheck();
         for (OrderLine line : o.getLines()) {
+            if (line.hasSize()) {
+                c.sizedLines++;
+                if (line.sizeMismatch()) c.addSize(new ToppingCheck.SizeMistake(line.product.name, line.getSize(), line.getChosenSize()));
+            }
             if (!line.product.hasToppings()) continue;
             c.toppingLines++;
             Set<String> chosen = line.getChosen();
@@ -678,12 +1244,12 @@ public final class GameEngine {
             Set<String> target = line.getTarget();
             for (String t : target) {
                 if (!chosen.contains(t)) {
-                    c.add(new ToppingCheck.Mistake(t, false, !line.product.defaultToppings.contains(t), line.product.name));
+                    c.add(new ToppingCheck.Mistake(t, false, !line.getDefaults().contains(t), line.product.name));
                 }
             }
             for (String t : chosen) {
                 if (!target.contains(t)) {
-                    c.add(new ToppingCheck.Mistake(t, true, line.product.defaultToppings.contains(t), line.product.name));
+                    c.add(new ToppingCheck.Mistake(t, true, line.getDefaults().contains(t), line.product.name));
                 }
             }
         }
@@ -784,39 +1350,52 @@ public final class GameEngine {
         return false;
     }
 
-    private float lineStepSeconds(Step step, boolean readyMeat, boolean readyDrink, int worker) {
+    private float lineStepSeconds(Step step, boolean readyMeat, boolean readyDrink, int worker, PortionSize sz) {
         double d;
         float min = MIN_STEP_SECONDS;
-        if (readyMeat) { d = READY_MEAT_SECONDS; min = MIN_READY_SECONDS; }
+        if (readyMeat) { d = READY_MEAT_SECONDS * sz.timeMult; min = MIN_READY_SECONDS; }
         else if (readyDrink) { d = READY_DRINK_SECONDS; min = MIN_READY_SECONDS; }
-        else d = step.baseSeconds * upgrades.speedMult(step.station);
+        else {
+            d = step.baseSeconds * upgrades.speedMult(step.station);
+            if (step.isSized() || step.isBreadStep()) d *= sz.timeMult;
+        }
         d *= save.tempo;
         if (worker > 0) d *= APPRENTICE_SLOWDOWN;
         return (float) Math.max(min, d);
     }
 
-    /** Stok denetimi yapılmış açık bir kalem adımını başlatır (topping hariç). */
-    private void launchLineStep(Order o, int li, int si, int worker) {
+    /**
+     * Stok denetimi yapılmış açık bir kalem adımını başlatır (topping hariç). meatChoice: oyuncunun seçtiği boy
+     * (dilimleme adımında; null = istenen boy). Et/ekmek boya göre, yarım porsiyon sayacıyla tüketilir.
+     */
+    private void launchLineStep(Order o, int li, int si, int worker, PortionSize meatChoice) {
         OrderLine line = o.getLine(li);
         Step step = line.step(si);
-        boolean rm = usesReadyMeat(step);
+        PortionSize sz = needSize(line, step, meatChoice);
+        boolean rm = usesReadyMeat(step, sz);
         boolean rd = usesReadyDrink(step);
         if (rm) {
             String m = step.meatId();
-            readyMeat.put(m, getReadyMeat(m) - step.needs.get(m));
+            readyMeat.put(m, getReadyMeatHalves(m) - step.needs.get(m) * sz.halves);
         }
         if (rd) save.readyDrinks -= step.needs.get(Catalog.AYRAN);
-        Map<String, Integer> need = new LinkedHashMap<>(step.needs);
-        if (rm) need.remove(step.meatId());
-        if (rd) need.remove(Catalog.AYRAN);
-        save.inventory.consumeAll(need);
-        float dur = lineStepSeconds(step, rm, rd, worker);
+        for (Map.Entry<String, Integer> e : step.needs.entrySet()) {
+            String id = e.getKey();
+            if (rm && id.equals(step.meatId())) continue;
+            if (rd && id.equals(Catalog.AYRAN)) continue;
+            if (scaled(step, id)) consumeHalves(id, e.getValue() * sz.halves);
+            else save.inventory.add(id, -e.getValue());
+        }
+        if (step.isSized()) line.setChosenSize(sz);
+        float dur = lineStepSeconds(step, rm, rd, worker, sz);
         line.setRunning(si, true);
         blocked.remove(o.id);
         int slot = worker == 0 ? freeSlot() : -1;
         ActiveStep a = new ActiveStep(o, li, si, step, dur, slot, worker, null, null, false);
+        a.size = step.isSized() || step.isBreadStep() ? sz : null;
         active.add(a);
         if (worker == 0) {
+            if (step.isSized()) for (GameListener l : snap()) l.onSizeChosen(o, li, line.getSize(), sz);
             for (GameListener l : snap()) l.onStepStarted(o, step, slot, dur);
         } else {
             ApprenticeAction aa = new ApprenticeAction(worker, true, o, li, step, null, false, dur);
@@ -859,14 +1438,27 @@ public final class GameEngine {
             return;
         }
         OrderLine line = o.getLine(a.itemIndex);
+        if (a.addId != null) { // tek malzeme eklendi: malzeme adımı BİTMEZ, yeni ekleme için açılır
+            line.setRunning(a.stepIndex, false);
+            Ingredient ing = Catalog.ingredient(a.addId);
+            int count = line.addedCount(a.addId);
+            for (GameListener l : snap()) l.onToppingAdded(o, a.itemIndex, ing, count);
+            return;
+        }
         line.setDone(a.stepIndex);
-        if (player) for (GameListener l : snap()) l.onStepFinished(o, a.step, false);
+        afterLineStep(o, line, a.step, a.worker, a.total);
+    }
+
+    /** Kalem adımı bitti (zamanlı iş veya "Malzemeleri bitir"): olaylar, kalem/paketleme açılışı, öneri. */
+    private void afterLineStep(Order o, OrderLine line, Step step, int worker, float total) {
+        boolean player = worker == 0;
+        if (player) for (GameListener l : snap()) l.onStepFinished(o, step, false);
         else {
             summary.apprenticeTasks++;
-            ApprenticeAction aa = new ApprenticeAction(a.worker, false, o, a.itemIndex, a.step, null, false, a.total);
+            ApprenticeAction aa = new ApprenticeAction(worker, false, o, line.index, step, null, false, total);
             for (GameListener l : snap()) l.onApprenticeAction(aa);
         }
-        if (line.isDone()) for (GameListener l : snap()) l.onItemFinished(o, a.itemIndex);
+        if (line.isDone()) for (GameListener l : snap()) l.onItemFinished(o, line.index);
         if (o.allLinesDone() && !o.readyToPackAnnounced) {
             o.readyToPackAnnounced = true;
             for (GameListener l : snap()) l.onOrderReadyToPack(o);
@@ -876,16 +1468,16 @@ public final class GameEngine {
 
     private void finishPrep(ActiveStep a) {
         PrepKind kind = a.prep;
-        int amount = kind.batch;
+        int amount = a.amount > 0 ? a.amount : kind.batch;
         switch (kind) {
             case DONER: {
                 String id = a.ids.iterator().next();
-                readyMeat.put(id, getReadyMeat(id) + kind.batch);
+                readyMeat.put(id, getReadyMeatHalves(id) + 2 * amount);
                 break;
             }
-            case DRINK: save.readyDrinks += kind.batch; break;
+            case DRINK: save.readyDrinks += amount; break;
             default:
-                for (String id : a.ids) trayUses.put(id, getTrayUses(id) + kind.batch);
+                for (String id : a.ids) trayUses.put(id, getTrayUses(id) + amount);
                 break;
         }
         summary.prepBatches++;
@@ -969,8 +1561,8 @@ public final class GameEngine {
                         if (!line.isStepOpen(si)) continue;
                         Step s = line.step(si);
                         if (!apprenticeCanDo(s, lvl)) continue;
-                        if (!save.inventory.hasAll(effectiveNeeds(s))) continue;
-                        launchLineStep(o, line.index, si, w);
+                        if (!save.inventory.hasAll(effectiveNeeds(s, needSize(line, s, null)))) continue;
+                        launchLineStep(o, line.index, si, w, null);
                         return true;
                     }
                 }
@@ -990,34 +1582,20 @@ public final class GameEngine {
         // 1) içecek (israf yok: ertesi güne kalır)
         if (menuHasDrinkPrep() && save.readyDrinks + pendingPrep(PrepKind.DRINK, null) <= 4
                 && save.inventory.has(Catalog.AYRAN, PrepKind.DRINK.batch + 2)) {
-            if (launchPrep(PrepKind.DRINK, Collections.<String>emptyList(), w) == PrepResult.STARTED) return true;
+            if (launchPrep(PrepKind.DRINK, Collections.<String>emptyList(), w, PrepKind.DRINK.batch) == PrepResult.STARTED) return true;
         }
         if (left <= 25f) return false;
         // 2) döner
         for (Ingredient m : getPrepMeats()) {
-            if (getReadyMeat(m.id) + pendingPrep(PrepKind.DONER, m.id) <= 3 && save.inventory.has(m.id, PrepKind.DONER.batch + 2)) {
-                if (launchPrep(PrepKind.DONER, Collections.singletonList(m.id), w) == PrepResult.STARTED) return true;
+            if (getReadyMeatHalves(m.id) + 2 * pendingPrep(PrepKind.DONER, m.id) <= 6 && save.inventory.has(m.id, PrepKind.DONER.batch + 2)) {
+                if (launchPrep(PrepKind.DONER, Collections.singletonList(m.id), w, PrepKind.DONER.batch) == PrepResult.STARTED) return true;
             }
         }
-        // 3) salata/sos tepsisi (seviye 2+): menünün en sık varsayılan malzemeleri
+        // 3) salata/sos tepsisi (seviye 2+): menünün en sık varsayılan malzemeleri (günün açık olanları)
         if (lvl >= 2) {
-            Map<String, Integer> freq = new LinkedHashMap<>();
-            for (Product p : menu) for (String id : p.defaultToppings) {
-                Integer v = freq.get(id);
-                freq.put(id, v == null ? 1 : v + 1);
-            }
-            List<String> ids = new ArrayList<>(freq.keySet());
-            final Map<String, Integer> f = freq;
-            Collections.sort(ids, new Comparator<String>() {
-                @Override public int compare(String a, String b) { return f.get(b) - f.get(a); }
-            });
-            Set<String> pick = new LinkedHashSet<>();
-            for (String id : ids) {
-                if (pick.size() >= 5) break;
-                if (getTrayUses(id) + pendingPrep(PrepKind.TRAY, id) <= 3 && save.inventory.has(id, PrepKind.TRAY.batch + 2)) pick.add(id);
-            }
+            Set<String> pick = trayPick(true);
             if (pick.size() >= 2) {
-                if (launchPrep(PrepKind.TRAY, pick, w) == PrepResult.STARTED) return true;
+                if (launchPrep(PrepKind.TRAY, pick, w, PrepKind.TRAY.batch) == PrepResult.STARTED) return true;
             }
         }
         return false;
@@ -1042,15 +1620,29 @@ public final class GameEngine {
         while (n < cfg.maxItems && rng.nextDouble() < cfg.multiItemChance + type.extraItemChance * 0.5f) n++;
         List<Product> items = new ArrayList<>();
         for (int k = 0; k < n; k++) items.add(pickProduct(menu, type));
+        List<PortionSize> sizes = rollSizes(items, type);
         String name = Catalog.NAMES[nameCursor++ % Catalog.NAMES.length];
-        addOrder(name, type, items, rollRequests(items));
+        addOrder(name, type, items, rollRequests(items), sizes);
     }
 
-    private Order addOrder(String name, CustomerType type, List<Product> items, List<Request> reqs) {
-        double pat = (type.patienceSeconds * cfg.patienceFactor + Order.estimateWork(items) * cfg.workPatience)
+    /** Döner içeren kalemler için boy: 1. gün yalnızca tam; 2. günden yarım; 4. günden duble (müşteri tipine göre olasılık). */
+    private List<PortionSize> rollSizes(List<Product> items, CustomerType type) {
+        List<PortionSize> out = new ArrayList<>();
+        for (Product p : items) {
+            if (!p.hasMeat()) { out.add(PortionSize.FULL); continue; }
+            double r = rng.nextDouble();
+            double hc = PortionSize.HALF.isOpen(day) ? type.halfChance : 0.0;
+            double dc = PortionSize.DOUBLE.isOpen(day) ? type.doubleChance : 0.0;
+            out.add(r < hc ? PortionSize.HALF : (r < hc + dc ? PortionSize.DOUBLE : PortionSize.FULL));
+        }
+        return out;
+    }
+
+    private Order addOrder(String name, CustomerType type, List<Product> items, List<Request> reqs, List<PortionSize> sizes) {
+        double pat = (type.patienceSeconds * cfg.patienceFactor + Order.estimateWork(items, sizes) * cfg.workPatience)
                 * upgrades.patienceMult() * save.tempo;
         Customer c = new Customer(name, type, (float) pat);
-        Order o = new Order(nextOrderId++, c, items, reqs);
+        Order o = new Order(nextOrderId++, c, items, reqs, day, sizes);
         int pos = 1;
         while (positionUsed(pos)) pos++;
         o.position = pos;
@@ -1064,6 +1656,14 @@ public final class GameEngine {
      * ekler. Gün başlamadıysa başlatır; bilinmeyen ürün/istek varsa null döner. Kuyruk sınırına bakmaz.
      */
     public Order spawnOrder(List<String> productIds, List<String> requestTexts) {
+        return spawnOrder(productIds, requestTexts, null);
+    }
+
+    /**
+     * Boy da belirtilen senaryo siparişi: sizes, ürünlerle aynı sırada ({@link PortionSize}); null/kısa liste = tam ekmek.
+     * Boy günün açılışına bakmaz (senaryo/test için).
+     */
+    public Order spawnOrder(List<String> productIds, List<String> requestTexts, List<PortionSize> sizes) {
         if (state == State.FINISHED || state == State.FAILED) return null;
         ensureStarted();
         if (state != State.RUNNING) return null;
@@ -1083,7 +1683,7 @@ public final class GameEngine {
         String name = Catalog.NAMES[nameCursor++ % Catalog.NAMES.length];
         CustomerType type = Catalog.typesForDay(day).get(0);
         for (CustomerType t : Catalog.typesForDay(day)) if (t.id.equals("aile")) type = t;
-        return addOrder(name, type, items, reqs);
+        return addOrder(name, type, items, reqs, sizes);
     }
 
     /** Müşteri istekleri: olasılık gün ilerledikçe artar; yalnızca hedef kümeyi gerçekten değiştiren istekler seçilir. */
@@ -1102,9 +1702,10 @@ public final class GameEngine {
                 boolean useful = false;
                 for (Product p : items) {
                     if (!p.hasToppings()) continue;
-                    Set<String> cur = new LinkedHashSet<>(p.defaultToppings);
-                    for (Request e : out) e.apply(p, cur);
-                    if (q.changes(p, cur)) { useful = true; break; }
+                    List<String> pool = p.toppingPool(day);
+                    Set<String> cur = new LinkedHashSet<>(p.defaultToppings(day));
+                    for (Request e : out) e.apply(pool, cur);
+                    if (q.changes(p, pool, cur)) { useful = true; break; }
                 }
                 if (useful) cands.add(q);
             }
@@ -1138,8 +1739,8 @@ public final class GameEngine {
     private void accountWaste() {
         int portions = 0, cost = 0;
         for (Map.Entry<String, Integer> e : readyMeat.entrySet()) {
-            portions += e.getValue();
-            cost += e.getValue() * Catalog.ingredient(e.getKey()).price;
+            portions += (e.getValue() + 1) / 2; // yarım porsiyon da bir porsiyon sayılır
+            cost += (e.getValue() * Catalog.ingredient(e.getKey()).price + 1) / 2;
         }
         for (Map.Entry<String, Integer> e : trayUses.entrySet()) {
             portions += e.getValue();
@@ -1149,11 +1750,12 @@ public final class GameEngine {
         for (ActiveStep a : active) {
             if (a.prep == null || a.prep == PrepKind.DRINK) continue;
             for (String id : a.ids) {
-                portions += a.prep.batch;
-                cost += a.prep.batch * Catalog.ingredient(id).price;
+                portions += a.amount;
+                cost += a.amount * Catalog.ingredient(id).price;
             }
         }
         readyMeat.clear();
+        halfOpen.clear();
         trayUses.clear();
         summary.wastedPortions = portions;
         summary.wastedCost = cost;
@@ -1176,6 +1778,13 @@ public final class GameEngine {
             sb.append(p.name);
         }
         summary.newProductsNext = sb.toString();
+        StringBuilder ni = new StringBuilder();
+        List<Ingredient> newIng = Catalog.newIngredientsOnDay(day + 1);
+        for (int i = 0; i < newIng.size(); i++) {
+            if (i > 0) ni.append(", ");
+            ni.append(newIng.get(i).name.toLowerCase(new java.util.Locale("tr")));
+        }
+        summary.newIngredientsNext = ni.toString();
         save.day = day + 1;
         if (save.day > save.bestDay) save.bestDay = save.day;
         for (GameListener l : snap()) l.onDayFinished(summary);
@@ -1188,6 +1797,7 @@ public final class GameEngine {
         orders.clear();
         active.clear();
         readyMeat.clear();
+        halfOpen.clear();
         trayUses.clear();
         selectedId = -1;
         selectedItem = -1;

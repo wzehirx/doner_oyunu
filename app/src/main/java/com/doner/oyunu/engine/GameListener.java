@@ -64,4 +64,20 @@ public interface GameListener {
     void onOutOfStock(Order order, Ingredient ingredient);
     void onEmergencyPurchase(Ingredient ingredient, int qty, int cost);
     void onNotEnoughMoney(int needed);
+
+    // ---- v0.6: tek tek malzeme ekleme, boy, eylem menüsü
+    /** Tek malzeme eklenmeye başlandı (stok düştü); kısa süre (salata 0,6 sn, sos 0,5 sn; tepsiden yarısı). count: bu malzemenin kaçıncı eklemesi (2 = bol). */
+    void onToppingAddStarted(Order order, int itemIndex, Ingredient ingredient, int count, float seconds);
+    /** Ekleme tamamlandı ("Domates eklendi"). count 2 ise bol. */
+    void onToppingAdded(Order order, int itemIndex, Ingredient ingredient, int count);
+    /** Son eklenen geri alındı (malzeme stoğa/tepsiye iade edildi). remaining: o malzemenin kalan adedi (0..1). */
+    void onToppingRemoved(Order order, int itemIndex, Ingredient ingredient, int remaining);
+    /** "Malzemeleri bitir": kalemin malzeme adımı tamamlandı (doğrulama teslimde). chosen havuz sırasında. */
+    void onToppingsFinished(Order order, int itemIndex, java.util.Set<String> chosen);
+    /** DONER istasyonunda boy seçildi ve dilimleme başladı. Farklıysa boy hatası teslimde cezalandırılır (burada ipucu verilmez). */
+    void onSizeChosen(Order order, int itemIndex, PortionSize ordered, PortionSize chosen);
+    /** Bilgi seçeneği ("read:added", "read:target"): UI/Narrator metni okur. */
+    void onStationInfo(Order order, int itemIndex, String optionId);
+    /** applyStationOption reddedildi (kilitli, azami, geri alınacak yok, geçersiz). order null olabilir. */
+    void onOptionRejected(Order order, String optionId, StartResult reason);
 }

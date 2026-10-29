@@ -105,6 +105,29 @@ public class Narrator implements GameListener {
         return l == null ? "" : l.product.name + ": ";
     }
 
+    /** Başlayan adımın gerçek boyu (motordaki çalışan işten): dilimlemede seçilen boy (2. günden itibaren tam ekmek de söylenir). */
+    private String startedSizeSuffix(Order o, Step s) {
+        if (engine != null && (s.isSized() || s.isBreadStep())) {
+            for (ActiveStep a : engine.getActiveSteps()) {
+                if (a.order == o && a.step == s && a.worker == 0 && a.getSize() != null) {
+                    PortionSize sz = a.getSize();
+                    if (sz == PortionSize.FULL && (s.isBreadStep() || engine.getDay() < PortionSize.HALF.unlockDay)) return "";
+                    return ", " + sz.spoken();
+                }
+            }
+        }
+        return sizeSuffix(o, s);
+    }
+
+    /** Boylu adımlarda (dilimleme, ekmek/lavaş ısıtma) ", yarım ekmek" gibi ek; tam ekmekte boş. */
+    private static String sizeSuffix(Order o, Step s) {
+        if (!s.isSized() && !s.isBreadStep()) return "";
+        OrderLine l = lineOf(o, s);
+        if (l == null || !l.hasSize()) return "";
+        PortionSize sz = s.isSized() && l.getChosenSize() != null ? l.getChosenSize() : l.getSize();
+        return sz == PortionSize.FULL ? "" : ", " + sz.spoken();
+    }
+
     private static String requestSentence(Order o) {
         return o.hasRequests() ? " İstek: " + o.requestsText() + "." : "";
     }
@@ -127,7 +150,29 @@ public class Narrator implements GameListener {
             for (int i = 0; i < news.size(); i++) { if (i > 0) sb.append(", "); sb.append(news.get(i).name); }
             sb.append('.');
         }
+        String ni = newIngredientsText(day);
+        if (!ni.isEmpty()) sb.append(' ').append(ni);
+        String ps = newSizesText(day);
+        if (!ps.isEmpty()) sb.append(' ').append(ps);
         return sb.toString();
+    }
+
+    /** Brifing: o gün açılan yeni sos/salata malzemeleri. "Yeni: nar ekşisi." / "Yeni malzemeler: ketçap ve mayonez." Yoksa (veya 1. gün) boş. */
+    public static String newIngredientsText(int day) {
+        if (day <= 1) return "";
+        List<Ingredient> news = Catalog.newIngredientsOnDay(day);
+        if (news.isEmpty()) return "";
+        List<String> ids = new java.util.ArrayList<>();
+        for (Ingredient i : news) ids.add(i.id);
+        return (news.size() == 1 ? "Yeni malzeme: " : "Yeni malzemeler: ") + joinNames(ids) + ".";
+    }
+
+    /** Brifing: o gün açılan yeni döner boyu ("Yeni boy: yarım ekmek."); yoksa boş. */
+    public static String newSizesText(int day) {
+        for (PortionSize sz : PortionSize.values()) {
+            if (sz.unlockDay == day && day > 1) return "Yeni boy: " + sz.spoken() + ". Döner makinesinde boyu sen seçersin.";
+        }
+        return "";
     }
 
     public String customerArrived(Order o) {
@@ -147,18 +192,18 @@ public class Narrator implements GameListener {
     }
 
     public String nextStepHint(Order o, Step s) {
-        return "Önerilen: " + itemPrefix(o, s) + s.name + ". " + s.station.displayName + " istasyonuna dokun.";
+        return "Önerilen: " + itemPrefix(o, s) + s.name + sizeSuffix(o, s) + ". " + s.station.displayName + " istasyonuna dokun.";
     }
 
     public String stepStarted(Order o, Step s, int slot, float seconds) {
-        return itemPrefix(o, s) + s.name + " başladı, " + fmtSeconds(seconds) + ".";
+        return itemPrefix(o, s) + s.name + " başladı" + startedSizeSuffix(o, s) + ", " + fmtSeconds(seconds) + ".";
     }
 
     public String stepFinished(Order o, Step s, boolean complete) {
         String t = itemPrefix(o, s) + s.name + " bitti.";
         if (!complete) {
             Step n = o.nextStep();
-            if (n != null) t += " Önerilen: " + itemPrefix(o, n) + n.name + ", " + n.station.displayName + ".";
+            if (n != null) t += " Önerilen: " + itemPrefix(o, n) + n.name + sizeSuffix(o, n) + ", " + n.station.displayName + ".";
         }
         return t;
     }
@@ -229,8 +274,71 @@ public class Narrator implements GameListener {
                     + fmtMoney(ing.emergencyPrice() * Ingredient.EMERGENCY_BATCH) + ", ya da seçimden çıkar.";
         }
         if (reason == StartResult.INVALID) return "Bu malzeme bu ürüne eklenemez.";
+        if (reason == StartResult.MAX_REACHED && ing != null) return ing.name + " zaten bol, en fazla iki kez eklenir.";
         return startResultText(reason);
     }
+
+    // ---- v0.6: tek tek ekleme, boy, eylem menüsü
+    /** Ekleme bitti: "Domates eklendi." / ikinci eklemede "Domates bol eklendi." */
+    public String toppingAdded(Ingredient ing, int count) {
+        return ing.name + (count >= 2 ? " bol eklendi." : " eklendi.");
+    }
+
+    public String toppingRemoved(Ingredient ing, int remaining) {
+        return ing.name + " geri alındı, stoğa döndü." + (remaining > 0 ? " Bir kez kaldı." : "");
+    }
+
+    public String toppingsFinished(Order o, int itemIndex, Collection<String> chosen) {
+        return o.getLine(itemIndex).product.name + " malzemeleri tamam. "
+                + (chosen == null || chosen.isEmpty() ? "Hiç malzeme eklenmedi." : "Eklenen: " + joinNames(chosen) + ".");
+    }
+
+    /** "Eklenenleri oku": eklenen malzemeler ve bol olanlar; hedefle karşılaştırma YAPILMAZ. */
+    public String addedText(Order o, int itemIndex) {
+        OrderLine l = o.getLine(itemIndex);
+        java.util.Map<String, Integer> counts = l.getAddedCounts();
+        if (counts.isEmpty()) return "Henüz hiçbir malzeme eklenmedi.";
+        StringBuilder sb = new StringBuilder("Eklenenler: ");
+        int i = 0, n = counts.size();
+        for (java.util.Map.Entry<String, Integer> e : counts.entrySet()) {
+            if (i > 0) sb.append(i == n - 1 ? " ve " : ", ");
+            Ingredient ing = Catalog.ingredient(e.getKey());
+            sb.append((ing == null ? e.getKey() : ing.name).toLowerCase(new java.util.Locale("tr")));
+            if (e.getValue() >= 2) sb.append(" bol");
+            i++;
+        }
+        return sb.append('.').toString();
+    }
+
+    /** read:added / read:target seçeneklerinin okunacak metni. */
+    public String stationInfo(Order o, int itemIndex, String optionId) {
+        if ("read:target".equals(optionId)) return toppingTarget(o, itemIndex);
+        if ("read:added".equals(optionId)) return addedText(o, itemIndex);
+        return "";
+    }
+
+    /** Boy seçimi duyurusu: "Duble dilimleniyor." */
+    public String sizeChosen(PortionSize chosen) { return chosen.displayName + " dilimleniyor."; }
+
+    /** Seçenek reddedildi (kilitli, azami, geri alınacak yok...). */
+    public String optionRejected(Order o, String optionId, StartResult reason) {
+        switch (reason) {
+            case NOTHING_TO_UNDO: return "Geri alınacak malzeme yok.";
+            case LOCKED:
+                if (optionId != null && optionId.startsWith("size:")) {
+                    PortionSize sz = PortionSize.byId(optionId.substring(5));
+                    if (sz != null) return sz.displayName + " boy " + sz.unlockDay + ". günde açılır.";
+                }
+                return "Bu seçenek henüz açılmadı.";
+            case ORDER_BUSY: return "Bir ekleme sürüyor, bitmesini bekle.";
+            case UNKNOWN_OPTION: return "Bilinmeyen seçenek.";
+            case INVALID: return "Bu seçenek şu an uygulanamaz.";
+            default: return startResultText(reason);
+        }
+    }
+
+    /** Menü seçeneğinin TalkBack etiketi: durumu içerir, kilitliyse nedenini söyler. */
+    public String optionLabel(StationOption op) { return op.label(); }
 
     /** Müşteri şikâyeti: "Soğan istememiştim. Soğan fazla olmuş..." */
     public String orderMistake(Order o, ToppingCheck check, double penalty) {
@@ -242,6 +350,13 @@ public class Narrator implements GameListener {
             String name = ing == null ? m.ingredientId : ing.name;
             if (m.extra) sb.append(m.requested ? name + " istememiştim. " : name + " fazla olmuş. ");
             else sb.append(m.requested ? name + " istemiştim. " : name + " eksik olmuş. ");
+            n++;
+        }
+        for (ToppingCheck.SizeMistake m : check.getSizeMistakes()) {
+            if (n >= 3) break;
+            sb.append(m.ordered.spoken().substring(0, 1).toUpperCase(new java.util.Locale("tr")))
+                    .append(m.ordered.spoken().substring(1)).append(" istemiştim, ")
+                    .append(m.served.spoken()).append(" yapmışsın. ").append(m.tooMuch() ? "Çok fazla. " : "Çok az. ");
             n++;
         }
         if (check.mistakes() > 3) sb.append("Daha başka hatalar da var. ");
@@ -256,9 +371,12 @@ public class Narrator implements GameListener {
         return kind.displayName + " başladı, " + fmtSeconds(seconds) + ".";
     }
 
+    /** Hazır döner sayacı: yarım porsiyon birimiyle "3,5". */
+    static String portionsText(int halves) { return PortionSize.halvesText(halves); }
+
     public String prepFinished(PrepKind kind, boolean byApprentice, int amount) {
         switch (kind) {
-            case DONER: return amount + " porsiyon döner dilimlendi. Hazır döner " + (engine == null ? "" : engine.getReadyDoner() + " porsiyon") + ".";
+            case DONER: return amount + " porsiyon döner dilimlendi. Hazır döner " + (engine == null ? "" : portionsText(engine.getReadyDonerHalves()) + " porsiyon") + ".";
             case DRINK: return amount + " bardak ayran dolduruldu. Hazır içecek " + (engine == null ? "" : engine.getReadyDrinks() + " bardak") + ".";
             default: return "Salata ve sos tepsisi hazır.";
         }
@@ -278,7 +396,7 @@ public class Narrator implements GameListener {
     public String readyStockText() {
         if (engine == null) return "";
         List<String> parts = new java.util.ArrayList<>();
-        if (engine.getReadyDoner() > 0) parts.add("döner " + engine.getReadyDoner() + " porsiyon");
+        if (engine.getReadyDonerHalves() > 0) parts.add("döner " + portionsText(engine.getReadyDonerHalves()) + " porsiyon");
         if (engine.getReadyDrinks() > 0) parts.add("ayran " + engine.getReadyDrinks() + " bardak");
         if (engine.getTrayTotal() > 0) parts.add("salata ve sos tepsisi " + engine.getTrayTotal() + " kullanım");
         if (parts.isEmpty()) return "";
@@ -359,7 +477,9 @@ public class Narrator implements GameListener {
                 + ". Kasada " + fmtMoney(s.moneyAfter) + ". Yıldız " + fmtStars(s.endStars) + ".";
         if (s.wastedPortions > 0) t += " İsraf: " + s.wastedPortions + " porsiyon hazır malzeme atıldı, değeri " + fmtMoney(s.wastedCost) + ".";
         if (s.mistakes > 0) t += " Hatalı malzemeli sipariş: " + s.mistakes + ".";
+        if (s.sizeMistakes > 0) t += " Yanlış boyda dilimlenen sipariş: " + s.sizeMistakes + ".";
         if (s.newProductsNext != null && !s.newProductsNext.isEmpty()) t += " Yarın yeni ürün: " + s.newProductsNext + ".";
+        if (s.newIngredientsNext != null && !s.newIngredientsNext.isEmpty()) t += " Yarın yeni malzeme: " + s.newIngredientsNext + ".";
         return t;
     }
 
@@ -409,10 +529,10 @@ public class Narrator implements GameListener {
             if (need == null && st == Station.PAKET && sel.canPack()) need = sel.getPackStep();
             if (need != null) {
                 sb.append(", ").append(needLine != null && sel.lineCount() > 1 ? needLine.product.name + " " : "")
-                        .append(need.name).append(" için gerekli");
+                        .append(need.name).append(" için gerekli").append(sizeSuffix(sel, need));
             }
         }
-        if (st == Station.DONER && engine.getReadyDoner() > 0) sb.append(", hazır döner ").append(engine.getReadyDoner());
+        if (st == Station.DONER && engine.getReadyDonerHalves() > 0) sb.append(", hazır döner ").append(portionsText(engine.getReadyDonerHalves()));
         if (st == Station.ICECEK && engine.getReadyDrinks() > 0) sb.append(", hazır ayran ").append(engine.getReadyDrinks());
         if (st == Station.SOS && engine.getTrayTotal() > 0) sb.append(", hazır tepsi var");
         return sb.toString();
@@ -431,6 +551,12 @@ public class Narrator implements GameListener {
             case NEEDS_TOPPINGS: return "Malzeme seçimi gerekli.";
             case STEP_LOCKED: return "Bu adım henüz açılmadı.";
             case INVALID: return "Geçersiz seçim.";
+            case LOCKED: return "Bu seçenek henüz açılmadı.";
+            case MAX_REACHED: return "En fazla iki kez, bol eklenir.";
+            case NOTHING_TO_UNDO: return "Geri alınacak malzeme yok.";
+            case FULL: return "Hazır stok dolu.";
+            case INFO: return "Bilgi okundu.";
+            case UNKNOWN_OPTION: return "Bilinmeyen seçenek.";
             default: return "Gün bitti.";
         }
     }
@@ -491,4 +617,16 @@ public class Narrator implements GameListener {
     @Override public void onNotEnoughMoney(int n) { say(notEnoughMoney(n), true); }
     @Override public void onDayFinished(DaySummary s) { say(dayFinished(s), true); }
     @Override public void onDayFailed(DaySummary s) { say(dayFailed(s), true); }
+
+    // ---- v0.6
+    /** Ekleme başlangıcı sessiz (kısa süre); bitiş "Domates eklendi" söyler. */
+    @Override public void onToppingAddStarted(Order o, int i, Ingredient ing, int count, float sec) {}
+    @Override public void onToppingAdded(Order o, int i, Ingredient ing, int count) { say(toppingAdded(ing, count), false); }
+    @Override public void onToppingRemoved(Order o, int i, Ingredient ing, int remaining) { say(toppingRemoved(ing, remaining), false); }
+    /** Bitiriş, onStepFinished ("Malzemeleri ekle bitti. Önerilen: ...") ile duyurulur; ayrıca konuşulmaz. */
+    @Override public void onToppingsFinished(Order o, int i, java.util.Set<String> chosen) {}
+    /** Boy, adım başlangıcı duyurusuna dahildir ("Döneri dilimle başladı, duble, 5 saniye"). */
+    @Override public void onSizeChosen(Order o, int i, PortionSize ordered, PortionSize chosen) {}
+    @Override public void onStationInfo(Order o, int i, String optionId) { say(stationInfo(o, i, optionId), true); }
+    @Override public void onOptionRejected(Order o, String optionId, StartResult r) { say(optionRejected(o, optionId, r), true); }
 }

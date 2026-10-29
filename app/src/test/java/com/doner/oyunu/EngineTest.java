@@ -63,8 +63,9 @@ public class EngineTest {
         assertTrue(save.stars > 3.0);
         assertTrue(e.getOrders().isEmpty());
         assertEquals(0, r.wrong);
-        assertEquals(r.stepsStarted, r.stepsDone);
-        assertEquals(r.delivered * 4, r.stepsDone); // gün 1: tek ürün, 4 adım
+        // v0.6: malzemeler tek tek eklenir; "Malzemeleri bitir" adımı onStepFinished verir ama zamanlı başlangıç (onStepStarted) yoktur
+        assertEquals(r.stepsStarted + r.delivered, r.stepsDone);
+        assertEquals(r.delivered * 4, r.stepsDone); // gün 1: tek ürün, 4 adım (ısıt, dilimle, malzemeleri bitir, paketle)
     }
 
     @Test public void stepFlowAndSelection() {

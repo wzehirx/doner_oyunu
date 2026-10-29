@@ -46,6 +46,19 @@ public final class Step {
         return null;
     }
 
+    /** Döner boyu SEÇİLEN (dilimleme) adım mı: DONER istasyonunda et malzemesi tüketen adım. */
+    public boolean isSized() { return meatId() != null; }
+
+    /** Ekmek/lavaş ısıtma gibi boyla (yarım/tam/duble) süresi ve ekmek tüketimi ölçeklenen adım (sipariş edilen boy). */
+    public boolean isBreadStep() {
+        if (station != Station.EKMEK) return false;
+        for (String id : needs.keySet()) {
+            Ingredient i = Catalog.ingredient(id);
+            if (i != null && i.category == Ingredient.Category.EKMEK) return true;
+        }
+        return false;
+    }
+
     /** "Ayranı doldur" gibi hazır içecek ile hızlanabilen adım mı. */
     public boolean isDrinkFill() { return station == Station.ICECEK && needs.containsKey(Catalog.AYRAN); }
 }

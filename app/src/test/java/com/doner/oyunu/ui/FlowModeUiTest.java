@@ -300,7 +300,14 @@ public class FlowModeUiTest {
     }
 
     // ------------------------------------------------------------------ tam gün, her akış
-    private static void fullDay(FlowMode m, boolean viaActions) {
+    private static void fullDay(FlowMode m, boolean viaActions) { fullDay(m, viaActions, 20260101L); }
+
+    private static void fullDay(FlowMode m, boolean viaActions, long seed) {
+        GameScreen.testSeed = seed;
+        try { fullDayImpl(m, viaActions, seed); } finally { GameScreen.testSeed = null; }
+    }
+
+    private static void fullDayImpl(FlowMode m, boolean viaActions, long seed) {
         UiHarness h = new UiHarness(false, m);
         h.act.save.tutorialDone = true;
         h.click("Yeni oyun"); h.settle();
@@ -322,7 +329,7 @@ public class FlowModeUiTest {
         assertTrue(m + " özet ekranı", h.screen() instanceof SummaryScreen);
         DaySummary s = e.getSummary();
         assertFalse(m + " gün başarısız olmamalı", s.failed);
-        assertTrue(m + " sipariş teslim edildi: " + s.delivered, s.delivered >= 3);
+        assertTrue(m + " seed " + seed + " sipariş teslim edildi: " + s.delivered, s.delivered >= 3);
         assertEquals(m + " hatasız", 0, s.mistakes);
         assertEquals(6, h.act.save.day);
         assertEquals("akış ayarı gün sonunda korunur", m, h.act.save.flowMode);
@@ -335,6 +342,17 @@ public class FlowModeUiTest {
     @Test public void uiBotPlaysAFullDayInDengeliViaTalkBackActions() { fullDay(FlowMode.DENGELI, true); }
 
     @Test public void uiBotPlaysAFullDayInGercekci() { fullDay(FlowMode.GERCEKCI, false); }
+
+    /** Eski dalgalanma (rastgele tohum) için: sabit tohumlarla her akışta tam gün (Robolectric her testte kayıtları sıfırlar). */
+    @Test public void fullDayRahatSeed1() { fullDay(FlowMode.RAHAT, false, 1L); }
+    @Test public void fullDayDengeliSeed1() { fullDay(FlowMode.DENGELI, false, 1L); }
+    @Test public void fullDayGercekciSeed1() { fullDay(FlowMode.GERCEKCI, false, 1L); }
+    @Test public void fullDayRahatSeed2() { fullDay(FlowMode.RAHAT, false, 2L); }
+    @Test public void fullDayDengeliSeed2() { fullDay(FlowMode.DENGELI, false, 2L); }
+    @Test public void fullDayGercekciSeed2() { fullDay(FlowMode.GERCEKCI, false, 2L); }
+    @Test public void fullDayRahatSeed3() { fullDay(FlowMode.RAHAT, false, 3L); }
+    @Test public void fullDayDengeliSeed3() { fullDay(FlowMode.DENGELI, false, 3L); }
+    @Test public void fullDayGercekciSeed3() { fullDay(FlowMode.GERCEKCI, false, 3L); }
 
     // ------------------------------------------------------------------ yardım
     @Test public void helpScreenExplainsFlows() {

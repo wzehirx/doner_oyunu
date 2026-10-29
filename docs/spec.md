@@ -7,6 +7,7 @@ Paket: `com.doner.oyunu`. Alt paketler: `engine` (SAF Java, android import YASAK
 Menü → Gün Özeti/Brifing (menü, hedef) → Market (malzeme/yükseltme alışverişi) → GÜN (kasada servis) → Gün Sonu (kazanç, yıldız, ödemeler) → Market → sonraki gün. Kayıt: SharedPreferences (engine `SaveData` düz "key=value" metne serileştirir).
 
 ## Gün (GameEngine)
+- (v0.9) IZGARA istasyonu "Ocak"; patates (3. gün, müşteri isteği "patatesli"); ambiyans; kısa etiketler: docs/design_v09.md.
 - (v0.8) Süre baskısı ayarı: kapalıyken gün süresiz geçer (sayaç yok, sabır sabit, müşteri gitmez; kota kadar müşteri gelip hepsi teslim edilince gün biter; hız bonusu yok, bahşiş x0,8). Ayrıntı: docs/design_v08.md.
 - Gün N, süre = 120s + 6s*N (üst sınır 300s). Müşteri geliş aralığı gün ilerledikçe kısalır; geliş sıklığı yıldız çarpanıyla ölçeklenir (1★ ×0.6 … 5★ ×1.4). Gün sonunda bekleyen sipariş kalmayana kadar (max +30s) devam.
 - Menü birikimlidir: gün N'de açık TÜM ürünler (önceki günlerinki dahil) sipariş edilir; yeni ürün açılan gün brifingde duyurulur. Ürün açılış günleri: 1 Ekmek arası döner, 2 İçecek(ayran), 3 Pilav üstü döner, 4 Tavuk dürüm, 6 Hatay usulü dürüm, 8 Zurna dürüm, 10 İskender, 12 Porsiyon döner, 14 Lahmacun, 16 Künefe (+ araştırma dosyası docs/research.md varsa oradaki veriyi esas al).

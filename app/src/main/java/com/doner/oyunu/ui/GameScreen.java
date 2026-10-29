@@ -128,6 +128,9 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
     @Override public String title() { return "Gün " + a.save.day + ", oyun ekranı"; }
 
+    /** Yalnızca testler: sabit tohum (null = her oyunda rastgele). Testlerin deterministik olması için. */
+    static Long testSeed;
+
     @Override public String music() { return "music_day_calm"; }
 
     /** Dükkân ambiyansı: gün ekranında (hazırlık ve gün) düşük sesle çalar; dosya yoksa sessiz. */
@@ -136,7 +139,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     // ================================================================== oluşturma
     @Override public View create() {
         gameSave = a.save.copy();
-        engine = new GameEngine(System.nanoTime(), gameSave);
+        engine = new GameEngine(testSeed != null ? testSeed : System.nanoTime(), gameSave);
         narrator = new Narrator(engine, a.speaker);
         engine.addListener(narrator);
         engine.addListener(new Feedback());

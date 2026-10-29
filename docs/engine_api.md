@@ -1,6 +1,22 @@
-# Engine API v0.8 (paket `com.doner.oyunu.engine`, saf Java, android.* yok, deterministik)
+# Engine API v0.9 (paket `com.doner.oyunu.engine`, saf Java, android.* yok, deterministik)
 
 Bu belge UI geliştirmesi için TEK kaynaktır. Şartname: `docs/design_v08.md` (v0.8: süre baskısı ayarı, gün içinde hazırlık düğmeleri yok), `docs/design_v07.md` (v0.7: oyun akışı Rahat/Dengeli/Gerçekçi), `docs/design_v06.md` (v0.6: eylem menüleri, tek tek malzeme, boy, sos takvimi), `docs/design_v05.md` (akış), `docs/spec.md` (genel), `docs/research.md` (veri).
+
+## 00a. v0.8 -> v0.9 özet (patates, Ocak, konuşma sırası, ambiyans, kısa etiketler)
+| Konu | v0.9 |
+|---|---|
+| İstasyon adı | `Station.IZGARA.displayName` = **"Ocak"** (enum adı aynı). Adımlar: "Ocakta mühürle", "Ocakta pişir" |
+| Patates | Malzeme `Catalog.PATATES` ("patates", 4 TL, `Catalog.FRIES_OPEN_DAY` = 3. gün). Adım `Catalog.FRY_STEP` = "Patates kızart" (Ocak, 4 sn, 1 patates; `Step.isFry()`). Patates alan ürünler: ekmek_arasi, tavuk_ekmek, tavuk_durum, hatay_durum, zurna_durum (`Product.friesOk()`); `Product.friesVariant()` aynı id/adlı çeşit, malzeme adımından hemen önce fry adımı; `Product.isFries()`; `Product.FRIES_PRICE` = +40 TL; `OrderLine.isFries()`, `displayName()` "Ekmek arası döner (duble, patatesli)" |
+| Patatesli sipariş | `DayConfig.friesChance(day)`: 3. günden %12, her gün +1,2 puan, en çok %50. Ayrı rastgele kaynak (`friesRng`): ana müşteri akışı kaymaz. `spawnOrder(["ekmek_arasi+patates"], …)` senaryo/test |
+| Hazır patates | `PrepKind.FRIES` (Ocak, 4 porsiyon, 5 sn); `engine.startPrepFries()`, seçenek `prep:fries` (IZGARA menüsü, 3. günden); `getReadyFries()`, `menuHasFries()`; hazırsa adım 0,8 sn ve stoktan düşmez; gün sonunda atılır (israf). `Upgrades.readyCapacity(FRIES)` = döner/ayranla aynı |
+| Akışlar | Fry adımı her akışta tek dokunuşlu zamanlı normal adımdır (`step`); Rahat/Dengeli/Gerçekçi aynı. Çırak seviye 3 yapar |
+| Market | `Shop.recommendedPurchase` patatesi 3. günden ekler |
+| Eylem sürümü | `engine.getActionVersion()`: oyuncu eylemlerinde artar (adım/hazırlık/malzeme başlatma, seçim, teslim) |
+| Konuşma | `SpeechQueue` (saf Java, `Narrator.Output` uygular): bayat (3,5 sn; kategorisiz 8 sn) duyuru atılır, aynı kategori birleşir, aynı tür ≥1,2 sn arayla, acil olan öne geçer/keser (hata ve sabır kritik başka acille kesilmez), uzun metin `sayLong` bayatlamaz. `Narrator.Output.say(text, urgent, category, Fresh)` (varsayılan düz `say`'e düşer), `Narrator.Fresh`, `CAT_*` sabitleri, `Narrator.freshSinceNow()` (oyuncu eylem yapınca false), ipucu duyurusu `freshHint` ile söylenmeden önce yeniden denetlenir. `Speaker` bu sırayı kullanır |
+| Narrator metinleri | `stepFinished` artık sıradakini tekrarlamaz ("X bitti."), `nextStepHint` = "Önerilen: X. İstasyon.", `customerArrived` kısa (tip cümlesi yok), `stationLabel` = "Ad, durum, sıradaki: adım", yeni `statusShort()` (durum çubuğu etiketi) |
+| Etiketler | `StationOption.description` yalnızca ad + gerekli durum ("Domates ekle", "…, stokta yok", "…, malzeme yok"); `label()` ≤60 karakter (kilitliyse "ad, neden" ya da "ad, kilitli") |
+| Ses | `ToppingSfx.sfxFor/plan`: otomatik eklemede her malzeme kendi sesiyle sırayla; `SoundManager.startSequence`, `Cue`; `sfx_fry` LOOPED; ambiyans: `playAmbience/stopAmbience/setAmbienceVolume/setAmbienceHold/currentAmbience/ambienceShouldPlay/ambienceOutputVolume` (`amb_shop`, MediaPlayer, SoundPool'a yüklenmez) |
+| Kayıt | `SaveData.ambienceVolume` (kayıt `ambience=`, varsayılan 0,35, `v=4` aynı; eski kayıt = varsayılan). Stok `stock.patates` |
 
 ## 00b. v0.7 -> v0.8 özet (süre baskısı)
 | Konu | v0.7 | v0.8 |

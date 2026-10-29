@@ -64,11 +64,11 @@ public class SpeechQueueTest {
 
     @Test public void oldPendingMessagesDropWhenANewEventArrives() {
         Rig r = new Rig();
-        r.duration = 10_000;
+        r.duration = 5000;
         r.q.say("Konuşan", false, Narrator.CAT_DAY, null);
         r.q.say("Eski adım", false, Narrator.CAT_STEP, null);
-        r.advance(4000);                                    // eski duyuru bayatladı
-        r.q.say("Yeni olay", false, Narrator.CAT_CUSTOMER, null); // yeni olay gelince eskiler elenir
+        r.advance(4000);                                    // eski duyuru bayatladı ve elendi
+        r.q.say("Yeni olay", false, Narrator.CAT_CUSTOMER, null); // yeni olay yalnızca kendisi bekler
         assertEquals(1, r.q.pendingCount());
         r.advance(20_000);
         assertEquals(Arrays.asList("Konuşan", "Yeni olay"), r.spoken);

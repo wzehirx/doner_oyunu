@@ -43,7 +43,7 @@ public final class SoundManager {
     static final float PULSE_MIN_S = 0.35f, PULSE_MAX_S = 0.6f, PULSE_RATE_JITTER = 0.05f, PULSE_VOL_JITTER = 0.08f;
 
     /** Konuşma / başka bir uygulamanın kısa ses odağı sırasında müziğin çarpanı (kısma). */
-    static final float DUCK_FACTOR = 0.25f;
+    public static final float DUCK_FACTOR = 0.25f;
 
     private final Context ctx;
     /** Müzik odağı: başka uygulama alırsa müzik durur/kısılır; bitince geri açılır. */

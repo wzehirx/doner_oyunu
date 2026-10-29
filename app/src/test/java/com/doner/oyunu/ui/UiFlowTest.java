@@ -84,8 +84,15 @@ public class UiFlowTest {
     }
 
     /** 1. gün öğreticisi: hazırlık yap -> dükkânı aç -> sipariş seç -> istasyonlar -> malzeme paneli -> paketle -> teslim. */
-    @Test public void tutorialRunsOnDayOneAndFinishes() {
-        UiHarness h = new UiHarness(false);
+    @Test public void tutorialRunsOnDayOneAndFinishes() { tutorialRun(com.doner.oyunu.engine.FlowMode.GERCEKCI); }
+
+    /** v0.7: Rahat ve Dengeli akışta 1. gün (tam ekmek, istek yok) hiçbir istasyon paneli gerektirmez: tek dokunuş. */
+    @Test public void tutorialRunsOnDayOneInDengeliWithoutPanels() { tutorialRun(com.doner.oyunu.engine.FlowMode.DENGELI); }
+
+    @Test public void tutorialRunsOnDayOneInRahatWithoutPanels() { tutorialRun(com.doner.oyunu.engine.FlowMode.RAHAT); }
+
+    private void tutorialRun(com.doner.oyunu.engine.FlowMode flow) {
+        UiHarness h = new UiHarness(false, flow);
         h.click("Yeni oyun"); h.settle();
         h.click("Güne başla"); h.settle();
         GameScreen gs = (GameScreen) h.screen();
@@ -120,7 +127,8 @@ public class UiFlowTest {
             botStep(h); h.run(100); t += 100;
         }
         assertTrue("1. günde ilk teslim yapılabilmeli", e.getSummary().delivered > 0);
-        assertTrue("istasyon seçenek paneli kullanılmalı", panelSeen);
+        if (flow == com.doner.oyunu.engine.FlowMode.GERCEKCI) assertTrue("istasyon seçenek paneli kullanılmalı", panelSeen);
+        else assertFalse(flow + ": 1. günde panel gerekmez (her istasyon tek dokunuş)", panelSeen);
         assertEquals("Öğretici son aşamaya ulaşmalı", GameScreen.TUTORIAL_END, h.field(gs, "tutorialStage"));
         assertEquals(Boolean.FALSE, h.field(gs, "tutorialActive"));
         assertEquals("Doğru malzemeler: kusursuz sipariş", 1, e.getSummary().perfect);

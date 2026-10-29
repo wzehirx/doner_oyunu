@@ -76,15 +76,15 @@ public final class Order {
     }
 
     /** v0.7: elle iş süresinin sabra çevrilme çarpanı (gün ilerledikçe azalmaz). */
-    static float INTERACTION_PATIENCE = 1.0f;
+    static final float INTERACTION_PATIENCE = 1.0f;
     /** v0.7: Gerçekçi akışta elle eklenen her hedef malzeme için ek iş yükü (sn; menüde art arda dokunuş). */
-    static float MANUAL_ADD_WORK = 1.0f;
+    static final float MANUAL_ADD_WORK = 1.0f;
     /** v0.7: boy seçimi elle yapılan kalem için ek iş yükü (sn): menüyü açmak + boyu seçmek. */
-    static float SIZE_CHOICE_WORK = 3.0f;
+    static final float SIZE_CHOICE_WORK = 3.0f;
     /** v0.7: malzemesi elle bitirilen kalem için ek iş yükü (sn): menüyü açmak + "Malzemeleri bitir". */
-    static float TOPPING_FINISH_WORK = 3.0f;
+    static final float TOPPING_FINISH_WORK = 3.0f;
     /** v0.7: elle yapılan her istek farkı (çıkar/ekle) için ek iş yükü (sn). */
-    static float REQUEST_DIFF_WORK = 1.5f;
+    static final float REQUEST_DIFF_WORK = 1.5f;
 
     /**
      * v0.7 sabır düzeltmesi: akışın oyuncudan istediği EK dokunuşların tahmini süresi (sn), müşteri sabrına eklenir

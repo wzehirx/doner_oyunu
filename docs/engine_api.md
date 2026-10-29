@@ -1,6 +1,19 @@
-# Engine API v0.6 (paket `com.doner.oyunu.engine`, saf Java, android.* yok, deterministik)
+# Engine API v0.7 (paket `com.doner.oyunu.engine`, saf Java, android.* yok, deterministik)
 
-Bu belge UI geliştirmesi için TEK kaynaktır. Şartname: `docs/design_v06.md` (v0.6: eylem menüleri, tek tek malzeme, boy, sos takvimi), `docs/design_v05.md` (akış), `docs/spec.md` (genel), `docs/research.md` (veri).
+Bu belge UI geliştirmesi için TEK kaynaktır. Şartname: `docs/design_v07.md` (v0.7: oyun akışı Rahat/Dengeli/Gerçekçi), `docs/design_v06.md` (v0.6: eylem menüleri, tek tek malzeme, boy, sos takvimi), `docs/design_v05.md` (akış), `docs/spec.md` (genel), `docs/research.md` (veri).
+
+## 00. v0.6 -> v0.7 özet (oyun akışı)
+| Konu | v0.6 | v0.7 |
+|---|---|---|
+| Akış | tek akış (tek tek malzeme + boy seçimi) | **`FlowMode`**: `RAHAT`, `DENGELI` (varsayılan), `GERCEKCI` (= v0.6 akışı). `engine.getFlowMode()`, **`engine.setFlowMode(m)`** (oyun ortasında da; `save.flowMode`'u yazar, `onFlowModeChanged`) |
+| SOS menüsü | `add:*`, `undo`, `finish`, `read:*` | Rahat: `auto` ("Malzemeleri ekle", hedef küme) + `read:target`. Dengeli: önce `auto` ("Varsayılan malzemeleri ekle") + `read:target`; otomatikten sonra (istek farkı varsa) `remove:<id>` ("Soğan çıkar", grup `REMOVE`), `add:<id>`, `finish`, `read:*`. Gerçekçi: v0.6 listesi; çırak seviye 2+ ve kalem boşken başta `auto` ("Standart malzemelerle bitir") |
+| DONER menüsü | `size:*` | Rahat: tek `step` (istenen boy, "…, yarım ekmek, boy otomatik, …"). Dengeli: tam ekmekte tek `step`, yarım/duble istenince `size:*`. Gerçekçi: `size:*` |
+| Yeni API | – | `autoToppings(orderId,item)`, `removeTopping(orderId,item,ingId)`, `standardSetUnlocked()`, `StationOption.direct(ops)` (tek dokunuş kuralı), `OrderLine.getAddedSet()/isAutoDone()`, `ActiveStep.isAutoToppings()`, `GameEngine(seed, save, v06Balance)` (yalnızca ölçüm) |
+| Yeni olaylar | – | `onAutoToppingsStarted(order,item,adding,seconds)`, `onToppingsAutoAdded(order,item,added,removed,finished)`, `onFlowModeChanged(mode)` |
+| Denge | – | Gerçekçi: sabra elle dokunuş süresi eklenir, sabır ×1,15, geliş ×0,9, bahşiş ×1,15. Dengeli: yalnızca elle yapılan farklar sabra eklenir. Rahat: v0.6 sabır formülü |
+| Kayıt | `v=3` | `v=4`: + `flow=rahat|dengeli|gercekci`, `flowChosen=0|1`; v1–v3 kayıtlar Dengeli/`flowChosen=0` ile yüklenir; bilinmeyen değer yok sayılır |
+
+Geriye uyum: `addTopping/removeLastTopping/finishToppings`, `size:*` ve `startStep` her akışta API olarak çalışır (akış yalnızca MENÜYÜ ve otomatik işleri belirler). Gerçekçi'de çırak 2'den önce `auto` → `INVALID` + `onOptionRejected("auto")`.
 Para birimi TL (int). Tüm olaylar `tick()`/eylemi çağıran iş parçacığında, eylem metodunun içinde (eşzamanlı) gelir.
 
 ## 0. v0.5 -> v0.6 özet (UI'nın bilmesi gerekenler)
@@ -17,6 +30,25 @@ Para birimi TL (int). Tüm olaylar `tick()`/eylemi çağıran iş parçacığın
 
 Geriye uyumlu kalanlar: `startStep(...)`, `confirmToppings(...)`, `getToppingOptions/getInitialToppings/getToppingTarget/openToppingItem`, `Order.items/steps/nextStep()/...`, `getReadyMeat(meatId)` (tam porsiyon, yarım aşağı yuvarlanır), `emergencyBuy*`.
 **Davranış değişiklikleri:** (1) `Order.price()` ve `Order.itemsText()` boy dahil ("Ekmek arası döner (yarım ekmek)"); (2) malzeme adımı artık ZAMANLI bir iş değildir: tek tek eklemeler kısa işlerdir (`ActiveStep.isToppingAdd()`), adım `finishToppings` ile anında biter (`onStepFinished` gelir, `onStepStarted` gelmez); (3) `startStep` ile DONER dilimleme istenen boyu varsayar (boy hatası olmaz) — boy seçmek için `applyStationOption(..., "size:...")`; (4) `getReadyDoner()` tam porsiyon (yarım aşağı).
+
+## 0c. Oyun akışı ayrıntıları (v0.7)
+```java
+engine.getFlowMode();                 // save.flowMode (null ise DEFAULT = DENGELI)
+engine.setFlowMode(FlowMode.RAHAT);   // save.flowMode + save.flowChosen=true, onFlowModeChanged -> Narrator "Oyun akışı: Rahat. …"
+StationOption d = StationOption.direct(engine.getStationOptions(oid, -1, st.id)); // null -> panel aç; değilse doğrudan uygula
+engine.applyStationOption(oid, -1, Station.SOS.id, "auto");          // otomatik malzeme işi
+engine.applyStationOption(oid, -1, Station.SOS.id, "remove:sogan");  // Dengeli istek farkı: tüm soğan eklemelerini çıkar, stoğa iade
+```
+- **`auto` işi**: zamanlı (oyuncu yuvası), süre = eklenecek her malzemenin `addTopping` süresi toplamı (tepsiden yarısı, hız/tempo dahil, en az 0,25 sn). Tüketim başta (önce tepsi, sonra stok); bir malzeme bile yoksa hiçbir şey tüketilmez → `OUT_OF_STOCK` + `onOutOfStock(order, ilkEksik)`; `missingIngredients/emergencyCostForMissing/emergencyBuyMissing` bu eksikleri verir/alır. Sonuçlar: `STARTED, OUT_OF_STOCK, NO_SLOT, STEP_LOCKED, ORDER_BUSY, INVALID, NO_ORDER, ORDER_READY, NOT_RUNNING`.
+  - Rahat: hedef küme (varsayılan ± istekler) kurulur: eksikler eklenir, hedefte olmayan eklenmişler çıkarılıp iade edilir; iş bitince adım biter.
+  - Dengeli: günün varsayılan kümesi eklenir (kalem başına bir kez, `OrderLine.isAutoDone()`); eklenen küme hedefle aynıysa adım biter, değilse açık kalır (`finished=false`).
+  - Gerçekçi: yalnızca `standardSetUnlocked()` (çırak ≥ 2) ve kalem boşken; varsayılan küme eklenir ve adım biter (istekli siparişte kullanmak teslimde hata). `GameEngine(seed, save, true)` (v0.6 dengesi) bu kısayolu sunmaz.
+- Olay sırası: `onAutoToppingsStarted` → (süre) → `onToppingsAutoAdded(…, finished)` → finished ise `onToppingsFinished` → `onStepFinished(step "Malzemeleri ekle")` → `onItemFinished` → `onOrderReadyToPack`. Otomatik iş `onStepStarted` GÖNDERMEZ (ses döngüsünü `onAutoToppingsStarted`/`onToppingsAutoAdded` ile kur).
+- **`removeTopping`**: `STARTED` (çıkarıldı, `onToppingRemoved(…, remaining=0)`), `NOTHING_TO_UNDO` (eklenmemiş), `ORDER_BUSY`, `INVALID` (+ `onOptionRejected("remove:<id>")`).
+- **Otomatik boy**: `FlowMode.autoSize(istenenBoy)` doğruysa DONER menüsünde boy seçenekleri yerine tek `step` vardır; dilimleme istenen boyla yapılır (boy hatası olamaz). Narrator: "Döneri dilimle başladı, boy otomatik: yarım ekmek, 2 saniye." (1. gün boy anılmaz).
+- **Sabır** (`addOrder`): `(tip.sabır × patienceFactor + işYükü × workPatience + elleİş × 1,0) × yükseltmeler × tempo × akış.patienceMult`; `elleİş = Order.interactionWork(...)`: Gerçekçi'de boylu kalem +3 sn, malzemeli kalem +3 sn + hedef malzeme başına 1 sn + istek farkı başına 1,5 sn; Dengeli'de yalnızca elle olanlar (yarım/duble boy +3; istek farkı olan kalemde +3 + 1,5/fark); Rahat 0. Geliş sıklığı × `arrivalMult` (Gerçekçi 0,9), bahşiş × `tipMult` (Gerçekçi 1,15).
+- **Narrator**: `autoToppingsStarted`, `toppingsAutoAdded` ("Varsayılan malzemeler eklendi: domates, marul ve soğan. İstek: soğansız. Farkı sen yap, sonra Malzemeleri bitir." / Rahat "Malzemeler eklendi: … İstek uygulandı: soğansız."), `flowModeChanged`, statik `newSizesText(day, mode)`; `dayStarted` ve `statusText` sonunda "Oyun akışı: Dengeli.".
+- **UI** (`ui/`): Ayarlar > Oyun akışı (3 düğme, seçili "…, seçili"), brifing satırı + "Oyun akışı: X" düğmesi (sıradakine geçer; `flowChosen=false` ise ilk brifingte kısa sesli soru), Duraklat menüsünde aynı düğme (`engine.setFlowMode`), `Texts.tutTopping/tutSize/quickHelp(mode)`, yardımda "Oyun akışı" bölümü, `MenuPanel` grup başlığı "Malzeme çıkar".
 
 ## 1. Tipik akış (UI)
 ```java
@@ -212,10 +244,11 @@ Ses ipucu: ekleme için `onToppingAddStarted` -> kısa tek atış (`seconds`); `
 - `Narrator` kendisi `onToppingAdded/Removed`, `onStationInfo`, `onOptionRejected`'ı konuşur; `onToppingAddStarted`, `onToppingsFinished`, `onSizeChosen` sessizdir (bilgi `onStepStarted/Finished` metinlerinde).
 - Hazır döner "döner 3,5 porsiyon" biçimindedir (`readyStockText`, `stationLabel`, `prepFinished`, `statusText`).
 
-## 11. SaveData (`v=3`)
-Alanlar v0.5 ile aynı (`day,bestDay,money,stars,inventory,upgradeLevels,tempo,speechOn,speechRate,vibration,musicVolume,sfxVolume,tutorialDone,apprenticeAnnounce,readyDrinks`). Yazılan sürüm `v=3`; `parse` v=1 (v0.4), v=2 (v0.5) ve bilinmeyen sürüm/anahtarları tolere eder. Yeni malzemelerin (sumak, sarımsaklı yoğurt sos, közlenmiş biber/domates) eski kayıtta stoğu 0'dır (Market alır; gün başında "Önerilen malzemeleri al"). Hazır döner/tepsi/açık yarım KAYDEDİLMEZ.
+## 11. SaveData (`v=4`)
+Alanlar v0.5 ile aynı (`day,bestDay,money,stars,inventory,upgradeLevels,tempo,speechOn,speechRate,vibration,musicVolume,sfxVolume,tutorialDone,apprenticeAnnounce,readyDrinks`) + v0.7 `flowMode` (`flow=`), `flowChosen`. Yazılan sürüm `v=4`; `parse` v=1 (v0.4), v=2 (v0.5), v=3 (v0.6) ve bilinmeyen sürüm/anahtarları tolere eder (eksik akış = Dengeli). `MainActivity.newGame()` akış ayarını korur. Yeni malzemelerin (sumak, sarımsaklı yoğurt sos, közlenmiş biber/domates) eski kayıtta stoğu 0'dır (Market alır; gün başında "Önerilen malzemeleri al"). Hazır döner/tepsi/açık yarım KAYDEDİLMEZ.
 
-## 12. Denge (bot simülasyonu; testler `SimulationTest`, `HumanSimTest`, `Campaign`/`TestBot`)
+## 12. Denge (bot simülasyonu; testler `SimulationTest`, `HumanSimTest`, `FlowBalanceTest`, `Campaign`/`TestBot`)
+- v0.7: `Campaign(FlowMode)` (varsayılan kurucu Gerçekçi = v0.6 akışı), `Campaign.v06Balance`, `Campaign.humanLike` (insan benzeri: panel açmak ayrı tepki, tepki ±%20, ardışık ekleme 0,7; kalabalık artıran öğeleri müşteri kaçırırken almaz). `TestBot` seçenek menüsüyle oynar (her akışta), `taps` (dokunuş) ve `v04Taps` (aynı siparişlerin v0.4 eşdeğeri) sayar. Sonuçlar `docs/design_v07.md` §3.
 - `TestBot` v0.6 API'siyle oynar: her eylem (boy seçimi, TEK malzeme ekleme, "Malzemeleri bitir", adım) bir tepki süresi alır; ardışık eklemelerde tepki süresi `ADD_REACTION_FACTOR=0,5` ile çarpılır (aynı menüde kas hafızası). `careful=false`: her zaman TAM ekmek ve yalnızca varsayılan malzemeler (boy/malzeme hatası yapar).
 - Müşteri sabrı tahmini için malzeme başına iş yükü 1,5 sn (`Product.TOPPING_WORK_EACH`).
 - Sonuçlar (hazırlık yapan + yükseltme alan bot): tepki 0,8 sn ve 1,0 sn botları tüm denenen tohumlarda gün 1–40'ı geçer; 1,5 sn (yavaş) bot da geçer. Yükseltmesiz bot ~gün 24–29'da takılır (>10 şart). Hazırlıksız/yükseltmesiz bot 1–5. günleri geçer. Hiç hareket etmeyen bot ≤5 günde başarısız olur. Hazırlık yapan bot yapmayandan kazançlıdır (>%3).

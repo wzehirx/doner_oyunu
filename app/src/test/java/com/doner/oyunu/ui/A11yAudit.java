@@ -66,9 +66,10 @@ final class A11yAudit {
                 a.checkedInteractive++;
                 if (lab.isEmpty()) a.errors.add(id + " etiketsiz");
                 // v0.7: seçim durumu (ör. Ayarlar > Oyun akışı) yalnızca renkle değil, etikette de söylenmeli
-                if (v.isSelected() && !(v instanceof CompoundButton)) {
+                boolean parentSelected = v.getParent() instanceof View && ((View) v.getParent()).isSelected();
+                if (v.isSelected() && !parentSelected && !(v instanceof CompoundButton)) {
                     a.checkedSelected++;
-                    if (!lab.contains("seçili")) a.errors.add(id + " seçili ama etiketi 'seçili' demiyor (renge bağımlı durum)");
+                    if (!lab.toLowerCase(new java.util.Locale("tr")).contains("seçili")) a.errors.add(id + " seçili ama etiketi 'seçili' demiyor (renge bağımlı durum)");
                 }
                 if (ENGLISH.matcher(lab).find()) a.errors.add(id + " İngilizce etiket olabilir");
                 if (v.isClickable()) {

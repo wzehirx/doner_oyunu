@@ -54,10 +54,16 @@ public final class StationOption {
         this.outOfStock = outOfStock;
     }
 
-    /** TalkBack eylem etiketi: durumu içerir ("Ketçap ekle, stokta 5", "Duble, 4. günde açılır"). */
+    /** En uzun etiket (v0.9 kısa etiket kuralı); aşılırsa ayrıntı atılır (ad kalır, kilitliyse ", kilitli"). */
+    static final int MAX_LABEL = 60;
+
+    /** TalkBack eylem etiketi (kısa): ad + gerekli durum ("Domates ekle, stokta yok", "Duble, 4. günde açılır"). */
     public String label() {
-        if (!enabled) return name + ", " + lockReason;
-        return description;
+        if (!enabled) {
+            String full = name + ", " + lockReason;
+            return full.length() <= MAX_LABEL ? full : name + ", kilitli";
+        }
+        return description.length() <= MAX_LABEL ? description : name;
     }
 
     /**

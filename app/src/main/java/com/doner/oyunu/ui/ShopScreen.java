@@ -240,7 +240,8 @@ public final class ShopScreen extends Screen {
                     infoBox.setContentDescription(Texts.upgradeInfo(u, s) + " " + st + ".");
                     buy.setText(Texts.upgradeButton(u, s));
                     buy.setContentDescription(lv >= u.maxLevel() ? u.name + ", en üst seviye"
-                            : "Satın al: " + u.name + ", " + u.priceForNext(lv) + " lira" + (can ? "" : ", " + st.toLowerCase(new java.util.Locale("tr"))));
+                            : s.day < u.unlockDayForNext(lv) ? "Satın al: " + u.name + ", " + u.unlockDayForNext(lv) + ". günde açılır"
+                            : "Satın al: " + u.name + ", " + u.priceForNext(lv) + " lira" + (can ? "" : ", paran yetmiyor"));
                     buy.setBackground(Ui.buttonBg(ctx, can ? Ui.PRIMARY : Ui.SECONDARY));
                     buy.setTextColor(can ? Theme.DARK : Theme.CREAM);
                     Ui.dim(buy, !can);

@@ -27,7 +27,8 @@ public interface GameListener {
     void onWrongStation(Order order, Station tapped, Station expected);
     /** Adım var ama henüz açık değil (ör. topping için önce ısıt/dilimle bitmeli, paketleme için tüm kalemler). */
     void onStepLocked(Order order, Step step);
-    void onNoFreeSlot(Order order);
+    /** ESKİ (v0.9 ortak yuva). v2.0 motoru çağırmaz; yerine {@link #onHandsBusy} / {@link #onStationFull}. */
+    @Deprecated void onNoFreeSlot(Order order);
 
     // ---- kalem / paketleme / teslim (oyuncu veya çırak fark etmez)
     /** Kalemin tüm adımları bitti (kalem hazır). */
@@ -96,4 +97,17 @@ public interface GameListener {
     // ---- v0.8: süre baskısı
     /** Süre baskısı ayarı değişti (oyun ortasında da olabilir). timed=false: süresiz gün (sayaç yok, sabır sabit). */
     void onTimePressureChanged(boolean timed);
+
+    // ---- v2.0: kaynak modeli (eller + istasyon kapasitesi), sıradaki sipariş
+    /**
+     * Oyuncunun eli dolu: yeni bir AKTİF iş (ya da pasif işin koyma anı) başlatılamadı. current: eli tutan iş (kalan süresi
+     * {@link ActiveStep#getHandsRemaining()}). order: denenen sipariş (hazırlıkta null).
+     */
+    default void onHandsBusy(Order order, ActiveStep current) {}
+    /** Pasif istasyon dolu ("Ocak dolu (2/2)"): used = kullanılan yer, capacity = toplam. order: hazırlıkta null. */
+    default void onStationFull(Order order, Station station, int used, int capacity) {}
+    /** İstenen iş zaten sürüyor (oyuncu ya da çırak yapıyor). job: süren iş. */
+    default void onAlreadyRunning(Order order, ActiveStep job) {}
+    /** Pasif işin koyma süresi bitti: eller serbest, iş istasyonda kendi başına sürüyor (yalnızca oyuncu işleri). */
+    default void onHandsFree(ActiveStep job) {}
 }

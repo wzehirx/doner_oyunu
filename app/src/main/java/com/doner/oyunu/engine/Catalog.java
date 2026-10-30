@@ -29,7 +29,7 @@ public final class Catalog {
     public static final int FRIES_OPEN_DAY = 3;
     /** "Patates kızart": Ocak istasyonu, 4 sn, 1 porsiyon patates; hazır patates varsa 0,8 sn. */
     public static final Step FRY_STEP = new Step("Patates kızart", Station.IZGARA, 4.0f,
-            java.util.Collections.singletonMap(PATATES, 1));
+            java.util.Collections.singletonMap(PATATES, 1), Step.Kind.NORMAL, false, true);
 
     private static void ing(String id, String name, String unit, int price, Ingredient.Category cat) {
         INGREDIENTS.put(id, new Ingredient(id, name, unit, price, cat));
@@ -42,6 +42,16 @@ public final class Catalog {
 
     private static Step st(String name, Station station, double sec, Object... needs) {
         return new Step(name, station, (float) sec, needMap(needs));
+    }
+
+    /** PASİF adım (v2.0): makine/ocak kendi pişirir; eller yalnızca koyarken meşgul, istasyon kapasitesi kullanılır. */
+    private static Step pas(String name, Station station, double sec, Object... needs) {
+        return new Step(name, station, (float) sec, needMap(needs), Step.Kind.NORMAL, false, true);
+    }
+
+    /** Sıralı PASİF adım (künefe/lahmacun "Ocakta pişir"). */
+    private static Step seqPas(String name, Station station, double sec, Object... needs) {
+        return new Step(name, station, (float) sec, needMap(needs), Step.Kind.NORMAL, true, true);
     }
 
     /** Sıralı adım: kalemin önceki tüm adımları bitmeden açılmaz. */
@@ -120,7 +130,7 @@ public final class Catalog {
         prod("ekmek_arasi", "Ekmek arası döner", 1, 240,
                 l("domates", "marul", "sogan", "ketcap"),
                 l("domates", "marul", "sogan", "ketcap", "mayonez", "aci_sos", "tursu", "sumak"),
-                st("Ekmeği ısıt", EKMEK, 3.5, "ekmek", 1),
+                pas("Ekmeği ısıt", EKMEK, 3.5, "ekmek", 1),
                 st("Döneri dilimle", DONER, 3.5, "et_doner", 1),
                 top("Malzemeleri ekle", 2.0));
         prod(AYRAN, "Ayran", 2, 45,
@@ -135,7 +145,7 @@ public final class Catalog {
         prod("tavuk_durum", "Tavuk dürüm", 4, 210,
                 l("marul", "domates", "mayonez"),
                 l("marul", "domates", "sogan", "mayonez", "ketcap", "aci_sos", "tursu", "sarimsakli_yogurt"),
-                st("Lavaşı ısıt", EKMEK, 3.0, "lavas", 1),
+                pas("Lavaşı ısıt", EKMEK, 3.0, "lavas", 1),
                 st("Tavuğu dilimle", DONER, 3.5, "tavuk_doner", 1),
                 top("Malzemeleri ekle", 2.0));
         prod("kutu_icecek", "Kutu içecek", 5, 55,
@@ -143,20 +153,20 @@ public final class Catalog {
         prod("hatay_durum", "Hatay usulü dürüm", 6, 260,
                 l("sogan", "domates", "tursu", "aci_sos", "nar_eksisi"),
                 l("sogan", "domates", "tursu", "aci_sos", "nar_eksisi", "marul", "biber", "sumak"),
-                st("Lavaşı ısıt", EKMEK, 3.0, "lavas", 1),
+                pas("Lavaşı ısıt", EKMEK, 3.0, "lavas", 1),
                 st("Harç ve döner ekle", DONER, 4.0, "lahmacun_harci", 1, "et_doner", 1),
-                st("Ocakta mühürle", IZGARA, 3.5),
+                pas("Ocakta mühürle", IZGARA, 3.5),
                 top("Malzemeleri ekle", 2.0));
         prod("tavuk_ekmek", "Ekmek arası tavuk döner", 7, 190,
                 l("marul", "domates", "mayonez"),
                 l("marul", "domates", "sogan", "mayonez", "ketcap", "aci_sos", "tursu", "sarimsakli_yogurt"),
-                st("Ekmeği ısıt", EKMEK, 3.0, "ekmek", 1),
+                pas("Ekmeği ısıt", EKMEK, 3.0, "ekmek", 1),
                 st("Tavuğu dilimle", DONER, 3.0, "tavuk_doner", 1),
                 top("Malzemeleri ekle", 1.8));
         prod("zurna_durum", "Zurna dürüm", 8, 340,
                 l("yogurt", "domates", "sogan"),
                 l("yogurt", "domates", "sogan", "marul", "aci_sos", "tursu", "biber", "sarimsakli_yogurt"),
-                st("Lavaşı ısıt ve tereyağı sür", EKMEK, 3.5, "lavas", 1, "tereyagi", 1),
+                pas("Lavaşı ısıt ve tereyağı sür", EKMEK, 3.5, "lavas", 1, "tereyagi", 1),
                 st("Döneri dilimle", DONER, 5.0, "et_doner", 1),
                 top("Malzemeleri ekle", 2.0));
         prod("iskender", "İskender", 10, 420,
@@ -169,34 +179,39 @@ public final class Catalog {
         prod("porsiyon_doner", "Porsiyon döner", 12, 380,
                 l("domates", "sogan", "biber"),
                 l("domates", "sogan", "marul", "biber", "tursu", "aci_sos", "ketcap", "kozlenmis"),
-                st("Ekmeği ısıt", EKMEK, 3.0, "ekmek", 1),
+                pas("Ekmeği ısıt", EKMEK, 3.0, "ekmek", 1),
                 st("Döneri dilimle", DONER, 5.0, "et_doner", 2),
                 top("Garnitürü diz", 2.0));
         prod("lahmacun", "Lahmacun", 14, 120,
                 l("sogan", "domates", "limon"),
                 l("sogan", "domates", "limon", "marul", "tursu", "aci_sos", "sumak"),
                 st("Harcı lavaşa yay", SOS, 3.0, "lavas", 1, "lahmacun_harci", 1),
-                seq("Ocakta pişir", IZGARA, 6.0),
+                seqPas("Ocakta pişir", IZGARA, 6.0),
                 top("Malzemeleri ekle", 1.8));
         prod("kunefe", "Künefe", 16, 240,
                 st("Kadayıfı tereyağıyla yoğur", TATLI, 3.5, "kadayif", 1, "tereyagi", 2),
                 seq("Peyniri ser", TATLI, 3.0, "peynir", 1),
-                seq("Ocakta pişir", IZGARA, 8.0),
+                seqPas("Ocakta pişir", IZGARA, 8.0),
                 seq("Çevir ve servis et", TATLI, 3.0));
 
         // Patates dürümlere ve ekmek arası ürünlere girer: müşteri "patatesli" isterse kalemde "Patates kızart" adımı olur.
         for (String pid : new String[]{"ekmek_arasi", "tavuk_ekmek", "tavuk_durum", "hatay_durum", "zurna_durum"}) PRODUCTS.get(pid).setFriesOk();
 
         // Yükseltmeler (fiyat/etki araştırma notundan; 'cirak' motor tasarımı).
-        up("cirak", "Çırak", MUTFAK, "Kendi başına çalışan yardımcı: boşta hazırlık yapar, paketler, içecek doldurur. Seviye 2 ekmek ısıtır, seviye 3 döner dilimler ve ızgara yapar.",
+        up("cirak", "Çırak", MUTFAK, "Ek bir çift el: kendi başına çalışır. Seviye 1 paketler, içecek doldurur, boşta hazırlık yapar. Seviye 2 ekmek ve lavaş ısıtır. Seviye 3 döner dilimler ve ocağı kullanır. Malzemeyi hep sen koyarsın.",
                 new int[]{3000, 9000, 24000}, new int[]{3, 8, 16},
                 new Upgrade.Effect(APPRENTICE, null, 1, 2, 3));
         up("doner_makinesi", "Döner makinesi", MUTFAK, "Döner dilimleme adımlarını hızlandırır.",
                 new int[]{4000, 15000, 48000}, new int[]{4, 10, 18},
                 new Upgrade.Effect(STATION_SPEED, s(DONER), 0.85, 0.70, 0.55));
-        up("ekmek_isitici", "Ekmek ısıtıcı", MUTFAK, "Ekmek ve lavaş ısıtma adımlarını hızlandırır.",
+        up("ekmek_isitici", "Ekmek ısıtıcı", MUTFAK, "Daha geniş ve hızlı ekmek ısıtıcı: aynı anda 3, sonra 4 ekmek ya da lavaş.",
                 new int[]{2500, 8000, 22000}, new int[]{3, 9, 17},
-                new Upgrade.Effect(STATION_SPEED, s(EKMEK), 0.70, 0.50, 0.40));
+                new Upgrade.Effect(STATION_CAPACITY, s(EKMEK), 1, 2, 2),
+                new Upgrade.Effect(STATION_SPEED, s(EKMEK), 0.85, 0.70, 0.55));
+        up("ocak", "Geniş ocak", MUTFAK, "Ocağa göz eklenir: aynı anda 3, sonra 4 iş (patates, pişirme); ocak işleri hızlanır.",
+                new int[]{2500, 8000, 20000}, new int[]{3, 9, 17},
+                new Upgrade.Effect(STATION_CAPACITY, s(IZGARA), 1, 2, 2),
+                new Upgrade.Effect(STATION_SPEED, s(IZGARA), 0.90, 0.80, 0.65));
         up("oto_dilimleyici", "Otomatik dilimleyici", MUTFAK, "Döner makinesinde ek hız kazandırır.",
                 new int[]{3500, 12000, 34000}, new int[]{6, 12, 21},
                 new Upgrade.Effect(STATION_SPEED, s(DONER), 0.75, 0.55, 0.45));

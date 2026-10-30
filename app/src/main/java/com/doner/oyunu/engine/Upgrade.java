@@ -7,8 +7,11 @@ public final class Upgrade {
     public enum EffectType {
         /** Hedef istasyonlarda adım süresi çarpanı (değer = çarpan, küçük = hızlı). */
         STATION_SPEED,
-        /** Ek eşzamanlı oyuncu yuvası (şu an hiçbir yükseltme kullanmıyor). */
-        SLOTS,
+        /**
+         * ESKİ (v0.9'a dek): ek ortak işlem yuvası. v2.0'da ortak yuva yoktur; hiçbir yükseltme kullanmaz ve etkisi yoktur
+         * (yerine {@link #STATION_CAPACITY}). Kayıt/derleme uyumu için durur.
+         */
+        @Deprecated SLOTS,
         /** Çırak seviyesi = otomatik işçi sayısı ve yetenek seviyesi (1..3). */
         APPRENTICE,
         /** Sabır çarpanına eklenen oran. */
@@ -24,7 +27,9 @@ public final class Upgrade {
         /** Aynı anda bekleyen sipariş üst sınırına ek. */
         QUEUE,
         /** Turist müşteri ağırlığına eklenen oran. */
-        TOURIST
+        TOURIST,
+        /** v2.0: hedef PASİF istasyonun aynı anda alabileceği iş sayısına ek (ekmek ısıtıcı yeri, ocak gözü). */
+        STATION_CAPACITY
     }
 
     /** values[k-1] = k. seviyedeki toplam (kümülatif) değer. */

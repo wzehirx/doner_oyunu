@@ -46,6 +46,14 @@ public final class GameEngine {
     private static final int MAX_ADD_PER_INGREDIENT = 2;
     /** 2 porsiyonluk döner hazırlığı, 4 porsiyonluğun süresinin bu oranı kadar sürer. */
     private static final double PREP_SMALL_BATCH_FACTOR = 0.6;
+    /** v2.0: pasif işi istasyona koyma süresi (eller bu kadar meşgul; tempo ile ölçeklenir, çırakta %20 yavaş). */
+    public static final float PASSIVE_LOAD_SECONDS = 0.6f;
+    private static final float MIN_LOAD_SECONDS = 0.3f;
+    /**
+     * v2.0 çırak kuralı: seçili siparişin işini çırak, başka iş yoksa ve (oyuncunun eli doluysa ya da oyuncu bu kadar
+     * saniyedir hiçbir eylem yapmadıysa) alır. Oyuncunun tam dokunmak üzere olduğu işi elinden kapmaz.
+     */
+    public static final float SELECTED_GRACE_SECONDS = 1.5f;
 
     private final SaveData save;
     private final SaveData snapshot;
@@ -68,6 +76,8 @@ public final class GameEngine {
     private final Random friesRng;
     /** Oyuncu eylem sayacı: öğretici/öneri duyurularının bayatlığını denetlemek için (her oyuncu eyleminde artar). */
     private int actionVersion;
+    /** Oyuncunun son eylem anı (oyun saati; çırağın seçili siparişe dokunma kuralı için). */
+    private float lastPlayerActionTime = -100f;
     /** Hazır tepsi: malzeme id -> kalan kullanım. Gün sonunda atılır. */
     private final Map<String, Integer> trayUses = new LinkedHashMap<>();
     /** Son OUT_OF_STOCK'a düşen adım: sipariş id -> {kalem, adım, boy ordinal (-1: otomatik/istenen)}. */
@@ -146,9 +156,37 @@ public final class GameEngine {
     public int getCustomersArrived() { return arrived; }
     /** Kalan müşteri: henüz gelmemiş kota + şu an bekleyen sipariş sayısı (süresiz modun ilerleme göstergesi). */
     public int getRemainingCustomers() { return Math.max(0, quota - arrived) + orders.size(); }
-    public int getSlotCount() { return upgrades.slots(); }
-    /** Oyuncunun boş yuvası (çırak işleri yuva kullanmaz). */
-    public int getFreeSlots() { return upgrades.slots() - playerActiveCount(); }
+    /** ESKİ (v0.9): v2.0'da oyuncunun el sayısı (her zaman 1). Yeni kod {@link #isHandsFree()} kullanır. */
+    @Deprecated public int getSlotCount() { return upgrades.hands(); }
+    /** ESKİ (v0.9): v2.0'da eller boşsa 1, doluysa 0 (pasif işler eli yalnızca koyarken tutar). Yeni: {@link #isHandsFree()}. */
+    @Deprecated public int getFreeSlots() { return handsFree(0) ? 1 : 0; }
+
+    // ---------------------------------------------------------------- v2.0 kaynak modeli: eller + istasyon kapasitesi
+    /** Oyuncunun elleri boş mu (yeni bir aktif iş ya da pasif işi koyma başlatılabilir). */
+    public boolean isHandsFree() { return handsFree(0); }
+    /** Oyuncunun ellerini tutan iş (aktif iş ya da koyma anındaki pasif iş); eller boşsa null. */
+    public ActiveStep getHandsJob() { return handsJob(0); }
+    /** İstasyon pasif iş alır mı (ekmek ısıtıcı, ocak); v0.6 dengesinde hiçbiri. */
+    public boolean isPassiveStation(Station st) { return !v06Balance && upgrades.stationCapacity(st) > 0; }
+    /** Pasif istasyonun kapasitesi (yer/göz; yükseltmeyle artar); pasif olmayan istasyonda 0. */
+    public int getStationCapacity(Station st) { return v06Balance ? 0 : upgrades.stationCapacity(st); }
+    /** Pasif istasyonda şu an pişen iş sayısı (oyuncu + çırak). */
+    public int getStationUsed(Station st) {
+        int n = 0;
+        for (ActiveStep a : active) if (a.passive && a.step.station == st) n++;
+        return n;
+    }
+    /** İstasyonda çalışan tüm işler (aktif ve pasif, oyuncu ve çırak). */
+    public List<ActiveStep> getStationJobs(Station st) {
+        List<ActiveStep> out = new ArrayList<>();
+        for (ActiveStep a : active) if (a.step.station == st) out.add(a);
+        return out;
+    }
+    /** Pasif istasyonda boş yer var mı (pasif değilse true). */
+    public boolean hasStationRoom(Station st) {
+        int cap = getStationCapacity(st);
+        return cap <= 0 || getStationUsed(st) < cap;
+    }
     public DaySummary getSummary() { return summary; }
     public Upgrades getUpgrades() { return upgrades; }
     public List<Order> getOrders() { return Collections.unmodifiableList(new ArrayList<>(orders)); }
@@ -212,10 +250,89 @@ public final class GameEngine {
         return null;
     }
 
-    private int playerActiveCount() {
-        int n = 0;
-        for (ActiveStep a : active) if (a.worker == 0) n++;
-        return n;
+    /** Siparişin belirli kalem adımında (paketleme: -1,-1) çalışan iş; yoksa null. */
+    private ActiveStep jobFor(Order o, int li, int si) {
+        for (ActiveStep a : active) {
+            if (a.order != o) continue;
+            if (li < 0 ? a.pack : (a.itemIndex == li && a.stepIndex == si)) return a;
+        }
+        return null;
+    }
+
+    /** İşçinin (0 = oyuncu, 1..3 çırak) ellerini tutan iş; yoksa null. */
+    private ActiveStep handsJob(int worker) {
+        for (ActiveStep a : active) if (a.worker == worker && a.holdsHands()) return a;
+        return null;
+    }
+
+    /** İşçinin elleri boş mu (oyuncunun el sayısı {@link Upgrades#hands()} = 1; çırağın da bir çift eli var). */
+    private boolean handsFree(int worker) { return handsJob(worker) == null; }
+
+    /** Bu adım pasif iş olarak mı yürür (v2.0; v0.6 dengesinde her şey aktif = eski tek yuva). */
+    private boolean passiveJob(Step s) { return !v06Balance && s.isPassive() && upgrades.stationCapacity(s.station) > 0; }
+
+    private boolean passivePrep(PrepKind kind) { return !v06Balance && kind == PrepKind.FRIES && upgrades.stationCapacity(kind.station) > 0; }
+
+    /** "Ocak dolu (2/2)" — pasif istasyon doluluk metni (kilit nedeni ve duyuru). */
+    public String stationFullText(Station st) {
+        return st.displayName + " dolu (" + getStationUsed(st) + "/" + getStationCapacity(st) + ")";
+    }
+
+    /** Elleri tutan işin kısa adı: "Elin dolu" (kilit nedeni). */
+    static final String LOCK_HANDS = "Elin dolu";
+
+    /**
+     * İşi başlatmak için kaynak denetimi (oyuncu ya da çırak): pasif işte önce istasyon yeri, sonra eller; aktif işte
+     * eller. emit: oyuncuya red olayı ver (onStationFull / onHandsBusy). Uygunsa null.
+     */
+    private StartResult checkResources(Order o, Station st, boolean passive, int worker, boolean emit) {
+        if (passive && !hasStationRoom(st)) {
+            if (emit) {
+                int used = getStationUsed(st), cap = getStationCapacity(st);
+                for (GameListener l : snap()) l.onStationFull(o, st, used, cap);
+            }
+            return StartResult.STATION_FULL;
+        }
+        ActiveStep h = handsJob(worker);
+        if (h != null) {
+            if (emit) for (GameListener l : snap()) l.onHandsBusy(o, h);
+            return StartResult.HANDS_BUSY;
+        }
+        return null;
+    }
+
+    /** Seçenek kilit nedeni (kaynak yüzünden): istasyon dolu / el dolu; uygunsa null. */
+    private String resourceReason(Station st, boolean passive) {
+        if (passive && !hasStationRoom(st)) return stationFullText(st);
+        if (!handsFree(0)) return LOCK_HANDS;
+        return null;
+    }
+
+    /** Pasif işin koyma süresi (sn). */
+    private float loadSeconds(int worker, float total) {
+        double d = PASSIVE_LOAD_SECONDS * save.tempo * (worker > 0 ? APPRENTICE_SLOWDOWN : 1f);
+        return (float) Math.min(total, Math.max(MIN_LOAD_SECONDS, d));
+    }
+
+    private int freePlace(Station st) {
+        int p = 0;
+        boolean used = true;
+        while (used) {
+            used = false;
+            for (ActiveStep a : active) if (a.passive && a.step.station == st && a.place == p) { used = true; p++; break; }
+        }
+        return p;
+    }
+
+    /** İşi aktif/pasif olarak işaretler (koyma süresi, istasyondaki yer). */
+    private void markJob(ActiveStep a, boolean passive) {
+        a.passive = passive;
+        if (passive) {
+            a.place = freePlace(a.step.station);
+            a.handsLeft = loadSeconds(a.worker, a.total);
+        } else {
+            a.handsLeft = a.total;
+        }
     }
 
     // ---------------------------------------------------------------- hazır stok sorguları
@@ -235,7 +352,7 @@ public final class GameEngine {
      * Konuşma sırası, bir duyuru yapıldığı andaki değeri saklayıp söylenmeden önce karşılaştırarak bayat ipucunu eler.
      */
     public int getActionVersion() { return actionVersion; }
-    private void playerAction() { actionVersion++; }
+    private void playerAction() { actionVersion++; lastPlayerActionTime = time; }
     /** Hazır tepsideki malzemenin kalan kullanımı. */
     public int getTrayUses(String ingredientId) { Integer v = trayUses.get(ingredientId); return v == null ? 0 : v; }
     public int getTrayTotal() { int t = 0; for (int v : trayUses.values()) t += v; return t; }
@@ -526,6 +643,7 @@ public final class GameEngine {
 
         int foundLine = -2, foundStep = -1;
         boolean busy = false;
+        ActiveStep busyJob = null;
         Step lockedStep = null;
         List<Integer> order = new ArrayList<>();
         if (itemIndex >= 0) order.add(itemIndex);
@@ -539,7 +657,7 @@ public final class GameEngine {
             for (int si = 0; si < line.stepCount(); si++) {
                 Step s = line.step(si);
                 if (s.station != tapped || line.isStepDone(si)) continue;
-                if (line.isStepRunning(si)) { busy = true; continue; }
+                if (line.isStepRunning(si)) { busy = true; if (busyJob == null) busyJob = jobFor(o, li, si); continue; }
                 if (!line.isStepUnlocked(si)) { if (lockedStep == null) lockedStep = s; continue; }
                 foundLine = li;
                 foundStep = si;
@@ -547,12 +665,15 @@ public final class GameEngine {
             }
         }
         if (foundLine == -2 && tapped == Station.PAKET) { // paketleme sipariş düzeyindedir; itemIndex yok sayılır
-            if (o.packing) busy = true;
+            if (o.packing) { busy = true; busyJob = jobFor(o, -1, -1); }
             else if (o.allLinesDone()) { foundLine = -1; }
             else if (lockedStep == null) lockedStep = o.getPackStep();
         }
         if (foundLine == -2) {
-            if (busy) return StartResult.ORDER_BUSY;
+            if (busy) {
+                if (busyJob != null) for (GameListener l : snap()) l.onAlreadyRunning(o, busyJob);
+                return StartResult.ORDER_BUSY;
+            }
             if (lockedStep != null) {
                 for (GameListener l : snap()) l.onStepLocked(o, lockedStep);
                 return StartResult.STEP_LOCKED;
@@ -571,16 +692,16 @@ public final class GameEngine {
                 return StartResult.LOCKED;
             }
         }
-        if (playerActiveCount() >= upgrades.slots()) {
-            for (GameListener l : snap()) l.onNoFreeSlot(o);
-            return StartResult.NO_SLOT;
-        }
         if (foundLine == -1) {
+            StartResult res = checkResources(o, Station.PAKET, false, 0, true);
+            if (res != null) return res;
             launchPack(o, 0);
             return StartResult.STARTED;
         }
         OrderLine line = o.getLine(foundLine);
         Step step = line.step(foundStep);
+        StartResult res = checkResources(o, step.station, passiveJob(step), 0, true);
+        if (res != null) return res;
         if (step.isTopping()) {
             for (GameListener l : snap()) l.onToppingSelectionNeeded(o, foundLine);
             return StartResult.NEEDS_TOPPINGS;
@@ -627,10 +748,8 @@ public final class GameEngine {
                 return StartResult.INVALID;
             }
         }
-        if (playerActiveCount() >= upgrades.slots()) {
-            for (GameListener l : snap()) l.onNoFreeSlot(o);
-            return StartResult.NO_SLOT;
-        }
+        StartResult res = checkResources(o, Station.SOS, false, 0, true);
+        if (res != null) return res;
         for (String id : want) {
             if (getTrayUses(id) <= 0 && !save.inventory.has(id, 1)) {
                 for (GameListener l : snap()) l.onToppingsRejected(o, itemIndex, StartResult.OUT_OF_STOCK, Catalog.ingredient(id));
@@ -654,6 +773,7 @@ public final class GameEngine {
         line.setRunning(ti, true);
         blocked.remove(o.id);
         ActiveStep a = new ActiveStep(o, itemIndex, ti, step, dur, freeSlot(), 0, null, null, false);
+        markJob(a, false);
         active.add(a);
         for (GameListener l : snap()) l.onStepStarted(o, step, a.slot, dur);
         return StartResult.STARTED;
@@ -720,10 +840,8 @@ public final class GameEngine {
             for (GameListener l : snap()) l.onToppingsRejected(o, li, StartResult.MAX_REACHED, ing);
             return StartResult.MAX_REACHED;
         }
-        if (playerActiveCount() >= upgrades.slots()) {
-            for (GameListener l : snap()) l.onNoFreeSlot(o);
-            return StartResult.NO_SLOT;
-        }
+        StartResult res = checkResources(o, Station.SOS, false, 0, true);
+        if (res != null) return res;
         boolean tray = getTrayUses(ingredientId) > 0;
         if (!tray && !save.inventory.has(ingredientId, 1)) {
             for (GameListener l : snap()) l.onToppingsRejected(o, li, StartResult.OUT_OF_STOCK, ing);
@@ -738,6 +856,7 @@ public final class GameEngine {
         float dur = addSeconds(ing, tray);
         Step syn = new Step(ing.name + " ekle", Station.SOS, dur, Collections.<String, Integer>emptyMap());
         ActiveStep a = new ActiveStep(o, li, ti, syn, dur, freeSlot(), 0, null, null, false);
+        markJob(a, false);
         a.addId = ingredientId;
         a.addFromTray = tray;
         active.add(a);
@@ -955,10 +1074,8 @@ public final class GameEngine {
             for (GameListener l : snap()) l.onStepLocked(o, step);
             return StartResult.STEP_LOCKED;
         }
-        if (playerActiveCount() >= upgrades.slots()) {
-            for (GameListener l : snap()) l.onNoFreeSlot(o);
-            return StartResult.NO_SLOT;
-        }
+        StartResult res = checkResources(o, Station.SOS, false, 0, true);
+        if (res != null) return res;
         List<String> add = autoAddList(line);
         for (String id : add) {
             if (getTrayUses(id) <= 0 && !save.inventory.has(id, 1)) {
@@ -987,6 +1104,7 @@ public final class GameEngine {
         Step syn = new Step(autoName(mode), Station.SOS, dur,
                 Collections.<String, Integer>emptyMap());
         ActiveStep a = new ActiveStep(o, li, ti, syn, dur, freeSlot(), 0, null, null, false);
+        markJob(a, false);
         a.autoAdded = add;
         a.autoRemoved = removed;
         a.autoMode = mode;
@@ -1070,7 +1188,6 @@ public final class GameEngine {
         return -1;
     }
 
-    private static final String LOCK_SLOT = "Bir işlem sürüyor";
 
     /**
      * İstasyonun o anki eylem menüsü (TalkBack özel eylemleri ve seçenek paneli AYNI listeyi kullanır).
@@ -1095,12 +1212,13 @@ public final class GameEngine {
         return out;
     }
 
-    private boolean slotFree() { return playerActiveCount() < upgrades.slots(); }
+    /** Aktif seçenekler için: eller boş mu. */
+    private boolean slotFree() { return handsFree(0); }
 
     private StationOption packOption(Order o) {
         Step s = o.getPackStep();
         boolean ok = o.canPack() && slotFree();
-        String reason = o.isPacking() ? "Paketleme sürüyor" : !o.allLinesDone() ? "Önce tüm kalemler hazır olmalı" : LOCK_SLOT;
+        String reason = o.isPacking() ? "Paketleme sürüyor" : !o.allLinesDone() ? "Önce tüm kalemler hazır olmalı" : LOCK_HANDS;
         return new StationOption("step", StationOption.Group.STEP, s.name, s.name, ok, reason, null, false);
     }
 
@@ -1132,9 +1250,9 @@ public final class GameEngine {
         PortionSize sz = needSize(line, s, null);
         boolean running = line.isStepRunning(si);
         boolean locked = !line.isStepUnlocked(si);
-        boolean slot = slotFree();
-        boolean ok = !running && !locked && slot;
-        String reason = running ? "Çalışıyor" : locked ? "Önce kalemin önceki adımları bitmeli" : LOCK_SLOT;
+        String res = resourceReason(s.station, passiveJob(s));
+        boolean ok = !running && !locked && res == null;
+        String reason = running ? "Çalışıyor" : locked ? "Önce kalemin önceki adımları bitmeli" : res;
         Map<String, Integer> need = effectiveNeeds(s, sz);
         boolean out = !save.inventory.hasAll(need);
         String sizeText = "";
@@ -1161,7 +1279,7 @@ public final class GameEngine {
             boolean open = sizeAllowed(line, sz);
             boolean ok = open && !running && !locked && slot;
             String reason = !open ? sz.unlockDay + ". günde açılır" : running ? "Dilimleme sürüyor"
-                    : locked ? "Önce kalemin önceki adımları bitmeli" : LOCK_SLOT;
+                    : locked ? "Önce kalemin önceki adımları bitmeli" : LOCK_HANDS;
             boolean oos = !save.inventory.hasAll(effectiveNeeds(s, sz));
             String desc = who + sz.displayName + (oos ? ", malzeme yok" : "");
             out.add(new StationOption("size:" + sz.id, StationOption.Group.SIZE, sz.displayName, desc, ok, reason, meat, oos));
@@ -1186,7 +1304,7 @@ public final class GameEngine {
             String state = oos ? ", stokta yok" : "";
             String added = cnt == 1 ? ", eklendi" : cnt >= 2 ? ", bol eklendi" : "";
             boolean ok = !locked && !running && slot && !maxed;
-            String reason = locked ? lockedReason : running ? "Ekleme sürüyor" : maxed ? "En fazla bol, iki kez eklenir" : LOCK_SLOT;
+            String reason = locked ? lockedReason : running ? "Ekleme sürüyor" : maxed ? "En fazla bol, iki kez eklenir" : LOCK_HANDS;
             out.add(new StationOption("add:" + id, StationOption.Group.ADD, who + name, who + name + added + state,
                     ok, reason, id, oos));
         }
@@ -1226,7 +1344,7 @@ public final class GameEngine {
                 String state = oos ? ", stokta yok" : "";
                 String name = ing.name + " ekle";
                 boolean ok = !locked && !running && slot;
-                String reason = locked ? lockedReason : running ? "Ekleme sürüyor" : LOCK_SLOT;
+                String reason = locked ? lockedReason : running ? "Ekleme sürüyor" : LOCK_HANDS;
                 out.add(new StationOption("add:" + id, StationOption.Group.ADD, who + name, who + name + state, ok, reason, id, oos));
             }
             out.add(new StationOption("finish", StationOption.Group.CONTROL, "Malzemeleri bitir",
@@ -1266,7 +1384,7 @@ public final class GameEngine {
         String name = autoName(m);
         StringBuilder d = new StringBuilder(who).append(name);
         if (oos) d.append(", malzeme yok");
-        String reason = locked ? lockedReason : running ? "Ekleme sürüyor" : LOCK_SLOT;
+        String reason = locked ? lockedReason : running ? "Ekleme sürüyor" : LOCK_HANDS;
         return new StationOption("auto", StationOption.Group.STEP, who + name, d.toString(),
                 !locked && !running && slot, reason, null, oos);
     }
@@ -1276,6 +1394,7 @@ public final class GameEngine {
 
     private void prepOptions(List<StationOption> out, Station st) {
         boolean slot = slotFree();
+        String LOCK_SLOT = LOCK_HANDS;
         if (st == Station.DONER) {
             List<Ingredient> meats = getPrepMeats();
             for (Ingredient m : meats) {
@@ -1301,10 +1420,11 @@ public final class GameEngine {
             int cap = upgrades.readyCapacity(PrepKind.FRIES);
             boolean full = readyFries + pendingPrep(PrepKind.FRIES, null) + PrepKind.FRIES.batch > cap;
             boolean lack = !save.inventory.has(Catalog.PATATES, PrepKind.FRIES.batch);
-            String reason = full ? "Hazır stok dolu" : lack ? "Malzeme yetmiyor: Patates" : LOCK_SLOT;
+            String res = resourceReason(st, passivePrep(PrepKind.FRIES));
+            String reason = full ? "Hazır stok dolu" : lack ? "Malzeme yetmiyor: Patates" : res;
             String name = PrepKind.FRIES.batch + " porsiyon patates kızart";
             out.add(new StationOption("prep:fries", StationOption.Group.PREP, name, name,
-                    slot && !full && !lack, reason, Catalog.PATATES, false));
+                    res == null && !full && !lack, reason, Catalog.PATATES, false));
         } else if (st == Station.SOS) {
             Set<String> pick = trayPick(false);
             boolean enough = pick.size() >= 2;
@@ -1434,7 +1554,8 @@ public final class GameEngine {
     public PrepResult startPrep(PrepKind kind, Collection<String> ids) {
         if (state == State.FINISHED || state == State.FAILED) return PrepResult.NOT_ALLOWED;
         if (state == State.READY) beginPrep();
-        if (playerActiveCount() >= upgrades.slots()) return PrepResult.NO_SLOT;
+        PrepResult res = prepResources(kind);
+        if (res != null) return res;
         PrepResult r = launchPrep(kind, ids, 0, kind.batch);
         return r;
     }
@@ -1449,11 +1570,20 @@ public final class GameEngine {
         if (state == State.FINISHED || state == State.FAILED) return PrepResult.NOT_ALLOWED;
         if (state == State.READY) beginPrep();
         if (portions != 4 && portions != 2) return reject(PrepKind.DONER, PrepResult.INVALID, null);
-        if (playerActiveCount() >= upgrades.slots()) return PrepResult.NO_SLOT;
+        PrepResult res = prepResources(PrepKind.DONER);
+        if (res != null) return res;
         return launchPrep(PrepKind.DONER, Collections.singletonList(meatId), 0, portions);
     }
 
     public PrepResult startPrepDrink() { return startPrep(PrepKind.DRINK, Collections.<String>emptyList()); }
+
+    /** Oyuncu hazırlığı için kaynak denetimi (v2.0): pasif hazırlıkta (patates) ocak yeri, her hazırlıkta eller. */
+    private PrepResult prepResources(PrepKind kind) {
+        StartResult r = checkResources(null, kind.station, passivePrep(kind), 0, true);
+        if (r == StartResult.STATION_FULL) return PrepResult.STATION_FULL;
+        if (r == StartResult.HANDS_BUSY) return PrepResult.HANDS_BUSY;
+        return null;
+    }
 
     /** Hazır patates: 4 porsiyon kızartır (Ocak, ~5 sn); gün sonunda atılır. Menüde patates yoksa (3. günden önce) INVALID. */
     public PrepResult startPrepFries() {
@@ -1534,10 +1664,12 @@ public final class GameEngine {
         }
         save.inventory.consumeAll(need);
         if (worker == 0) playerAction();
-        double d = prepSeconds(kind, amount) * (worker > 0 ? APPRENTICE_SLOWDOWN : 1f);
+        boolean passive = passivePrep(kind);
+        double d = prepSeconds(kind, amount) * (worker > 0 && !passive ? APPRENTICE_SLOWDOWN : 1f);
         float dur = (float) Math.max(MIN_STEP_SECONDS, d);
-        Step syn = new Step(kind.displayName, kind.station, dur, Collections.<String, Integer>emptyMap());
+        Step syn = new Step(kind.displayName, kind.station, dur, Collections.<String, Integer>emptyMap(), Step.Kind.NORMAL, false, passive);
         ActiveStep a = new ActiveStep(null, -1, -1, syn, dur, worker == 0 ? freeSlot() : -1, worker, kind, ids, false);
+        markJob(a, passive);
         a.amount = amount;
         active.add(a);
         for (GameListener l : snap()) l.onPrepStarted(kind, worker > 0, dur);
@@ -1712,7 +1844,13 @@ public final class GameEngine {
         for (ActiveStep a : new ArrayList<>(active)) {
             if (!active.contains(a)) continue;
             a.remaining -= h;
-            if (a.remaining <= 0f) finishTask(a);
+            boolean held = a.passive && a.handsLeft > 1e-6f;
+            if (a.passive) a.handsLeft -= h; else a.handsLeft = a.remaining;
+            if (a.remaining <= 0f) { finishTask(a); continue; }
+            if (held && a.handsLeft <= 1e-6f) {
+                a.handsLeft = 0f;
+                if (a.worker == 0) for (GameListener l : snap()) l.onHandsFree(a);
+            }
         }
     }
 
@@ -1783,13 +1921,16 @@ public final class GameEngine {
             else save.inventory.add(id, -e.getValue());
         }
         if (step.isSized()) line.setChosenSize(sz);
-        float dur = lineStepSeconds(step, rm, rd, rf, worker, sz);
+        boolean passive = passiveJob(step);
+        // pasif işte makine pişirir: çırağın %20 yavaşlığı yalnızca koyma süresine uygulanır
+        float dur = lineStepSeconds(step, rm, rd, rf, passive ? 0 : worker, sz);
         if (worker == 0) playerAction();
         line.setRunning(si, true);
         blocked.remove(o.id);
         int slot = worker == 0 ? freeSlot() : -1;
         ActiveStep a = new ActiveStep(o, li, si, step, dur, slot, worker, null, null, false);
         a.size = step.isSized() || step.isBreadStep() ? sz : null;
+        markJob(a, passive);
         active.add(a);
         if (worker == 0) {
             if (step.isSized()) for (GameListener l : snap()) l.onSizeChosen(o, li, line.getSize(), sz);
@@ -1809,6 +1950,7 @@ public final class GameEngine {
         if (worker == 0) playerAction();
         int slot = worker == 0 ? freeSlot() : -1;
         ActiveStep a = new ActiveStep(o, -1, -1, step, dur, slot, worker, null, null, true);
+        markJob(a, false);
         active.add(a);
         if (worker == 0) {
             for (GameListener l : snap()) l.onStepStarted(o, step, slot, dur);

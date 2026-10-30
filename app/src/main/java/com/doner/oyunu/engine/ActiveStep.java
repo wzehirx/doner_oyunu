@@ -2,13 +2,17 @@ package com.doner.oyunu.engine;
 
 import java.util.Set;
 
-/** Çalışan bir iş: sipariş adımı, paketleme veya hazırlık. Oyuncu işleri yuva (slot) kullanır, çırak işleri kullanmaz. */
+/**
+ * Çalışan bir iş: sipariş adımı, paketleme veya hazırlık (v2.0 kaynak modeli). AKTİF iş, işi yapanın (oyuncu ya da
+ * çırak) ellerini iş boyunca tutar. PASİF iş ({@link #isPassive()}) elleri yalnızca kısa koyma süresince tutar
+ * ({@link #holdsHands()}), sonra istasyonun bir yerinde ({@link #getPlace()}) kendi başına pişer.
+ */
 public final class ActiveStep {
     /** Hazırlık işinde null. */
     public final Order order;
     public final Step step;
     public final float total;
-    /** Oyuncu yuvası (0..); çırak işinde -1. */
+    /** Oyuncu işinin sıra numarası (0..; eşzamanlı oyuncu işleri arasında; yalnızca ses/görsel anahtarı); çırak işinde -1. */
     public final int slot;
     /** 0 = oyuncu, 1..3 = çırak numarası. */
     public final int worker;
@@ -32,6 +36,12 @@ public final class ActiveStep {
     FlowMode autoMode;
     /** Dilimleme/ısıtma adımında kullanılan boy (boy gerektirmeyen işte null). */
     PortionSize size;
+    /** v2.0: pasif iş (istasyon kendi pişirir). */
+    boolean passive;
+    /** v2.0: işi yapanın ellerinin bu işte kalan süresi (aktif işte = remaining; pasifte koyma süresi). */
+    float handsLeft;
+    /** v2.0: pasif işin istasyondaki yeri (0..kapasite-1); aktif işte -1. */
+    int place = -1;
 
     ActiveStep(Order order, int itemIndex, int stepIndex, Step step, float total, int slot, int worker,
                PrepKind prep, Set<String> ids, boolean pack) {
@@ -49,6 +59,16 @@ public final class ActiveStep {
     }
 
     public float getRemaining() { return remaining; }
+    /** Pasif iş mi (ekmek ısıtıcı, ocak: kendi pişirir). */
+    public boolean isPassive() { return passive; }
+    /** İş şu an işi yapanın ellerini tutuyor mu (aktif iş her zaman; pasif iş yalnızca koyarken). */
+    public boolean holdsHands() { return !passive || handsLeft > 1e-6f; }
+    /** Ellerin bu işte kalan süresi (sn). */
+    public float getHandsRemaining() { return passive ? Math.max(0f, handsLeft) : remaining; }
+    /** İşin istasyonu. */
+    public Station getStation() { return step.station; }
+    /** Pasif işin istasyondaki yeri (0 tabanlı göz/yer numarası); aktif işte -1. */
+    public int getPlace() { return place; }
     public float progress() { return total <= 0 ? 1f : 1f - remaining / total; }
     public boolean isApprentice() { return worker > 0; }
     public boolean isPrep() { return prep != null; }

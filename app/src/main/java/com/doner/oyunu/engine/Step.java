@@ -20,21 +20,35 @@ public final class Step {
     public final Kind kind;
     /** true: kalemin önceki TÜM adımları bitmeden açılmaz (künefe gibi sıralı ürünler). TOPPING her zaman sıralıdır. */
     public final boolean sequential;
+    /**
+     * v2.0 kaynak modeli: PASİF iş (makine/ocak kendi pişirir: ekmek/lavaş ısıt, ocakta pişir/mühürle, patates kızart).
+     * Oyuncunun elleri yalnızca kısa "koyma" süresince meşguldür; iş istasyonun KENDİ kapasitesini (göz/yer) kullanır.
+     * false: AKTİF iş (dilimle, malzeme ekle, paketle, doldur...): iş boyunca eller meşgul.
+     */
+    public final boolean passive;
 
     public Step(String name, Station station, float baseSeconds, Map<String, Integer> needs) {
-        this(name, station, baseSeconds, needs, Kind.NORMAL, false);
+        this(name, station, baseSeconds, needs, Kind.NORMAL, false, false);
     }
 
     public Step(String name, Station station, float baseSeconds, Map<String, Integer> needs, Kind kind, boolean sequential) {
+        this(name, station, baseSeconds, needs, kind, sequential, false);
+    }
+
+    public Step(String name, Station station, float baseSeconds, Map<String, Integer> needs, Kind kind, boolean sequential, boolean passive) {
         this.name = name;
         this.station = station;
         this.baseSeconds = baseSeconds;
         this.needs = Collections.unmodifiableMap(new LinkedHashMap<>(needs));
         this.kind = kind;
         this.sequential = sequential || kind == Kind.TOPPING;
+        this.passive = passive && kind != Kind.TOPPING;
     }
 
     public boolean isTopping() { return kind == Kind.TOPPING; }
+
+    /** Pasif iş mi (v2.0): makine kendi işler, eller yalnızca koyarken meşgul; istasyon kapasitesi kullanılır. */
+    public boolean isPassive() { return passive; }
 
     /** Hazır (dilimlenmiş) döner ile hızlanabilen adımsa döner malzemesinin id'si, değilse null. */
     public String meatId() {

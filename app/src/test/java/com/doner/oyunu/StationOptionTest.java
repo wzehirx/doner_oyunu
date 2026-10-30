@@ -211,11 +211,16 @@ public class StationOptionTest {
         assertEquals("4 bardak ayran doldur", ice.get(1).name);
         assertEquals(StartResult.STARTED, e.applyStationOption(o.id, -1, Station.ICECEK.id, "step"));
         assertEquals("Çalışıyor", find(e.getStationOptions(o.id, -1, Station.ICECEK.id), "step").lockReason);
-        // yuva doluyken başka seçenek kilitli
+        // v2.0: ayran doldurma aktif iş (eller dolu): ekmeği ısıtıcıya koymak da el ister, kilitli
         StationOption bread2 = find(e.getStationOptions(o.id, -1, Station.EKMEK.id), "step");
         assertFalse(bread2.enabled);
-        assertEquals("Bir işlem sürüyor", bread2.lockReason);
-        assertEquals(StartResult.NO_SLOT, e.applyStationOption(o.id, -1, Station.EKMEK.id, "step"));
+        assertEquals("Elin dolu", bread2.lockReason);
+        assertEquals(StartResult.HANDS_BUSY, e.applyStationOption(o.id, -1, Station.EKMEK.id, "step"));
+        // ayran bitince ekmek ısıtıcıya konur; ısıtıcı pişirirken eller serbest (koyma sonrası) ve ocak/ısıtıcı yeri sayılır
+        for (int i = 0; i < 25; i++) e.tick(0.1f);
+        assertEquals(StartResult.STARTED, e.applyStationOption(o.id, -1, Station.EKMEK.id, "step"));
+        assertEquals("Çalışıyor", find(e.getStationOptions(o.id, -1, Station.EKMEK.id), "step").lockReason);
+        assertEquals(1, e.getStationUsed(Station.EKMEK));
     }
 
     @Test public void sequentialStepsShowTheirLockReason() {

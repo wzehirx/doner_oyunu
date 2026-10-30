@@ -7,6 +7,7 @@ Paket: `com.doner.oyunu`. Alt paketler: `engine` (SAF Java, android import YASAK
 Menü → Gün Özeti/Brifing (menü, hedef) → Market (malzeme/yükseltme alışverişi) → GÜN (kasada servis) → Gün Sonu (kazanç, yıldız, ödemeler) → Market → sonraki gün. Kayıt: SharedPreferences (engine `SaveData` düz "key=value" metne serileştirir).
 
 ## Gün (GameEngine)
+- (v2.0) Kaynak modeli (eller + makineler), güvenilir çırak, sıradaki sipariş API'si: docs/design_v20.md.
 - (v0.9) IZGARA istasyonu "Ocak"; patates (3. gün, müşteri isteği "patatesli"); ambiyans; kısa etiketler: docs/design_v09.md.
 - (v0.8) Süre baskısı ayarı: kapalıyken gün süresiz geçer (sayaç yok, sabır sabit, müşteri gitmez; kota kadar müşteri gelip hepsi teslim edilince gün biter; hız bonusu yok, bahşiş x0,8). Ayrıntı: docs/design_v08.md.
 - Gün N, süre = 120s + 6s*N (üst sınır 300s). Müşteri geliş aralığı gün ilerledikçe kısalır; geliş sıklığı yıldız çarpanıyla ölçeklenir (1★ ×0.6 … 5★ ×1.4). Gün sonunda bekleyen sipariş kalmayana kadar (max +30s) devam.
@@ -15,7 +16,7 @@ Menü → Gün Özeti/Brifing (menü, hedef) → Market (malzeme/yükseltme alı
 - Sabır süresi dolan müşteri gider: yıldız düşer, gelir yok. Teslim süresine göre memnuniyet (hızlı = bahşiş + yıldız artışı).
 - Yıldız: 1.0–5.0 ondalıklı itibar. Başlangıç 3.0. Memnun +0.08 (hızlı +0.12), mutsuz −0.30, hatalı sipariş −0.15. 1.0 altına düşerse gün BAŞARISIZ: aynı günü tekrar dene (para kaybı yok).
 - Sipariş hazırlama: her ürün 3–5 adımdan oluşur (ör. ekmek arası: Ekmeği ısıt → Döneri dilimle → Sos/salata ekle → Paketle). Her adım bir İSTASYON'da yapılır (Döner makinesi, Ekmek ısıtıcı, Sos/Salata tezgahı, Izgara/Fırın, Paketleme, İçecek dolabı, Tatlı). Oyuncu bir siparişi seçer, sistem sıradaki adımı söyler, oyuncu doğru istasyona dokunur → adım X saniyede (ses/ilerleme) biter. Yanlış istasyon = hata sesi, ufak ceza. Tüm adımlar bitince "Teslim et" butonu/eylemi.
-- Eş zamanlı işlem yuvası (slot) sayısı ekipmanla artar (başlangıç 1, yükseltmeyle 3'e kadar). Süreler ekipman yükseltmeleriyle kısalır; kalıcı "tempo" ayarı (0.6×–1.6×) süreleri ve sabırları ölçekler.
+- (v2.0) Ortak "işlem yuvası" yoktur: oyuncunun eli aynı anda 1 AKTİF iş yapar (dilimle, malzeme, doldur, paketle); PASİF işler (ekmek ısıt, ocakta pişir, patates kızart) yalnızca koyarken eli tutar ve istasyonun kendi kapasitesini kullanır (ekmek ısıtıcı 2 yer, ocak 2 göz; yükseltmeyle 4). Çırak ek bir çift eldir. Ayrıntı: docs/design_v20.md. Süreler ekipman yükseltmeleriyle kısalır; kalıcı "tempo" ayarı (0.6×–1.6×) süreleri ve sabırları ölçekler.
 - Malzeme stoğu: her adım/ürün malzeme tüketir. Malzeme biterse o ürün hazırlanamaz (sesli uyarı), oyuncu "Marketten acil al" ile (pahalı, +%50) tamamlayabilir. Gün öncesi Market'te toplu alım; "Önerilen malzemeleri al" hızlı butonu olsun.
 - Para: teslimde ürün satış fiyatı + bahşiş. Gün sonunda kira/gider (kademeli). Para ile: malzeme, mutfak aletleri (döner makinesi, ekmek ısıtıcı, otomatik dilimleyici, buzdolabı, ızgara...), restoran öğeleri (masa, tabela, klima, müzik sistemi, dekor) – etkileri sabır süresi, müşteri sıklığı, bahşiş, hız.
 - Zorluk eğrisi: gün N, öncekilerin tüm zorluklarını içerir; sipariş büyüklüğü, geliş sıklığı artar, sabır azalır. En az 30 gün oynanabilir; sonrası döngüsel zorluk artışıyla sonsuz.

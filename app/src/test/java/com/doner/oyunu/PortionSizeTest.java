@@ -526,7 +526,7 @@ public class PortionSizeTest {
         assertEquals(StationOption.Group.PREP, four.group);
         assertTrue(four.enabled);
         assertEquals(StartResult.STARTED, e.applyStationOption(-1, -1, Station.DONER.id, "prep:doner:et_doner:2"));
-        assertEquals("meşgulken kilitli", "Bir işlem sürüyor", e.getStationOptions(-1, -1, Station.DONER.id).get(0).lockReason);
+        assertEquals("meşgulken kilitli (v2.0: dilimleme aktif iş, eller dolu)", "Elin dolu", e.getStationOptions(-1, -1, Station.DONER.id).get(0).lockReason);
         run(e, 4f);
         assertEquals(4, e.getReadyMeatHalves("et_doner"));
         assertEquals(StartResult.STARTED, e.applyStationOption(-1, -1, Station.DONER.id, "prep:doner:et_doner:4"));

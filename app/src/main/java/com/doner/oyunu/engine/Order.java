@@ -61,7 +61,16 @@ public final class Order {
     static float packSeconds(int itemCount) { return 1.5f + 0.5f * itemCount; }
 
     /** Müşteri oluşmadan önce sabır hesabı için tahmini iş yükü (sn); boy dilimleme/ısıtma süresini ölçekler. */
-    static float estimateWork(List<Product> items, List<PortionSize> sizes) {
+    static float estimateWork(List<Product> items, List<PortionSize> sizes) { return estimateWork(items, sizes, 1f); }
+
+    /**
+     * v2.0: pasif işin (ısıtıcı/ocak kendi pişirir) sabır tahminine katılma oranı. Oyuncu pasif iş pişerken başka işe
+     * geçebildiği için bu süre siparişin toplam süresine tam eklenmez (denge testleriyle ayarlandı).
+     */
+    static final float PASSIVE_WORK_WEIGHT = 0.25f;
+
+    /** passiveWeight: pasif adımların süresinin sayılma oranı (v2.0 {@link #PASSIVE_WORK_WEIGHT}; v0.6 dengesi 1). */
+    static float estimateWork(List<Product> items, List<PortionSize> sizes, float passiveWeight) {
         float t = packSeconds(items.size());
         for (int i = 0; i < items.size(); i++) {
             Product p = items.get(i);
@@ -69,6 +78,7 @@ public final class Order {
             for (Step s : p.steps) {
                 float w = s.baseSeconds + (s.isTopping() ? Product.TOPPING_WORK_EACH * p.defaultToppings.size() : 0f);
                 if (s.isSized() || s.isBreadStep()) w *= sz.timeMult;
+                if (s.isPassive()) w *= passiveWeight;
                 t += w;
             }
         }

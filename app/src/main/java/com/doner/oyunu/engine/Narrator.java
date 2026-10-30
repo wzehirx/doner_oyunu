@@ -282,7 +282,16 @@ public class Narrator implements GameListener {
     }
 
     public String stepStarted(Order o, Step s, int slot, float seconds) {
-        return itemPrefix(o, s) + s.name + " başladı" + startedSizeSuffix(o, s) + ", " + fmtSeconds(seconds) + ".";
+        String t = itemPrefix(o, s) + s.name + " başladı" + startedSizeSuffix(o, s) + ", " + fmtSeconds(seconds) + ".";
+        // v2.0: pasif iş (ekmek ısıtıcı, ocak) kendi pişirir; oyuncu başka işe geçebilir
+        if (engine != null && isPassiveRun(o, s)) t += " Elin boş.";
+        return t;
+    }
+
+    /** Bu adım şu an pasif iş olarak mı çalışıyor (oyuncunun işi). */
+    private boolean isPassiveRun(Order o, Step s) {
+        for (ActiveStep a : engine.getActiveSteps()) if (a.order == o && a.step == s && a.worker == 0) return a.isPassive();
+        return false;
     }
 
     public String stepFinished(Order o, Step s, boolean complete) {
@@ -300,8 +309,32 @@ public class Narrator implements GameListener {
         return "Bu adım için önce kalemin önceki adımları bitmeli.";
     }
 
+    /** ESKİ (v0.9 ortak yuva); v2.0 motoru {@code onNoFreeSlot} göndermez. */
     public String noFreeSlot(Order o) {
-        return "Boş yuva yok, bir işlemin bitmesini bekle.";
+        return "Elin dolu, işin bitmesini bekle.";
+    }
+
+    /** v2.0: "Elin dolu: Döneri dilimle sürüyor, 2 saniye." */
+    public String handsBusy(Order o, ActiveStep current) {
+        if (current == null) return "Elin dolu.";
+        String what = current.isPrep() ? current.step.name : (current.order != null && current.order.lineCount() > 1 && current.itemIndex >= 0
+                ? current.order.getLine(current.itemIndex).product.name + ": " : "") + current.step.name;
+        return "Elin dolu: " + what + " sürüyor, " + fmtSeconds(current.getHandsRemaining()) + ".";
+    }
+
+    /** v2.0: "Ocak dolu (2/2)." / "Ekmek ısıtıcı dolu (2/2)." (+ ilk bitecek işin kalan süresi). */
+    public String stationFull(Order o, Station st, int used, int capacity) {
+        String t = st.displayName + " dolu (" + used + "/" + capacity + ").";
+        float first = -1f;
+        if (engine != null) for (ActiveStep a : engine.getStationJobs(st)) if (a.isPassive() && (first < 0 || a.getRemaining() < first)) first = a.getRemaining();
+        if (first >= 0) t += " İlk yer " + fmtSeconds(first) + " sonra boşalır.";
+        return t;
+    }
+
+    /** v2.0: istenen iş zaten sürüyor: "Ekmeği ısıt zaten sürüyor, çırak yapıyor, 2 saniye." */
+    public String alreadyRunning(Order o, ActiveStep job) {
+        if (job == null) return "Bu iş zaten sürüyor.";
+        return job.step.name + " zaten sürüyor" + (job.isApprentice() ? ", çırak yapıyor" : "") + ", " + fmtSeconds(job.getRemaining()) + ".";
     }
 
     public String itemFinished(Order o, int itemIndex) {
@@ -510,7 +543,10 @@ public class Narrator implements GameListener {
         switch (reason) {
             case FULL: return "Hazır stok dolu, " + kind.displayName + " yapılamaz.";
             case OUT_OF_STOCK: return (ing == null ? "Malzeme" : ing.name) + " yetmiyor, " + kind.displayName + " yapılamaz.";
-            case NO_SLOT: return "Boş yuva yok. Önce devam eden bir işlemin bitmesini bekle.";
+            case NO_SLOT:
+            case HANDS_BUSY: return "Elin dolu, " + kind.displayName + " için işin bitmesini bekle.";
+            case STATION_FULL: return engine != null ? stationFull(null, kind.station, engine.getStationUsed(kind.station), engine.getStationCapacity(kind.station))
+                    : kind.station.displayName + " dolu.";
             case INVALID: return "Bu hazırlık için geçersiz seçim.";
             default: return "Hazırlık yapılamaz.";
         }
@@ -642,6 +678,7 @@ public class Narrator implements GameListener {
                     + (sel.isReady() ? "teslime hazır." : s == null ? "işler sürüyor." : "önerilen " + s.name + ".");
             if (sel.hasRequests()) t += " İstek: " + sel.requestsText() + ".";
         }
+        if (engine.getState() == GameEngine.State.RUNNING || engine.isPrepPhase()) t += " " + handsText();
         String ready = readyStockText();
         if (!ready.isEmpty()) t += " " + ready;
         t += " Oyun akışı: " + engine.getFlowMode().displayName + ".";
@@ -652,7 +689,10 @@ public class Narrator implements GameListener {
     public String stationLabel(Station st) {
         boolean busy = false;
         for (ActiveStep a : engine.getActiveSteps()) if (a.step.station == st) busy = true;
-        StringBuilder sb = new StringBuilder(st.displayName).append(", ").append(busy ? "çalışıyor" : "boş");
+        StringBuilder sb = new StringBuilder(st.displayName).append(", ");
+        int cap = engine.getStationCapacity(st);
+        sb.append(busy ? "çalışıyor" : "boş");
+        if (cap > 0 && engine.getStationUsed(st) > 0) sb.append(", ").append(engine.getStationUsed(st)).append("/").append(cap).append(" dolu");
         Order sel = engine.getSelectedOrder();
         if (sel != null && !sel.isReady()) {
             Step need = null;
@@ -675,13 +715,70 @@ public class Narrator implements GameListener {
         return sb.toString();
     }
 
+    // ---- v2.0: eller, istasyonlar, sıradaki sipariş
+    /** "Elin boş." / "Elin dolu: Döneri dilimle, 2 saniye." + pişenler: "Pişiyor: Ekmek ısıtıcı 1/2, Ocak 2/2." */
+    public String handsText() {
+        if (engine == null) return "";
+        ActiveStep h = engine.getHandsJob();
+        String t = h == null ? "Elin boş." : "Elin dolu: " + h.step.name + ", " + fmtSeconds(h.getHandsRemaining()) + ".";
+        List<String> parts = new java.util.ArrayList<>();
+        for (Station st : Station.values()) {
+            int cap = engine.getStationCapacity(st), used = engine.getStationUsed(st);
+            if (cap > 0 && used > 0) parts.add(st.displayName + " " + used + "/" + cap);
+        }
+        if (!parts.isEmpty()) {
+            t += " Pişiyor: ";
+            for (int i = 0; i < parts.size(); i++) { if (i > 0) t += ", "; t += parts.get(i); }
+            t += ".";
+        }
+        return t;
+    }
+
+    /**
+     * Siparişte şimdi yapılabilecekler (UI "Siparişi oku" / kart açıklaması): "Şimdi: Ekmeği ısıt, Ekmek ısıtıcı; Döneri
+     * dilimle, Döner makinesi. Bekliyor: Patates kızart, Ocak dolu (2/2). Ayranı doldur sürüyor, 1 saniye, çırak."
+     * Teslime hazırsa "Teslime hazır." Sipariş yoksa boş.
+     */
+    public String readyActionsText(int orderId) {
+        if (engine == null) return "";
+        List<ReadyAction> acts = engine.getReadyActions(orderId);
+        if (acts.isEmpty()) return "";
+        if (acts.get(0).kind == ReadyAction.Kind.DELIVER) return "Teslime hazır.";
+        StringBuilder now = new StringBuilder(), wait = new StringBuilder(), run = new StringBuilder();
+        for (ReadyAction a : acts) {
+            StringBuilder b = a.status == ReadyAction.Status.NOW ? now : a.status == ReadyAction.Status.RUNNING ? run : wait;
+            if (b.length() > 0) b.append("; ");
+            b.append(a.text);
+        }
+        StringBuilder sb = new StringBuilder();
+        if (now.length() > 0) sb.append("Şimdi: ").append(now).append(". ");
+        if (wait.length() > 0) sb.append("Bekliyor: ").append(wait).append(". ");
+        if (run.length() > 0) sb.append(run).append(". ");
+        return sb.toString().trim();
+    }
+
+    /** "Sıradaki sipariş" duyurusu: odak siparişi + şimdi yapılabilecekler. Sipariş yoksa "Bekleyen sipariş yok." */
+    public String focusText() {
+        if (engine == null) return "";
+        Order o = engine.getFocusOrder();
+        if (o == null) return "Bekleyen sipariş yok.";
+        String t = "Sipariş " + o.position + ": " + o.customer.name + ", " + o.itemsText() + "." + requestSentence(o);
+        String acts = readyActionsText(o.id);
+        return acts.isEmpty() ? t : t + " " + acts;
+    }
+
+    /** Sıra özeti metni ({@link QueueSummary#text}). */
+    public String queueText() { return engine == null ? "" : engine.getQueueSummary().text; }
+
     /** startStep sonucu için kısa açıklama (UI isterse okur). */
     public String startResultText(StartResult r) {
         switch (r) {
             case STARTED: return "";
             case NO_ORDER: return "Önce bir sipariş seç.";
             case WRONG_STATION: return "Yanlış istasyon.";
-            case NO_SLOT: return "Boş yuva yok.";
+            case NO_SLOT:
+            case HANDS_BUSY: return "Elin dolu.";
+            case STATION_FULL: return "İstasyon dolu.";
             case OUT_OF_STOCK: return "Malzeme yok.";
             case ORDER_BUSY: return "Bu adım zaten sürüyor.";
             case ORDER_READY: return "Sipariş hazır, teslim et.";
@@ -715,6 +812,9 @@ public class Narrator implements GameListener {
     @Override public void onWrongStation(Order o, Station t, Station e) { say(wrongStation(o, t, e), true, CAT_ALERT); }
     @Override public void onStepLocked(Order o, Step s) { say(stepLocked(o, s), true, CAT_ALERT); }
     @Override public void onNoFreeSlot(Order o) { say(noFreeSlot(o), true, CAT_ALERT); }
+    @Override public void onHandsBusy(Order o, ActiveStep current) { say(handsBusy(o, current), true, CAT_ALERT); }
+    @Override public void onStationFull(Order o, Station st, int used, int capacity) { say(stationFull(o, st, used, capacity), true, CAT_ALERT); }
+    @Override public void onAlreadyRunning(Order o, ActiveStep job) { say(alreadyRunning(o, job), true, CAT_ALERT); }
     /** Kalem/paketleme hazır duyuruları stepFinished metnine dahildir; ayrıca konuşulmaz. */
     @Override public void onItemFinished(Order o, int i) {}
     @Override public void onOrderReadyToPack(Order o) {}
@@ -736,8 +836,9 @@ public class Narrator implements GameListener {
         String t = apprenticeAction(a);
         if (t == null) return;
         float now = engine == null ? 0f : engine.getElapsed();
-        // paketleme bitişi her zaman söylenir; diğerleri en az APPRENTICE_MIN_GAP arayla
-        boolean important = a.pack && !a.started;
+        // v2.0: sipariş işleri (başlangıç) ve paketleme bitişi HER ZAMAN söylenir (konuşma sırası aynı kategoriyi birleştirir);
+        // yalnızca hazırlık duyuruları en az APPRENTICE_MIN_GAP arayla
+        boolean important = !a.isPrep();
         if (!important && engine != null && engine.getState() == GameEngine.State.RUNNING && now - lastApprenticeSay < APPRENTICE_MIN_GAP) return;
         lastApprenticeSay = now;
         say(t, false, CAT_APPRENTICE);

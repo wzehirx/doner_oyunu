@@ -33,6 +33,9 @@ public class EngineTest {
         }
         @Override public void onEmergencyPurchase(Ingredient i, int q, int c) { emergency++; }
         @Override public void onNoFreeSlot(Order o) { noSlot++; }
+        int handsBusy, stationFull;
+        @Override public void onHandsBusy(Order o, ActiveStep cur) { handsBusy++; }
+        @Override public void onStationFull(Order o, Station st, int used, int cap) { stationFull++; }
         @Override public void onStarsChanged(double a, double b) { lastStars = b; }
         @Override public void onDayFinished(DaySummary s) { days++; summary = s; }
         @Override public void onDayFailed(DaySummary s) { failed++; summary = s; }
@@ -82,15 +85,20 @@ public class EngineTest {
         assertEquals("hint:Ekmeği ısıt", ev.get(1));
         assertEquals(StartResult.STARTED, e.startStep(o.id, Station.EKMEK.id));
         assertTrue(o.isRunning());
-        // tek yuva dolu: başka adım (serbest sıra) yuva yüzünden reddedilir, sıra yüzünden DEĞİL
-        assertEquals(StartResult.NO_SLOT, e.startStep(o.id, Station.DONER.id));
+        // v2.0: ekmek ısıtma PASİF iş; eller yalnızca koyarken (0,6 sn) dolu: o an başka adım ELLER yüzünden reddedilir, sıra yüzünden DEĞİL
+        assertEquals(StartResult.HANDS_BUSY, e.startStep(o.id, Station.DONER.id));
         // aynı adım zaten sürüyor
         assertEquals(StartResult.ORDER_BUSY, e.startStep(o.id, Station.EKMEK.id));
         assertEquals(1, e.getActiveSteps().size());
+        for (int i = 0; i < 7; i++) e.tick(0.1f);
+        assertTrue("koyma bitti, eller serbest", e.isHandsFree());
+        // ekmek ısıtıcıda pişerken dilimleme başlar (paralel)
+        assertEquals(StartResult.STARTED, e.startStep(o.id, Station.DONER.id));
+        assertEquals(2, e.getActiveSteps().size());
         for (int i = 0; i < 100 && o.isRunning(); i++) e.tick(0.1f);
         assertFalse(o.isRunning());
-        assertEquals(1, o.getNextStepIndex());
-        assertEquals("hint:Döneri dilimle", ev.get(ev.size() - 1));
+        assertEquals(2, o.getNextStepIndex());
+        assertEquals("hint:Malzemeleri ekle", ev.get(ev.size() - 1));
         assertFalse(e.deliver(o.id));
         assertEquals(StartResult.NO_ORDER, e.startStep(999, 1));
         assertTrue(e.selectNextOrder());
@@ -230,14 +238,14 @@ public class EngineTest {
     }
 
     @Test public void slotsLimitParallelWork() {
-        // çırak yuva sayısını ARTIRMAZ: oyuncunun yuvası hep 1
+        // v2.0: çırak oyuncunun el sayısını ARTIRMAZ (kendi elleriyle çalışır): oyuncunun eli hep 1
         SaveData save = SaveData.newGame();
         save.upgradeLevels.put("cirak", 1);
         GameEngine e = new GameEngine(9, save);
         assertEquals(1, e.getSlotCount());
         for (int i = 0; i < 2000 && e.getOrders().size() < 2; i++) e.tick(0.1f);
         assertEquals(2, e.getOrders().size());
-        // tek yuvalı oyuncu: ikinci adım reddedilir
+        // tek elli oyuncu: koyarken ikinci iş eller yüzünden reddedilir; ısıtıcı 2 yerli olduğundan koyma bitince ikinci ekmek girer
         SaveData s1 = SaveData.newGame();
         GameEngine e1 = new GameEngine(9, s1);
         Rec r1 = new Rec();
@@ -245,9 +253,20 @@ public class EngineTest {
         for (int i = 0; i < 2000 && e1.getOrders().size() < 2; i++) e1.tick(0.1f);
         Order c = e1.getOrders().get(0), d = e1.getOrders().get(1);
         assertEquals(StartResult.STARTED, e1.startStep(c.id, Station.EKMEK.id));
-        assertEquals(StartResult.NO_SLOT, e1.startStep(d.id, Station.EKMEK.id));
-        assertEquals(1, r1.noSlot);
+        assertEquals(StartResult.HANDS_BUSY, e1.startStep(d.id, Station.EKMEK.id));
+        assertEquals(1, r1.handsBusy);
+        assertEquals("eski olay gelmez", 0, r1.noSlot);
         assertEquals(0, e1.getFreeSlots());
+        for (int i = 0; i < 7; i++) e1.tick(0.1f);
+        assertEquals(StartResult.STARTED, e1.startStep(d.id, Station.EKMEK.id));
+        assertEquals(2, e1.getStationUsed(Station.EKMEK));
+        for (int i = 0; i < 7; i++) e1.tick(0.1f);
+        // aktif iş (dilimleme) eli iş boyunca tutar
+        assertEquals(StartResult.STARTED, e1.startStep(c.id, Station.DONER.id));
+        for (int i = 0; i < 10; i++) e1.tick(0.1f);
+        assertEquals(StartResult.HANDS_BUSY, e1.startStep(d.id, Station.DONER.id));
+        assertEquals(2, r1.handsBusy);
+        assertEquals(0, r1.stationFull);
     }
 
     @Test public void freeOrderWithinItemAndAcrossItems() {
@@ -298,7 +317,10 @@ public class EngineTest {
         fast.upgradeLevels.put("ekmek_isitici", 3);
         float tBase = firstStepSeconds(base);
         float tFast = firstStepSeconds(fast);
-        assertTrue(tFast < tBase * 0.5f);
+        // v2.0: ekmek ısıtma pasif iş; yükseltme önce kapasite (2 -> 4 ekmek), hız 3. seviyede x0,55
+        assertEquals(tBase * 0.55f, tFast, 0.01f);
+        assertEquals(4, new Upgrades(fast).stationCapacity(Station.EKMEK));
+        assertEquals(2, new Upgrades(base).stationCapacity(Station.EKMEK));
         SaveData slow = SaveData.newGame();
         slow.setTempo(1.6);
         assertEquals(tBase * 1.6f, firstStepSeconds(slow), 0.01f);

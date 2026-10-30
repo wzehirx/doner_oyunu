@@ -1,6 +1,116 @@
-# Engine API v0.9 (paket `com.doner.oyunu.engine`, saf Java, android.* yok, deterministik)
+# Engine API v2.0 (paket `com.doner.oyunu.engine`, saf Java, android.* yok, deterministik)
 
-Bu belge UI geliştirmesi için TEK kaynaktır. Şartname: `docs/design_v08.md` (v0.8: süre baskısı ayarı, gün içinde hazırlık düğmeleri yok), `docs/design_v07.md` (v0.7: oyun akışı Rahat/Dengeli/Gerçekçi), `docs/design_v06.md` (v0.6: eylem menüleri, tek tek malzeme, boy, sos takvimi), `docs/design_v05.md` (akış), `docs/spec.md` (genel), `docs/research.md` (veri).
+Bu belge UI geliştirmesi için TEK kaynaktır (UI ajanı yalnızca bunu ve `docs/design_v20.md`'yi okur). Şartname: **`docs/design_v20.md` (v2.0: kaynak modeli — eller + makineler, güvenilir çırak, sıradaki sipariş)**, `docs/design_v09.md` (patates, Ocak, kısa etiketler), `docs/design_v08.md` (süre baskısı), `docs/design_v07.md` (Rahat/Dengeli/Gerçekçi), `docs/design_v06.md` (eylem menüleri, tek tek malzeme, boy), `docs/design_v05.md` (akış), `docs/spec.md` (genel). §A v2.0'ı eksiksiz anlatır; sonraki bölümler önceki sürümlerden geçerli kalanlardır (§A ile çakışırsa §A kazanır).
+
+## A. v0.9 -> v2.0 (kaynak modeli, çırak, sıradaki sipariş)
+
+### A.1 Kavram: ortak "yuva" YOK
+| | v0.9 | v2.0 |
+|---|---|---|
+| Eşzamanlılık | tüm işler için tek ortak yuva (`slots()`=1) | **Eller**: oyuncu aynı anda 1 AKTİF iş. **Makineler**: PASİF işler istasyonun kendi kapasitesinde (Ekmek ısıtıcı 2 yer, Ocak 2 göz; yükseltmeyle 4) |
+| Pasif iş | – | `Step.isPassive()`: ekmek/lavaş ısıt (EKMEK), "Ocakta mühürle", "Ocakta pişir", "Patates kızart" (IZGARA); hazırlıkta `PrepKind.FRIES`. Eller yalnızca **koyma** süresince dolu: `GameEngine.PASSIVE_LOAD_SECONDS` = 0,6 sn × tempo (çırakta ×1,2, en az 0,3), sonra iş kendi süresince pişer, bitince adım biter (ürün kalemde "hazır" bekler), yer boşalır. Çırak yavaşlığı pişirmeye uygulanmaz |
+| Aktif iş | – | diğer her şey (dilimle, malzeme ekle/otomatik, doldur, dolaptan al, paketle, küp doğra, pilav/tereyağı/sos gezdir, tatlı, harç; hazırlıkta döner/ayran/tepsi): iş boyunca eller dolu |
+| Red | `NO_SLOT` + `onNoFreeSlot` ("Boş yuva yok") | **`HANDS_BUSY` + `onHandsBusy(order, current)`** ("Elin dolu: Döneri dilimle sürüyor, 2 saniye.") ya da **`STATION_FULL` + `onStationFull(order, station, used, cap)`** ("Ocak dolu (2/2). İlk yer 3 saniye sonra boşalır."). Pasif işte önce yer, sonra eller denetlenir. `NO_SLOT`/`onNoFreeSlot` artık HİÇ gelmez |
+| Zaten sürüyor | `ORDER_BUSY` (olaysız) | `ORDER_BUSY` + **`onAlreadyRunning(order, job)`** ("Ekmeği ısıt zaten sürüyor, çırak yapıyor, 2 saniye.") |
+| Çırak | seçili siparişe hiç dokunmaz | önce seçili olmayanlar (en acil), başka iş yoksa seçili sipariş (eli doluysa hemen, eli boşsa son eylemden 1,5 sn sonra), sonra hazırlık; her çırağın kendi eli; pasif işi koyup geçer (§A.5) |
+| Öneri | ilk açık adım | önce yeri olan pasif adım (koy-geç), sonra eski kural; seçili kalem öncelikli |
+| Kayıt | `v=4` | aynı `v=4`; yeni yükseltme `up.ocak` (eski kayıtta 0) |
+
+### A.2 Yeni / değişen API
+```java
+// ---- eller ve istasyonlar
+boolean  engine.isHandsFree()                      // oyuncunun eli boş mu
+ActiveStep engine.getHandsJob()                    // eli tutan iş (aktif ya da koyma anındaki pasif); boşsa null
+boolean  engine.isPassiveStation(Station st)       // EKMEK, IZGARA (v0.6 dengesinde hiçbiri)
+int      engine.getStationCapacity(Station st)     // pasif kapasite (EKMEK/IZGARA 2..4), diğerleri 0
+int      engine.getStationUsed(Station st)         // pişen iş (oyuncu + çırak)
+boolean  engine.hasStationRoom(Station st)         // yer var mı (pasif değilse true)
+List<ActiveStep> engine.getStationJobs(Station st) // istasyondaki tüm işler
+String   engine.stationFullText(Station st)        // "Ocak dolu (2/2)" (kilit nedeni metniyle aynı)
+// ESKİ (derlenir, kullanma): getFreeSlots() = isHandsFree()?1:0, getSlotCount() = 1, Upgrades.slots() = hands() = 1
+// ---- ActiveStep
+boolean isPassive(); boolean holdsHands(); float getHandsRemaining(); Station getStation(); int getPlace() /*pasif: 0..cap-1, aktif: -1*/
+// ---- Step
+boolean isPassive()
+// ---- Upgrades
+int hands() /*1*/; int stationCapacity(Station st); static int baseCapacity(Station st) /*EKMEK, IZGARA: 2*/
+// ---- sıradaki sipariş (UI sadeleştirmesi)
+Order engine.getFocusOrder()          // seçili sipariş; seçim yoksa en acil; sipariş yoksa null
+Order engine.getMostUrgentOrder()     // en az kalan sabır ORANI (eşitlikte en az süre, sonra en eski); seçimden bağımsız
+Order engine.getSuggestedOrder()      // "Sıradaki sipariş": teslime hazır (en acili) > şu an yapılabilir işi olan en acil > en acil
+boolean engine.selectSuggestedOrder() // onu seçer (selectOrder: onOrderSelected + öneri duyurusu)
+QueueSummary engine.getQueueSummary() // orders, readyToDeliver, workable, focusOrderId, mostUrgentOrderId, mostUrgentSecondsLeft (süresiz: -1), mostUrgentFraction, text
+List<ReadyAction> engine.getReadyActions(int orderId)
+boolean engine.apprenticeMayTouchSelected()   // çırak şu an seçili siparişe dokunabilir mi (bilgi)
+// sabitler
+GameEngine.PASSIVE_LOAD_SECONDS = 0.6f; GameEngine.SELECTED_GRACE_SECONDS = 1.5f
+```
+**`ReadyAction`** (siparişte "şimdi ne yapılabilir"; henüz açılmamış adımlar YOK): `kind` (`STEP`, `PACK`, `DELIVER`), `status` (`NOW`, `HANDS_BUSY`, `STATION_FULL`, `OUT_OF_STOCK`, `RUNNING`), `orderId`, `itemIndex` (PACK/DELIVER: -1), `station` (DELIVER: null), **`optionId`** (doluysa `applyStationOption(orderId, itemIndex, station.id, optionId)` tek dokunuş: "step", "auto", …; menü gerekiyorsa / RUNNING / DELIVER: null), `needsMenu` (boy seçimi, tek tek malzeme → istasyon menüsünü aç), `passive`, `byApprentice` (RUNNING), `seconds` (NOW: tahmini süre, RUNNING: kalan), `stepName`, **`text`**, `isDoable()`.
+- Sıra: DELIVER tek başına; yoksa NOW pasif, NOW aktif, bekleyenler (HANDS_BUSY/STATION_FULL/OUT_OF_STOCK), RUNNING. Kalem başına istasyon başına en çok bir açık adım (dokunuşun yapacağı adım).
+- `text` örnekleri: "Ekmeği ısıt, Ekmek ısıtıcı" · çok kalemli: "Ekmek arası döner: Patates kızart, Ocak" · "Döneri dilimle, Döner makinesi, boy seç" · "Malzemeleri ekle, Sos ve salata tezgahı, malzemeleri seç" · "…, elin dolu" · "Ekmeği ısıt, Ekmek ısıtıcı dolu (2/2)" · "…, malzeme yok" · "Ekmeği ısıt sürüyor, 2 saniye, Ekmek ısıtıcı, çırak" · "Siparişi paketle, Paketleme" · "Teslim et".
+
+**Yeni `StartResult`**: `HANDS_BUSY`, `STATION_FULL` (+ `NO_SLOT` @Deprecated, dönmez). **Yeni `PrepResult`**: `HANDS_BUSY`, `STATION_FULL` (patates hazırlığı ocak gözü ister). Sonuç listeleri: `startStep`/`applyStationOption("step"|"size:*")`: `STARTED, NO_ORDER, ORDER_READY, NOT_RUNNING, WRONG_STATION, STEP_LOCKED, ORDER_BUSY, HANDS_BUSY, STATION_FULL, OUT_OF_STOCK, LOCKED, INVALID`; `addTopping`/`autoToppings`/`confirmToppings`: `HANDS_BUSY` (malzeme aktif iştir); paketleme: `HANDS_BUSY`; `startPrep*`/`prep:*`: `HANDS_BUSY`, `STATION_FULL` (yalnızca `prep:fries`), `FULL` (hazır stok dolu), `OUT_OF_STOCK`, `INVALID`.
+
+**Yeni olaylar** (`GameListener` içinde `default` boş; `GameListenerAdapter` değişmedi):
+```java
+void onHandsBusy(Order order /*hazırlıkta null*/, ActiveStep current);
+void onStationFull(Order order /*hazırlıkta null*/, Station station, int used, int capacity);
+void onAlreadyRunning(Order order, ActiveStep job);      // ORDER_BUSY'nin nedeni (oyuncu ya da çırak yapıyor)
+void onHandsFree(ActiveStep job);                        // oyuncunun pasif işinin koyması bitti: eller serbest (ses/titreşim için)
+@Deprecated void onNoFreeSlot(Order order);              // artık GELMEZ
+```
+Olay sırası (pasif adım, oyuncu): `onStepStarted(order, step, slot, cookSeconds)` → (0,6 sn) `onHandsFree(job)` → (pişme) `onStepFinished` → `onItemFinished`/`onOrderReadyToPack` → `onNextStepHint`. Çırak işleri yine yalnızca `onApprenticeAction` verir. `onStepStarted.slot` artık yalnızca oyuncu işlerinin sıra numarasıdır (anahtar/pan için; anlam taşımaz).
+
+**Seçenek menüsü kilit nedenleri** (`StationOption.lockReason`): "Bir işlem sürüyor" KALKTI → **"Elin dolu"** (aktif seçenek, hazırlık, boy, malzeme, paketle) ya da **"Ocak dolu (2/2)" / "Ekmek ısıtıcı dolu (2/2)"** (pasif adım ve `prep:fries`). Diğer nedenler aynı.
+
+### A.3 Narrator (yeni/değişen)
+- `stepStarted`: pasif işte sonuna " Elin boş." ("Ekmeği ısıt başladı, 4 saniye. Elin boş.").
+- `handsBusy(order, current)`, `stationFull(order, st, used, cap)`, `alreadyRunning(order, job)` — kendi olaylarında konuşur (`CAT_ALERT`, acil). `noFreeSlot` metni "Elin dolu, işin bitmesini bekle." (olay gelmez).
+- `handsText()`: "Elin boş." / "Elin dolu: Döneri dilimle, 2 saniye." + "Pişiyor: Ekmek ısıtıcı 1/2, Ocak 2/2." — `statusText()` bunu içerir (gün/hazırlıkta).
+- `readyActionsText(orderId)`: "Şimdi: Ekmeği ısıt, Ekmek ısıtıcı; Döneri dilimle, Döner makinesi. Bekliyor: Patates kızart, Ocak dolu (2/2). Ayranı doldur sürüyor, 1 saniye, çırak." / "Teslime hazır."
+- `focusText()`: "Sipariş 2: Ali, Ekmek arası döner ve Ayran. İstek: soğansız. Şimdi: …" / "Bekleyen sipariş yok."; `queueText()` = `getQueueSummary().text`.
+- `stationLabel(st)`: pasif istasyonda doluluk: "Ekmek ısıtıcı, çalışıyor, 1/2 dolu, sıradaki: Ekmeği ısıt".
+- `prepRejected`: `HANDS_BUSY` "Elin dolu, Döner dilimleme için işin bitmesini bekle.", `STATION_FULL` "Ocak dolu (2/2). …"; `startResultText`: `HANDS_BUSY` "Elin dolu.", `STATION_FULL` "İstasyon dolu.".
+- Çırak duyuruları: sipariş işi başlangıçları ve paketleme bitişi HER ZAMAN söylenir ("Çırak 2 numaralı siparişte: Ayranı doldur.", "Çırak 2 numaralı siparişi paketledi."); yalnızca hazırlık duyuruları 4 sn kısıtlı; ayar `apprenticeAnnounce=false` hepsini susturur.
+
+### A.4 Yükseltmeler / ekonomi
+| id | Ad | Etki (seviye 1/2/3) | Fiyat | Gün |
+|---|---|---|---|---|
+| `ekmek_isitici` | Ekmek ısıtıcı | kapasite +1/+2/+2 (3/4/4 yer), hız ×0,85/0,70/0,55 | 2 500 / 8 000 / 22 000 | 3/9/17 |
+| **`ocak`** (yeni) | Geniş ocak | göz +1/+2/+2 (3/4/4), hız ×0,90/0,80/0,65 (ocak işleri) | 2 500 / 8 000 / 20 000 | 3/9/17 |
+| `cirak` | Çırak | seviye 1/2/3 (§A.5); oyuncunun elini artırmaz, kendi eli var | 3 000 / 9 000 / 24 000 | 3/8/16 |
+Diğerleri aynı. `Upgrade.EffectType.STATION_CAPACITY` (yeni), `SLOTS` @Deprecated (etkisiz). Sabır: pasif iş süresi sabır tahmininde 0,25 oranında sayılır; Gerçekçi `FlowMode.patienceMult` 1,15 → 1,05. Ölçüm sonuçları: `design_v20.md` §5.
+
+### A.5 Çırak kuralları (öngörülebilir)
+- Seviye 1: Siparişi paketle, Ayranı doldur, Dolaptan al; boşta: ayran doldurma, döner dilimleme (hazır stok). Seviye 2: + EKMEK istasyonu (ısıt, küp doğra); boşta + tepsi. Seviye 3: + DONER (istenen boyda), IZGARA/Ocak (patates dahil), TATLI, lahmacun harcı. Malzeme adımı hiçbir zaman.
+- Her tick, eli boş her çırak iş varsa alır: 1) seçili olmayan siparişler en acilden; 2) seçili sipariş (`apprenticeMayTouchSelected()`: oyuncunun eli dolu ya da son oyuncu eyleminden ≥1,5 sn); beklerken hazırlığa başlamaz; 3) hazırlık. Sipariş içinde: pasif işler → aktif işler → paketleme. Stok/yer/seviye uymayan iş atlanır (olaysız).
+- Pasif işi koyunca (0,72 sn) başka işe geçer; pişme oyuncununkiyle aynı süredir. Çırak işleri istasyon yerlerini oyuncuyla paylaşır (dolu ısıtıcı oyuncuya da "dolu"dur). Oyuncu çırağın sürdürdüğü işe dokunursa `ORDER_BUSY` + `onAlreadyRunning` ("… zaten sürüyor, çırak yapıyor …").
+
+### A.6 Örnek akış (patatesli ekmek arası + ayran, Dengeli, çırak 1)
+```java
+Order o = engine.getSuggestedOrder();  engine.selectOrder(o.id);          // "Önerilen: Ekmek arası döner: Ekmeği ısıt. Ekmek ısıtıcı."
+for (ReadyAction a : engine.getReadyActions(o.id)) { /* kartta/sesli: a.text; a.isDoable() */ }
+// "Ekmeği ısıt, Ekmek ısıtıcı" | "Patates kızart, Ocak" | "Döneri dilimle, Döner makinesi" | "Ayranı doldur, İçecek dolabı"
+ReadyAction a = engine.getReadyActions(o.id).get(0);
+engine.applyStationOption(o.id, a.itemIndex, a.station.id, a.optionId);   // STARTED: "Ekmeği ısıt başladı, 4 saniye. Elin boş."
+engine.startStep(o.id, 0, Station.IZGARA.id);   // 0,6 sn dolmadan: HANDS_BUSY ("Elin dolu: Ekmeği ısıt sürüyor, 1 saniye.")
+// tick 0,6 sn -> onHandsFree
+engine.startStep(o.id, 0, Station.IZGARA.id);   // STARTED (patates ocakta, ekmek ısıtıcıda; eller boş)
+engine.startStep(o.id, 0, Station.DONER.id);    // STARTED (aktif: eller 3,5 sn dolu); bu arada çırak eli dolu oyuncunun ayranını doldurur
+// üçüncü bir ekmek koymaya çalışılırsa ve 2 yer doluysa: STATION_FULL ("Ekmek ısıtıcı dolu (2/2). …")
+// hepsi bitince: SOS "auto" (aktif), sonra paketleme (oyuncu ya da 1,5 sn sonra çırak), engine.deliver(o.id)
+```
+
+### A.7 UI yapılacaklar (v2.0)
+1. **"Boş yuva" göstergesini kaldır** (`GameScreen` `slotsTv`, `Texts.slotsText`, yardım metni "Boş yuva yoksa…", `Texts` kısa yardım): yerine "Elin boş / Elin dolu: X" (`narrator.handsText()` ya da `isHandsFree()/getHandsJob()`) ve pasif istasyon doluluğu ("Ekmek ısıtıcı 1/2", "Ocak 2/2": `getStationUsed/getStationCapacity`).
+2. **Yeni olaylar**: `onHandsBusy` ve `onStationFull` için hata sesi + titreşim (eski `onNoFreeSlot` işleyicisi artık hiç çağrılmaz; aynı işi bu ikisine taşı), `onAlreadyRunning` için kısa uyarı sesi, `onHandsFree` için hafif "serbest" ipucu (isteğe bağlı tık/titreşim). Narrator metinleri kendisi konuşur.
+3. **İstasyon düğmesi etiketi/görseli**: pasif istasyonda doluluk ("1/2 dolu", `narrator.stationLabel` hazır); çalışan işler satırında pasif işler "ısıtıcıda / ocakta" ve yer numarası (`ActiveStep.isPassive()/getPlace()`); ses döngüsü pasif işte iş boyunca (oyuncu başka işe geçse de) sürmeli — aynı anda birden çok döngü olabilir (`playerKey(o, step)` zaten iş başına).
+4. **Sıradaki sipariş**: tek büyük "Sıradaki sipariş" düğmesi `engine.selectSuggestedOrder()` + `narrator.focusText()`; otomatik seçim (`updateAuto`) `getSuggestedOrder()` kullansın; durum çubuğuna `getQueueSummary().text`.
+5. **Sipariş kartı sadeleştirme**: kalem/adım listesini elle kurmak yerine `getReadyActions(orderId)`: NOW satırları büyük düğme (dokununca `optionId` doluysa `applyStationOption`, `needsMenu` ise o istasyonun menüsünü aç), bekleyen/süren satırlar bilgi; DELIVER "Teslim et". "Siparişi oku" = `narrator.readyActionsText(id)`.
+6. **Seçenek menüsü** kilit nedenleri değişti ("Elin dolu", "Ocak dolu (2/2)"); menü/eylem listesi eller boşaldığında ve istasyon yeri açıldığında (`onHandsFree`, `onStepFinished`) yeniden kurulmalı.
+7. **Market**: yeni yükseltme `ocak` ("Geniş ocak") listede görünmeli (genel liste ise otomatik), açıklamalar güncellendi (`Upgrade.description`); `Texts.apprenticeLevelsText` çırak metni design_v20 §3 tablosuna göre (seviye 1 seçili siparişe de yardım eder).
+8. **Öğretici/yardım**: "makineye koy, başka işe geç" (ekmek ısıtıcı/ocak), "Elin dolu" ve "Ocak dolu" farkı, çırağın kuralı; "yuva" kelimesi her yerden kalkmalı.
+9. **Testler**: Robolectric UI testlerinden bu sürümde kırılan yok (533/533 geçti), ama `A11yAudit`/UI testleri "Boş yuva" göstergesine dayanıyorsa yeni göstergeyle güncellenmeli; `UiBot` `getFreeSlots()` ile çalışmaya devam eder (eller boşsa 1).
 
 ## 00a. v0.8 -> v0.9 özet (patates, Ocak, konuşma sırası, ambiyans, kısa etiketler)
 | Konu | v0.9 |
@@ -68,7 +178,7 @@ StationOption d = StationOption.direct(engine.getStationOptions(oid, -1, st.id))
 engine.applyStationOption(oid, -1, Station.SOS.id, "auto");          // otomatik malzeme işi
 engine.applyStationOption(oid, -1, Station.SOS.id, "remove:sogan");  // Dengeli istek farkı: tüm soğan eklemelerini çıkar, stoğa iade
 ```
-- **`auto` işi**: zamanlı (oyuncu yuvası), süre = eklenecek her malzemenin `addTopping` süresi toplamı (tepsiden yarısı, hız/tempo dahil, en az 0,25 sn). Tüketim başta (önce tepsi, sonra stok); bir malzeme bile yoksa hiçbir şey tüketilmez → `OUT_OF_STOCK` + `onOutOfStock(order, ilkEksik)`; `missingIngredients/emergencyCostForMissing/emergencyBuyMissing` bu eksikleri verir/alır. Sonuçlar: `STARTED, OUT_OF_STOCK, NO_SLOT, STEP_LOCKED, ORDER_BUSY, INVALID, NO_ORDER, ORDER_READY, NOT_RUNNING`.
+- **`auto` işi**: zamanlı AKTİF iş (oyuncunun eli; v2.0), süre = eklenecek her malzemenin `addTopping` süresi toplamı (tepsiden yarısı, hız/tempo dahil, en az 0,25 sn). Tüketim başta (önce tepsi, sonra stok); bir malzeme bile yoksa hiçbir şey tüketilmez → `OUT_OF_STOCK` + `onOutOfStock(order, ilkEksik)`; `missingIngredients/emergencyCostForMissing/emergencyBuyMissing` bu eksikleri verir/alır. Sonuçlar: `STARTED, OUT_OF_STOCK, HANDS_BUSY, STEP_LOCKED, ORDER_BUSY, INVALID, NO_ORDER, ORDER_READY, NOT_RUNNING` (v2.0: `NO_SLOT` yerine `HANDS_BUSY`; otomatik malzeme aktif iştir).
   - Rahat: hedef küme (varsayılan ± istekler) kurulur: eksikler eklenir, hedefte olmayan eklenmişler çıkarılıp iade edilir; iş bitince adım biter.
   - Dengeli: günün varsayılan kümesi eklenir (kalem başına bir kez, `OrderLine.isAutoDone()`); eklenen küme hedefle aynıysa adım biter, değilse açık kalır (`finished=false`).
   - Gerçekçi: yalnızca `standardSetUnlocked()` (çırak ≥ 2) ve kalem boşken; varsayılan küme eklenir ve adım biter (istekli siparişte kullanmak teslimde hata). `GameEngine(seed, save, true)` (v0.6 dengesi) bu kısayolu sunmaz.
@@ -124,7 +234,7 @@ Gün bitince motor `save.day`'i artırır, kirayı düşer. Gün BAŞARISIZ olur
 `READY → (PREP) → RUNNING → FINISHED | FAILED` (v0.5 ile aynı)
 - `READY`: yeni motor. `tick()` veya sipariş eylemi günü kendiliğinden başlatır (`onDayStarted` bir kez); `startPrep*`/`applyStationOption("prep:...")` READY'yi PREP'e geçirir.
 - `PREP`: müşteri gelmez, saat akmaz. Yalnızca hazırlık (oyuncu + çırak). Sipariş yok. `getStationOptions(-1,…)` yalnızca hazırlık seçeneklerini verir.
-- `RUNNING`: normal gün; hazırlık da yapılabilir (boş yuva varsa).
+- `RUNNING`: normal gün; hazırlık da yapılabilir (v2.0: eller boşsa; patates hazırlığı ocakta yer ister).
 - `isRunning()` = READY, PREP veya RUNNING. `isPrepPhase()`. `beginPrep()`, `startDay()`.
 
 ## 3. Sınıflar (yeni/değişen)
@@ -139,7 +249,7 @@ Gün bitince motor `save.day`'i artırır, kirayı düşer. Gün BAŞARISIZ olur
 | `Order` | + `day`; `price()` boy dahil toplam; `itemsText()` boylu; `workSeconds()` boy ve tek tek ekleme dahil |
 | `ToppingCheck` | + `getSizeMistakes()` (`SizeMistake{productName, ordered, served, tooMuch()}`), `ingredientMistakes()`, `sizeMistakeCount()`, `getSizedLines()`; **`mistakes()` = malzeme + boy hataları**; `perfect()` hepsi doğru |
 | `ActiveStep` | + `isToppingAdd()`, `getAddedIngredient()`, `getSize()` (dilimleme/ekmek adımında kullanılan boy), `getAmount()` (hazırlık miktarı) |
-| `StartResult` | STARTED, NO_ORDER, WRONG_STATION, NO_SLOT, OUT_OF_STOCK, ORDER_BUSY, ORDER_READY, NOT_RUNNING, NEEDS_TOPPINGS, STEP_LOCKED, INVALID, **LOCKED, MAX_REACHED, NOTHING_TO_UNDO, FULL, INFO, UNKNOWN_OPTION** |
+| `StartResult` | STARTED, NO_ORDER, WRONG_STATION, ~~NO_SLOT~~ (v2.0: dönmez), OUT_OF_STOCK, ORDER_BUSY, ORDER_READY, NOT_RUNNING, NEEDS_TOPPINGS, STEP_LOCKED, INVALID, **LOCKED, MAX_REACHED, NOTHING_TO_UNDO, FULL, INFO, UNKNOWN_OPTION**, v2.0: **HANDS_BUSY, STATION_FULL** |
 | `CustomerType` | + `halfChance`, `doubleChance` (boy olasılığı; kalan tam ekmek) |
 | `DaySummary` | + `sizeMistakes` (boy hatalı teslim sayısı; `mistakes`'e de dahil), `newIngredientsNext` ("ketçap, mayonez") |
 | `Catalog` | + `ingredientsForDay(day)`, **`newIngredientsOnDay(day)`** (sos/salata; 1. günde domates, soğan, marul) |
@@ -187,7 +297,7 @@ StartResult removeLastTopping(int orderId, int itemIndex)
 StartResult finishToppings(int orderId, int itemIndex)
 Map<String,Integer> getAddedToppings(int orderId, int itemIndex)         // id -> 1|2
 ```
-- Önkoşul: kalemin diğer adımları (ısıt, dilimle...) bitmiş (`STEP_LOCKED` + `onStepLocked` aksi halde). Ekleme **kısa bir iştir**: salata (SALATA kategorisi) 0,6 sn, sos (SOS) 0,5 sn; hazır tepsiden eklenirse yarısı (0,3 / 0,25); istasyon hızı ve tempo uygulanır (en az 0,25 sn). Oyuncu yuvasını kullanır; ekleme sürerken kalem meşguldür.
+- Önkoşul: kalemin diğer adımları (ısıt, dilimle...) bitmiş (`STEP_LOCKED` + `onStepLocked` aksi halde). Ekleme **kısa bir iştir**: salata (SALATA kategorisi) 0,6 sn, sos (SOS) 0,5 sn; hazır tepsiden eklenirse yarısı (0,3 / 0,25); istasyon hızı ve tempo uygulanır (en az 0,25 sn). AKTİF iştir (v2.0: oyuncunun eli; v0.9'da "oyuncu yuvası"); ekleme sürerken kalem meşguldür.
 - **Tüketim hemen** (tepsi varsa önce tepsiden 1 kullanım, yoksa stoktan 1). Stok yoksa `OUT_OF_STOCK` + `onToppingsRejected(order,item,OUT_OF_STOCK,ing)`; hiçbir şey tüketilmez (UI `emergencyBuy(ingId)` önerir).
 - **Bol**: aynı malzeme ikinci kez eklenince `count=2` (bol, +1 birim). Üçüncüsü `MAX_REACHED` + `onToppingsRejected(...,MAX_REACHED,ing)`. Bol, hedef doğrulamasını değiştirmez (yalnızca masraf/zaman).
 - Havuz dışı / kapalı (kilitli gün) malzeme `INVALID` + `onToppingsRejected`.
@@ -204,7 +314,7 @@ StartResult applyStationOption(int orderId, int itemIndex, int stationId, String
 int resolveStationItem(int orderId, int itemIndex, int stationId)   // menünün baktığı kalem (-1: yok / PAKET)
 ```
 - `orderId < 0` veya sipariş yok/hazır: yalnızca **hazırlık** seçenekleri. `itemIndex < 0`: kalem otomatik (seçili kalem, sonra istasyonda açık adımı olan ilk kalem, sonra kilitli/sürenler). Gün bitti: boş liste.
-- Kilitli seçenekler listede kalır (`enabled=false`, `lockReason`): "2. günde açılır", "Çalışıyor", "Bir işlem sürüyor", "Önce kalemin diğer adımları bitmeli", "Önce tüm kalemler hazır olmalı", "Paketleme sürüyor", "Ekleme sürüyor", "En fazla bol, iki kez eklenir", "Henüz malzeme eklenmedi", "Hazır stok dolu", "Malzeme yetmiyor: …", "Yeterli malzeme yok". Kilitli seçeneği yine de uygulamak durumu değiştirmez ve nedeni Narrator ile duyurur.
+- Kilitli seçenekler listede kalır (`enabled=false`, `lockReason`): "2. günde açılır", "Çalışıyor", "Önce kalemin diğer adımları bitmeli", "Önce tüm kalemler hazır olmalı", "Paketleme sürüyor", "Ekleme sürüyor", v2.0: "Elin dolu", "Ocak dolu (2/2)", "Ekmek ısıtıcı dolu (2/2)" (eski "Bir işlem sürüyor" kalktı), "En fazla bol, iki kez eklenir", "Henüz malzeme eklenmedi", "Hazır stok dolu", "Malzeme yetmiyor: …", "Yeterli malzeme yok". Kilitli seçeneği yine de uygulamak durumu değiştirmez ve nedeni Narrator ile duyurur.
 - **Stok yetersizliği seçeneği KİLİTLEMEZ**: `enabled=true, outOfStock=true` (açıklama "… stokta yok" / "… malzeme yok"); uygulanınca `OUT_OF_STOCK` + olay; UI acil alımı önerir (`emergencyBuy(op.ingredientId)` veya `emergencyBuyMissing(orderId)`). Hazırlık seçenekleri stok yoksa kilitlenir (acil alım yok).
 - Birden çok kalemli siparişte ad/açıklama kalem adı önekiyle gelir ("Ekmek arası döner: Ekmeği ısıt").
 
@@ -215,7 +325,7 @@ int resolveStationItem(int orderId, int itemIndex, int stationId)   // menünün
 | SOS | `add:<malzeme>` (açık havuz sırasında), `undo`, `finish`, `read:added`, `read:target`, `prep:tray`; lahmacun harcı için `step` | ikinci eklemede ad "Domates bol ekle"; açıklama "Domates bol ekle, 1 kez eklendi, stokta 4"; tepsi: "…hazır tepside 6" |
 | PAKET | `step` ("Siparişi paketle") | tek eylem: UI doğrudan uygular |
 
-`applyStationOption` sonuçları: uygulandıysa `STARTED` (zamanlı iş başladı veya anında eylem tamam), `INFO` (read:*; `onStationInfo`), aksi halde neden: `NO_ORDER, ORDER_READY, NOT_RUNNING, WRONG_STATION` (−0,02 yıldız, istasyonda o kalemde iş yok), `STEP_LOCKED, ORDER_BUSY, NO_SLOT, OUT_OF_STOCK, LOCKED` (boy kilitli), `MAX_REACHED, NOTHING_TO_UNDO, FULL` (hazır stok dolu), `INVALID` (havuz dışı), `UNKNOWN_OPTION`. İlgili red olayı her zaman verilir (Narrator duyurur): `onToppingsRejected`, `onOptionRejected`, `onOutOfStock`, `onStepLocked`, `onNoFreeSlot`, `onWrongStation`, `onPrepRejected`.
+`applyStationOption` sonuçları: uygulandıysa `STARTED` (zamanlı iş başladı veya anında eylem tamam), `INFO` (read:*; `onStationInfo`), aksi halde neden: `NO_ORDER, ORDER_READY, NOT_RUNNING, WRONG_STATION` (−0,02 yıldız, istasyonda o kalemde iş yok), `STEP_LOCKED, ORDER_BUSY` (+ `onAlreadyRunning`), `HANDS_BUSY, STATION_FULL` (v2.0; eski `NO_SLOT` dönmez), `OUT_OF_STOCK, LOCKED` (boy kilitli), `MAX_REACHED, NOTHING_TO_UNDO, FULL` (hazır stok dolu), `INVALID` (havuz dışı), `UNKNOWN_OPTION`. İlgili red olayı her zaman verilir (Narrator duyurur): `onToppingsRejected`, `onOptionRejected`, `onOutOfStock`, `onStepLocked`, `onHandsBusy`, `onStationFull`, `onWrongStation`, `onPrepRejected` (v2.0: `onNoFreeSlot` gelmez).
 
 ## 7. GameEngine (yeni/önemli üyeler; v0.5 üyeleri geçerli)
 ```java
@@ -277,6 +387,7 @@ Ses ipucu: ekleme için `onToppingAddStarted` -> kısa tek atış (`seconds`); `
 Alanlar v0.5 ile aynı (`day,bestDay,money,stars,inventory,upgradeLevels,tempo,speechOn,speechRate,vibration,musicVolume,sfxVolume,tutorialDone,apprenticeAnnounce,readyDrinks`) + v0.7 `flowMode` (`flow=`), `flowChosen` + v0.8 `timePressure` (`timer=1|0`, eksik = süreli). Yazılan sürüm `v=4`; `parse` v=1 (v0.4), v=2 (v0.5), v=3 (v0.6) ve bilinmeyen sürüm/anahtarları tolere eder (eksik akış = Dengeli). `MainActivity.newGame()` akış ve süre baskısı ayarlarını korur. Yeni malzemelerin (sumak, sarımsaklı yoğurt sos, közlenmiş biber/domates) eski kayıtta stoğu 0'dır (Market alır; gün başında "Önerilen malzemeleri al"). Hazır döner/tepsi/açık yarım KAYDEDİLMEZ.
 
 ## 12. Denge (bot simülasyonu; testler `SimulationTest`, `HumanSimTest`, `FlowBalanceTest`, `Campaign`/`TestBot`)
+- **v2.0:** pasif işler (ısıtıcı/ocak) paralel; sabır tahmininde pasif süre ×0,25, Gerçekçi sabır ×1,05; sonuçlar `docs/design_v20.md` §5 (yükseltmeli/insan benzeri botlar her akışta 1–40, yükseltmesiz bot Rahat/Dengeli ~28–30, Gerçekçi ~35–36. günde takılır, hiçbir şey yapmayan ≤5 gün). `TestBot`/`Campaign` değişmedi (eski `getFreeSlots()` = eller boş).
 - v0.7: `Campaign(FlowMode)` (varsayılan kurucu Gerçekçi = v0.6 akışı), `Campaign.v06Balance`, `Campaign.humanLike` (insan benzeri: panel açmak ayrı tepki, tepki ±%20, ardışık ekleme 0,7; kalabalık artıran öğeleri müşteri kaçırırken almaz). `TestBot` seçenek menüsüyle oynar (her akışta), `taps` (dokunuş) ve `v04Taps` (aynı siparişlerin v0.4 eşdeğeri) sayar. Sonuçlar `docs/design_v07.md` §3.
 - v0.8: `Campaign(FlowMode, boolean timePressure)` süresiz mod kampanyası; `TestBot` süresiz günde 6000 sn sanal koruma kullanır, panelde stok yoksa "Acil al" der. Süresiz sonuçlar `docs/design_v08.md`.
 - `TestBot` v0.6 API'siyle oynar: her eylem (boy seçimi, TEK malzeme ekleme, "Malzemeleri bitir", adım) bir tepki süresi alır; ardışık eklemelerde tepki süresi `ADD_REACTION_FACTOR=0,5` ile çarpılır (aynı menüde kas hafızası). `careful=false`: her zaman TAM ekmek ve yalnızca varsayılan malzemeler (boy/malzeme hatası yapar).

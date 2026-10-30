@@ -67,7 +67,12 @@ public class ApprenticeTest {
     }
 
     // ------------------------------------------------------------ seviye 1
-    @Test public void level1PacksUnselectedOrderButNeverTheSelectedOne() {
+    /**
+     * v2.0 kuralı (eski "seçiliye hiç dokunmaz" kuralının yerine): çırak ÖNCE seçili olmayan siparişleri bitirir; başka işi
+     * kalmayınca seçili siparişe de yardım eder, ama oyuncu son 1,5 sn içinde eylem yaptıysa ve eli boşsa (o işi yapmak
+     * üzereyse) beklemeyi sürdürür.
+     */
+    @Test public void level1PacksUnselectedOrderFirstAndTheSelectedOneOnlyWhenNothingElse() {
         GameEngine e = engine(3, 1);
         Rec r = new Rec();
         e.addListener(r);
@@ -76,16 +81,69 @@ public class ApprenticeTest {
         // oyuncu A'nın ayranını yapar; çırak da B'nin ayranını doldurur/paketler
         Flow.doItemStation(e, a, 0, Station.ICECEK);
         assertTrue(a.canPack());
-        run(e, 15f);
-        assertFalse("seçili siparişe çırak dokunmaz", a.isReady() || a.isPacking());
+        for (int i = 0; i < 200 && !b.isReady(); i++) {
+            e.tick(0.1f);
+            if (!b.isReady()) assertFalse("B bitmeden seçili A'ya dokunulmaz", a.isPacking() || a.isReady());
+        }
         assertTrue("seçili olmayan sipariş çırakla hazır", b.isReady());
-        // seçimi bırakınca çırak A'yı paketler
-        e.selectOrder(b.id);
-        run(e, 4f);
+        // başka iş yok ve oyuncu 1,5 sn'den uzun süredir boşta: çırak seçili siparişi de paketler
+        run(e, 0.2f);
+        assertTrue(a.isPacking() || a.isReady());
+        run(e, 3f);
         assertTrue(a.isReady());
-        boolean packed = false;
-        for (ApprenticeAction x : r.actions) if (x.pack && !x.started && x.order == a) packed = true;
-        assertTrue(packed);
+        int packB = -1, packA = -1;
+        for (int i = 0; i < r.actions.size(); i++) {
+            ApprenticeAction x = r.actions.get(i);
+            if (x.pack && x.started && x.order == b && packB < 0) packB = i;
+            if (x.pack && x.started && x.order == a && packA < 0) packA = i;
+        }
+        assertTrue("önce seçili olmayan: " + packB + " < " + packA, packB >= 0 && packA > packB);
+    }
+
+    @Test public void apprenticeWaitsShortGraceBeforeTakingTheSelectedOrdersWork() {
+        GameEngine e = engine(3, 1);
+        Rec r = new Rec();
+        e.addListener(r);
+        Order a = spawn(e, "ayran");
+        e.selectOrder(a.id); // oyuncu eylemi: eller boş, belki ayranı doldurmak üzere
+        run(e, 1.3f);
+        assertEquals("1,5 sn dolmadan seçili işe dokunmaz", 0, r.started());
+        assertNull(e.getActiveFor(a.id));
+        run(e, 0.4f);
+        ActiveStep job = e.getActiveFor(a.id);
+        assertNotNull("1,5 sn sonra başka iş yoksa seçili siparişin işini MUTLAKA alır", job);
+        assertTrue(job.isApprentice());
+        // oyuncu eylemi bekleme süresini yeniden başlatır ama süren işi geri almaz
+        for (int i = 0; i < 50 && job.getRemaining() > 0.25f; i++) e.tick(0.1f);
+        e.selectOrder(a.id);
+        run(e, 1.0f);
+        assertTrue("ayran çırakla bitti", a.canPack());
+        assertFalse("paketleme oyuncunun yeni eyleminden sonra 1,5 sn bekler", a.isPacking() || a.isReady());
+        run(e, 0.6f);
+        assertTrue(a.isPacking());
+    }
+
+    @Test public void apprenticeHelpsSelectedOrderWhilePlayersHandsAreBusy() {
+        GameEngine e = engine(3, 1);
+        Order a = spawn(e, "ekmek_arasi", "ayran");
+        e.selectOrder(a.id);
+        int ay = Flow.itemOf(a, "ayran"), dn = Flow.itemOf(a, "ekmek_arasi");
+        // oyuncu dilimliyor (aktif iş, eller dolu): çırak aynı (seçili) siparişin ayranını hemen doldurur
+        assertEquals(StartResult.STARTED, e.startStep(a.id, dn, Station.DONER.id));
+        run(e, 0.2f);
+        ActiveStep job = e.getActiveForItem(a.id, ay);
+        assertNotNull("eli dolu oyuncunun seçili siparişine çırak yardım eder", job);
+        assertTrue(job.isApprentice());
+        // oyuncu aynı işi denerse "zaten sürüyor, çırak yapıyor" duyurulur
+        final List<ActiveStep> already = new ArrayList<>();
+        e.addListener(new GameListenerAdapter() {
+            @Override public void onAlreadyRunning(Order o, ActiveStep j) { already.add(j); }
+        });
+        run(e, 3.5f);
+        if (a.getLine(ay).isStepRunning(0)) {
+            assertEquals(StartResult.ORDER_BUSY, e.startStep(a.id, ay, Station.ICECEK.id));
+            assertEquals(1, already.size());
+        }
     }
 
     @Test public void apprenticeWorkDoesNotUseThePlayersSlotAndIsSlower() {
@@ -344,7 +402,12 @@ public class ApprenticeTest {
         boolean sawPackStart = false, sawFillStart = false;
         for (ApprenticeAction x : r.actions) {
             String t = n.apprenticeAction(x);
-            if (x.pack && x.started) { sawPackStart = true; assertEquals("Çırak " + b.getPosition() + " numaralı siparişi paketliyor.", t); }
+            if (x.pack && x.started) {
+                // v2.0: B'den sonra (başka iş kalmayınca) seçili A da paketlenebilir; ilk paketleme B'nindir
+                if (!sawPackStart) assertSame(b, x.order);
+                sawPackStart = true;
+                assertEquals("Çırak " + x.order.getPosition() + " numaralı siparişi paketliyor.", t);
+            }
             if (!x.pack && x.started && !x.isPrep()) sawFillStart = true;
         }
         assertTrue(sawPackStart && sawFillStart);
@@ -358,7 +421,9 @@ public class ApprenticeTest {
         Order a = spawn(e, "ayran"), b = spawn(e, "ayran");
         e.selectOrder(a.id);
         run(e, 10f);
-        assertEquals(2, e.getSummary().apprenticeTasks); // doldur + paketle
+        // v2.0: B'nin doldur + paketle, sonra başka iş kalmayınca (oyuncu 1,5 sn'dir boşta) seçili A'nın doldur + paketle
+        assertEquals(4, e.getSummary().apprenticeTasks);
+        assertTrue(a.isReady() && b.isReady());
         assertTrue(e.getSummary().prepBatches >= 0);
     }
 }

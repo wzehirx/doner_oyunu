@@ -116,7 +116,9 @@ public class NarratorV05Test {
         Narrator n = new Narrator(null);
         assertTrue(n.prepRejected(PrepKind.DONER, PrepResult.FULL, null).contains("Hazır stok dolu"));
         assertTrue(n.prepRejected(PrepKind.DONER, PrepResult.OUT_OF_STOCK, Catalog.ingredient("et_doner")).contains("Et döner yetmiyor"));
-        assertTrue(n.prepRejected(PrepKind.DRINK, PrepResult.NO_SLOT, null).contains("Boş yuva yok"));
+        // v2.0: ortak yuva yok; eller dolu / istasyon dolu
+        assertTrue(n.prepRejected(PrepKind.DRINK, PrepResult.HANDS_BUSY, null).contains("Elin dolu"));
+        assertTrue(n.prepRejected(PrepKind.FRIES, PrepResult.STATION_FULL, null).contains("Ocak dolu"));
         assertFalse(n.prepRejected(PrepKind.TRAY, PrepResult.INVALID, null).isEmpty());
         assertFalse(n.prepRejected(PrepKind.TRAY, PrepResult.NOT_ALLOWED, null).isEmpty());
     }

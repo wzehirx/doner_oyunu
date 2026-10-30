@@ -358,12 +358,14 @@ public class FlowModeTest {
         Order y = old.spawnOrder(items, Collections.singletonList("soğansız"), sizes);
         assertTrue("Gerçekçi v0.7 sabrı v0.6'dan fazla: " + x.customer.getPatienceLeft() + " > " + y.customer.getPatienceLeft(),
                 x.customer.getPatienceLeft() > y.customer.getPatienceLeft() * 1.15f);
-        // Rahat: elle iş yok, sabır v0.6 ile aynı formül (yumuşatma Gerçekçi'ye özgü)
+        // Rahat: elle iş yok, sabır v0.6 formülü; v2.0 farkı yalnızca pasif iş: ekmek ısıtma (yarım ekmek 3,5 x 0,6 sn)
+        // pişerken oyuncu başka işe geçebildiği için sabra 0,25 oranında sayılır (v0.6 dengesi = eski tek yuva, tam sayar)
         SaveData c = day(12, FlowMode.RAHAT);
         GameEngine rahat = new GameEngine(3, c), rahatOld = new GameEngine(3, c.copy(), true);
         for (GameEngine e : new GameEngine[]{rahat, rahatOld}) { e.setSpawning(false); e.startDay(); }
-        assertEquals(rahatOld.spawnOrder(items, NONE, sizes).customer.getPatienceLeft(),
-                rahat.spawnOrder(items, NONE, sizes).customer.getPatienceLeft(), 0.001f);
+        float passiveCut = 3.5f * PortionSize.HALF.timeMult * 0.75f * DayConfig.forDay(12).workPatience;
+        assertEquals(rahatOld.spawnOrder(items, NONE, sizes).customer.getPatienceLeft() - passiveCut,
+                rahat.spawnOrder(items, NONE, sizes).customer.getPatienceLeft(), 0.01f);
         assertEquals(1.15, FlowMode.GERCEKCI.tipMult, 1e-9);
         assertEquals(1.0, FlowMode.DENGELI.tipMult, 1e-9);
         assertEquals(1.0, FlowMode.RAHAT.tipMult, 1e-9);

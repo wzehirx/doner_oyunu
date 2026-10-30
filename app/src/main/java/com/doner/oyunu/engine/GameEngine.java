@@ -118,10 +118,22 @@ public final class GameEngine {
         this.menu = Catalog.productsForDay(day);
         this.quota = cfg.quota(upgrades.arrivalMult());
         this.rng = new Random(seed);
-        this.friesRng = new Random(seed ^ 0x5DEECE66DL);
+        this.friesRng = new Random(mix(seed ^ 0x5DEECE66DL));
         this.nameCursor = rng.nextInt(Catalog.NAMES.length);
         summary.day = day;
         summary.startStars = save.stars;
+    }
+
+    /**
+     * SplitMix64 karıştırma (v2.0): ardışık tohumların (1, 2, 3...) ilk rastgele sayıları java.util.Random'da birbirine çok
+     * yakındır; patatesli sipariş kararları tohumlar arasında ilişkili çıkıyordu (3. günde %12 yerine ~%50). Ana müşteri
+     * akışı bundan etkilenmez.
+     */
+    private static long mix(long z) {
+        z += 0x9E3779B97F4A7C15L;
+        z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+        z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+        return z ^ (z >>> 31);
     }
 
     /** Otomatik müşteri gelişini kapatır/açar (öğretici ve senaryo testleri için; varsayılan açık). */
@@ -231,6 +243,164 @@ public final class GameEngine {
     }
 
     public Order getSelectedOrder() { return getOrder(selectedId); }
+
+    // ---------------------------------------------------------------- v2.0: sıradaki sipariş, sıra özeti, şimdi yapılabilecekler
+    /** Odak siparişi: oyuncunun seçtiği sipariş; seçim yoksa en acil sipariş ({@link #getMostUrgentOrder}); sipariş yoksa null. */
+    public Order getFocusOrder() {
+        Order sel = getSelectedOrder();
+        return sel != null ? sel : getMostUrgentOrder();
+    }
+
+    /** En acil sipariş: en az kalan sabır ORANI (eşitlikte en az kalan süre, sonra en eski); seçimden bağımsız. Yoksa null. */
+    public Order getMostUrgentOrder() {
+        if (orders.isEmpty()) return null;
+        List<Order> l = new ArrayList<>(orders);
+        Collections.sort(l, URGENCY);
+        return l.get(0);
+    }
+
+    /**
+     * "Sıradaki sipariş" önerisi: teslime hazır sipariş (en acili), yoksa şu an başlatılabilir işi olan en acil sipariş,
+     * yoksa en acil sipariş. Seçime bakmaz (UI "Sıradaki sipariş" düğmesi bunu seçer: {@link #selectSuggestedOrder}).
+     */
+    public Order getSuggestedOrder() {
+        if (orders.isEmpty()) return null;
+        List<Order> l = new ArrayList<>(orders);
+        Collections.sort(l, URGENCY);
+        for (Order o : l) if (o.ready) return o;
+        for (Order o : l) if (hasDoable(o)) return o;
+        return l.get(0);
+    }
+
+    /** Önerilen siparişi ({@link #getSuggestedOrder}) seçer; sipariş yoksa false. Zaten seçiliyse yine seçer (duyuru tekrarlanır). */
+    public boolean selectSuggestedOrder() {
+        Order o = getSuggestedOrder();
+        return o != null && selectOrder(o.id);
+    }
+
+    private boolean hasDoable(Order o) {
+        for (ReadyAction a : getReadyActions(o.id)) if (a.isDoable()) return true;
+        return false;
+    }
+
+    /** Sıra özeti (durum çubuğu, "Sıradaki sipariş"). */
+    public QueueSummary getQueueSummary() {
+        int n = orders.size(), ready = 0, workable = 0;
+        for (Order o : orders) {
+            if (o.ready) ready++;
+            if (o.ready || hasDoable(o)) workable++;
+        }
+        Order focus = getFocusOrder(), urgent = getMostUrgentOrder();
+        boolean timed = isTimed();
+        float secs = urgent == null || !timed ? -1f : Math.max(0f, urgent.customer.getPatienceLeft());
+        float frac = urgent == null ? 1f : urgent.customer.patienceFraction();
+        String text;
+        if (n == 0) text = "Bekleyen sipariş yok.";
+        else {
+            StringBuilder sb = new StringBuilder().append(n).append(" sipariş");
+            if (ready > 0) sb.append(", ").append(ready).append(" teslime hazır");
+            sb.append(". En acil: sipariş ").append(urgent.position).append(", ").append(urgent.customer.name);
+            if (secs >= 0) sb.append(", ").append(Narrator.fmtSeconds(secs));
+            text = sb.append('.').toString();
+        }
+        return new QueueSummary(n, ready, workable, focus == null ? -1 : focus.id, urgent == null ? -1 : urgent.id, secs, frac, text);
+    }
+
+    /**
+     * Siparişte şu an yapılabilecekler ve sürenler (kalem bazlı, kısa metinli): teslime hazırsa yalnızca DELIVER; aksi halde
+     * her kalemin her istasyonu için açık adım (NOW ya da kaynak yüzünden bekleyen: HANDS_BUSY / STATION_FULL /
+     * OUT_OF_STOCK), süren işler (RUNNING) ve paketleme. Sıra: NOW pasif, NOW aktif, bekleyenler, sürenler. Henüz açılmamış
+     * adımlar yoktur. Sipariş yoksa boş liste.
+     */
+    public List<ReadyAction> getReadyActions(int orderId) {
+        List<ReadyAction> out = new ArrayList<>();
+        Order o = getOrder(orderId);
+        if (o == null || state != State.RUNNING) return out;
+        if (o.ready) {
+            out.add(new ReadyAction(ReadyAction.Kind.DELIVER, ReadyAction.Status.NOW, o.id, -1, null, null, false, false, false,
+                    0f, "Teslim et", "Teslim et"));
+            return out;
+        }
+        List<ReadyAction> nowP = new ArrayList<>(), nowA = new ArrayList<>(), wait = new ArrayList<>(), run = new ArrayList<>();
+        for (OrderLine line : o.getLines()) {
+            String who = o.lineCount() > 1 ? line.product.name + ": " : "";
+            Set<Station> listed = new LinkedHashSet<>();
+            for (int si = 0; si < line.stepCount(); si++) {
+                Step s = line.step(si);
+                if (line.isStepDone(si)) continue;
+                if (line.isStepRunning(si)) {
+                    for (ActiveStep a : active) {
+                        if (a.order == o && a.itemIndex == line.index && a.stepIndex == si) run.add(runningAction(o, a, who));
+                    }
+                    continue;
+                }
+                if (!line.isStepUnlocked(si) || listed.contains(s.station)) continue;
+                listed.add(s.station);
+                ReadyAction ra = openAction(o, line, si, who);
+                if (ra.status != ReadyAction.Status.NOW) wait.add(ra);
+                else if (ra.passive) nowP.add(ra);
+                else nowA.add(ra);
+            }
+        }
+        if (o.packing) {
+            for (ActiveStep a : active) if (a.order == o && a.pack) run.add(runningAction(o, a, ""));
+        } else if (o.canPack()) {
+            Step ps = o.getPackStep();
+            boolean free = handsFree(0);
+            float dur = (float) Math.max(MIN_STEP_SECONDS, ps.baseSeconds * upgrades.speedMult(ps.station) * save.tempo);
+            ReadyAction pa = new ReadyAction(ReadyAction.Kind.PACK, free ? ReadyAction.Status.NOW : ReadyAction.Status.HANDS_BUSY,
+                    o.id, -1, Station.PAKET, "step", false, false, false, free ? dur : 0f, ps.name,
+                    ps.name + ", " + Station.PAKET.displayName + (free ? "" : ", elin dolu"));
+            (free ? nowA : wait).add(pa);
+        }
+        out.addAll(nowP);
+        out.addAll(nowA);
+        out.addAll(wait);
+        out.addAll(run);
+        return out;
+    }
+
+    private ReadyAction runningAction(Order o, ActiveStep a, String who) {
+        String t = who + a.step.name + " sürüyor, " + Narrator.fmtSeconds(a.remaining)
+                + (a.passive ? ", " + a.step.station.displayName : "") + (a.isApprentice() ? ", çırak" : "");
+        return new ReadyAction(a.pack ? ReadyAction.Kind.PACK : ReadyAction.Kind.STEP, ReadyAction.Status.RUNNING, o.id,
+                a.pack ? -1 : a.itemIndex, a.step.station, null, false, a.passive, a.isApprentice(), Math.max(0f, a.remaining),
+                a.step.name, t);
+    }
+
+    private ReadyAction openAction(Order o, OrderLine line, int si, String who) {
+        Step s = line.step(si);
+        boolean passive = passiveJob(s);
+        Map<String, Integer> need;
+        float secs;
+        if (s.isTopping()) {
+            need = autoNeeds(line);
+            secs = autoAvailable(line) ? autoPreviewSeconds(autoAddList(line)) : 0f;
+        } else {
+            PortionSize sz = needSize(line, s, null);
+            need = effectiveNeeds(s, sz);
+            secs = previewSeconds(line, si, sz);
+        }
+        ReadyAction.Status st;
+        String extra = "";
+        if (!save.inventory.hasAll(need)) { st = ReadyAction.Status.OUT_OF_STOCK; extra = ", malzeme yok"; }
+        else if (passive && !hasStationRoom(s.station)) { st = ReadyAction.Status.STATION_FULL; extra = ", " + stationFullText(s.station); }
+        else if (!handsFree(0)) { st = ReadyAction.Status.HANDS_BUSY; extra = ", elin dolu"; }
+        else st = ReadyAction.Status.NOW;
+        String optionId = null;
+        boolean menu = false;
+        if (st == ReadyAction.Status.NOW || st == ReadyAction.Status.OUT_OF_STOCK) {
+            List<StationOption> ops = getStationOptions(o.id, line.index, s.station.id);
+            StationOption d = StationOption.direct(ops);
+            if (d != null && d.group != StationOption.Group.PREP) optionId = d.id;
+            else menu = true;
+        }
+        if (st == ReadyAction.Status.NOW && menu) extra = s.isTopping() ? ", malzemeleri seç" : s.isSized() ? ", boy seç" : ", seçenekler";
+        // istasyon dolu: "Ekmeği ısıt, Ekmek ısıtıcı dolu (2/2)" (istasyon adı iki kez söylenmez)
+        String text = st == ReadyAction.Status.STATION_FULL ? who + s.name + extra : who + s.name + ", " + s.station.displayName + extra;
+        return new ReadyAction(ReadyAction.Kind.STEP, st, o.id, line.index, s.station, optionId, menu, passive, false,
+                st == ReadyAction.Status.NOW ? secs : 0f, s.name, text);
+    }
 
     /** Siparişin çalışan ilk işi (oyuncu işi öncelikli); yoksa null. */
     public ActiveStep getActiveFor(int orderId) {
@@ -2045,10 +2215,41 @@ public final class GameEngine {
     }
 
     private void hint(Order o) {
-        int[] r = o.suggest(o.id == selectedId ? selectedItem : -1);
+        int[] r = smartSuggest(o, o.id == selectedId ? selectedItem : -1);
         if (r == null) return;
         Step s = r[0] < 0 ? o.getPackStep() : o.getLine(r[0]).step(r[1]);
         for (GameListener l : snap()) l.onNextStepHint(o, s);
+    }
+
+    /**
+     * v2.0 öneri: önce "koy-geç" (yeri olan pasif istasyonda açık adım: ekmek ısıt, patates kızart), sonra eski kural
+     * ({@link Order#suggest}: tercih edilen kalemin, sonra ilk kalemin ilk açık adımı; hepsi bitince paketleme).
+     */
+    private int[] smartSuggest(Order o, int preferLine) {
+        if (o.ready) return null;
+        if (preferLine >= 0 && preferLine < o.lineCount()) {
+            // oyuncu kalemi kendisi seçtiyse önce o kalem (içinde koy-geç önce)
+            OrderLine p = o.getLine(preferLine);
+            int ps = passiveOpen(p);
+            if (ps >= 0) return new int[]{preferLine, ps};
+            int f = p.firstOpenStep();
+            if (f >= 0) return new int[]{preferLine, f};
+        }
+        for (OrderLine l : o.getLines()) {
+            int ps = passiveOpen(l);
+            if (ps >= 0) return new int[]{l.index, ps};
+        }
+        return o.suggest(preferLine);
+    }
+
+    /** Kalemde yeri ve stoğu olan açık pasif adım; yoksa -1. */
+    private int passiveOpen(OrderLine l) {
+        for (int si = 0; si < l.stepCount(); si++) {
+            Step s = l.step(si);
+            if (l.isStepOpen(si) && passiveJob(s) && hasStationRoom(s.station)
+                    && save.inventory.hasAll(effectiveNeeds(s, needSize(l, s, null)))) return si;
+        }
+        return -1;
     }
 
     private void customerLeaves(Order o) {
@@ -2077,12 +2278,14 @@ public final class GameEngine {
     }
 
     // ---------------------------------------------------------------- çırak (otomatik işçi)
-    private boolean workerBusy(int w) {
-        for (ActiveStep a : active) if (a.worker == w) return true;
-        return false;
-    }
+    /** Çırağın elleri dolu mu (aktif iş ya da pasif işi koyma anı). Pasif işi pişerken çırak başka işe geçer. */
+    private boolean workerBusy(int w) { return !handsFree(w); }
 
-    /** Çırak seviyesine göre üstlenebileceği adım mı. Topping seçimi HER ZAMAN oyuncudadır. */
+    /**
+     * Çırak seviyesine göre üstlenebileceği adım mı (v0.5 şartnamesi, v2.0'da aynen): seviye 1 paketleme + içecek
+     * (ayran doldur, dolaptan al); seviye 2 + ekmek/lavaş ısıtma ve ekmek istasyonu; seviye 3 + döner dilimleme, ocak
+     * (pişir, mühürle, patates, pilav, tereyağı), tatlı, lahmacun harcı. Malzeme (topping) adımı HER ZAMAN oyuncudadır.
+     */
     static boolean apprenticeCanDo(Step s, int level) {
         if (s.isTopping()) return false;
         switch (s.station) {
@@ -2093,6 +2296,10 @@ public final class GameEngine {
         }
     }
 
+    /**
+     * Her tick: boşta (eli boş) her çırak, iş varsa MUTLAKA bir iş alır. Bir çırak iş bulamazsa diğerleri de bulamaz
+     * (aynı aday listesi), döngü biter.
+     */
     private void runApprentices() {
         int lvl = upgrades.apprenticeLevel();
         if (lvl <= 0) return;
@@ -2102,33 +2309,74 @@ public final class GameEngine {
         }
     }
 
+    /** Sipariş aciliyeti (küçük = acil): kalan sabır oranı, eşitlikte kalan sabır süresi, sonra sipariş sırası. */
+    private static final Comparator<Order> URGENCY = new Comparator<Order>() {
+        @Override public int compare(Order a, Order b) {
+            int c = Float.compare(a.customer.patienceFraction(), b.customer.patienceFraction());
+            if (c != 0) return c;
+            c = Float.compare(a.customer.getPatienceLeft(), b.customer.getPatienceLeft());
+            return c != 0 ? c : Integer.compare(a.id, b.id);
+        }
+    };
+
+    /**
+     * Çırak seçili siparişe dokunabilir mi (v2.0 kuralı): başka siparişte iş yokken, oyuncunun eli doluysa ya da oyuncu
+     * {@link #SELECTED_GRACE_SECONDS} saniyedir eylem yapmadıysa. Böylece oyuncunun tam yapmak üzere olduğu işi kapmaz,
+     * ama oyuncu meşgulken/beklerken seçili siparişe de yardım eder.
+     */
+    public boolean apprenticeMayTouchSelected() {
+        return !handsFree(0) || time - lastPlayerActionTime >= SELECTED_GRACE_SECONDS - 1e-4f;
+    }
+
+    /**
+     * Çırak iş seçimi (öngörülebilir kural): 1) seçili OLMAYAN siparişler, en acilden başlayarak; 2) başka iş yoksa seçili
+     * sipariş ({@link #apprenticeMayTouchSelected}); 3) hiç sipariş işi yoksa hazırlık. Sipariş içinde önce pasif işler
+     * (koy-geç: ısıtıcı/ocak), sonra aktif işler, sonra paketleme. Stok, istasyon yeri ya da seviye uymayan iş atlanır.
+     */
     private boolean assignApprentice(int w, int lvl) {
         if (state == State.RUNNING && !orders.isEmpty()) {
             List<Order> cand = new ArrayList<>();
             for (Order o : orders) if (o.id != selectedId && !o.ready) cand.add(o);
-            Collections.sort(cand, new Comparator<Order>() {
-                @Override public int compare(Order a, Order b) {
-                    return Float.compare(a.customer.getPatienceLeft(), b.customer.getPatienceLeft());
-                }
-            });
+            Collections.sort(cand, URGENCY);
             for (Order o : cand) {
-                for (OrderLine line : o.getLines()) {
-                    for (int si = 0; si < line.stepCount(); si++) {
-                        if (!line.isStepOpen(si)) continue;
-                        Step s = line.step(si);
-                        if (!apprenticeCanDo(s, lvl)) continue;
-                        if (!save.inventory.hasAll(effectiveNeeds(s, needSize(line, s, null)))) continue;
-                        launchLineStep(o, line.index, si, w, null);
-                        return true;
-                    }
-                }
-                if (o.canPack() && lvl >= 1) {
-                    launchPack(o, w);
-                    return true;
+                if (apprenticeTakeFrom(o, w, lvl, false)) return true;
+            }
+            Order sel = getOrder(selectedId);
+            if (sel != null && !sel.ready) {
+                if (apprenticeMayTouchSelected()) {
+                    if (apprenticeTakeFrom(sel, w, lvl, false)) return true;
+                } else if (apprenticeTakeFrom(sel, w, lvl, true)) {
+                    // seçili siparişte yapabileceği iş var ama oyuncu az önce eylem yaptı: uzun bir hazırlığa başlamaz,
+                    // en çok SELECTED_GRACE_SECONDS bekler (sonra işi alır)
+                    return false;
                 }
             }
         }
         return apprenticePrep(w, lvl);
+    }
+
+    /** dryRun: yalnızca iş var mı bakar (başlatmaz). */
+    private boolean apprenticeTakeFrom(Order o, int w, int lvl, boolean dryRun) {
+        for (int pass = 0; pass < 2; pass++) { // 0: pasif işler, 1: aktif işler
+            for (OrderLine line : o.getLines()) {
+                for (int si = 0; si < line.stepCount(); si++) {
+                    if (!line.isStepOpen(si)) continue;
+                    Step s = line.step(si);
+                    boolean passive = passiveJob(s);
+                    if ((pass == 0) != passive) continue;
+                    if (!apprenticeCanDo(s, lvl)) continue;
+                    if (checkResources(o, s.station, passive, w, false) != null) continue;
+                    if (!save.inventory.hasAll(effectiveNeeds(s, needSize(line, s, null)))) continue;
+                    if (!dryRun) launchLineStep(o, line.index, si, w, null);
+                    return true;
+                }
+            }
+        }
+        if (o.canPack() && lvl >= 1) {
+            if (!dryRun) launchPack(o, w);
+            return true;
+        }
+        return false;
     }
 
     /** Boşta kalan çırak hazırlık yapar (israfı sınırlamak için hedefli ve gün sonuna yakın değil). */
@@ -2210,7 +2458,7 @@ public final class GameEngine {
         // v0.7: akışın gerektirdiği elle dokunuşlar (boy seçimi, bitirme, istek farkları) insan süresidir; yükseltmeyle
         // kısalmaz, bu yüzden günle azalan workPatience yerine sabit çarpanla sabra eklenir.
         double hands = v06Balance ? 0.0 : Order.interactionWork(items, sizes, reqs, day, getFlowMode()) * Order.INTERACTION_PATIENCE;
-        double pat = (type.patienceSeconds * cfg.patienceFactor + Order.estimateWork(items, sizes) * cfg.workPatience + hands)
+        double pat = (type.patienceSeconds * cfg.patienceFactor + Order.estimateWork(items, sizes, v06Balance ? 1f : Order.PASSIVE_WORK_WEIGHT) * cfg.workPatience + hands)
                 * upgrades.patienceMult() * save.tempo * (v06Balance ? 1.0 : getFlowMode().patienceMult);
         Customer c = new Customer(name, type, (float) pat);
         Order o = new Order(nextOrderId++, c, items, reqs, day, sizes);

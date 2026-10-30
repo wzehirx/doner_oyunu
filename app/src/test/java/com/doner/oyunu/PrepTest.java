@@ -100,8 +100,8 @@ public class PrepTest {
         assertEquals(PrepResult.STARTED, e.startPrepDoner("et_doner"));
         assertEquals("başlarken malzeme düşer", et - 4, s.inventory.get("et_doner"));
         assertEquals(6f, dur[0], 0.01f);
-        assertEquals("tek yuva meşgul", 0, e.getFreeSlots());
-        assertEquals(PrepResult.NO_SLOT, e.startPrepDrink());
+        assertEquals("döner dilimleme aktif iş: eller dolu", 0, e.getFreeSlots());
+        assertEquals(PrepResult.HANDS_BUSY, e.startPrepDrink());
         assertEquals(0, e.getReadyMeat("et_doner"));
         run(e, 6.2f);
         assertEquals(4, e.getReadyMeat("et_doner"));
@@ -319,12 +319,12 @@ public class PrepTest {
         e.startDay();
         run(e, 0.5f);
         assertEquals(PrepResult.STARTED, e.startPrepDrink());
-        assertEquals("hazırlık yuvayı kullanır", 0, e.getFreeSlots());
+        assertEquals("ayran doldurma aktif iş: eller dolu", 0, e.getFreeSlots());
         for (int i = 0; i < 100 && e.getOrders().isEmpty(); i++) e.tick(0.1f);
         assertFalse("müşteri geldi", e.getOrders().isEmpty());
         Order o = e.getOrders().get(0);
         Step s0 = o.nextStep();
-        assertEquals(StartResult.NO_SLOT, e.startStep(o.id, s0.station.id));
+        assertEquals(StartResult.HANDS_BUSY, e.startStep(o.id, s0.station.id));
         run(e, 4f);
         assertEquals(4, e.getReadyDrinks());
         assertEquals(1, e.getFreeSlots());

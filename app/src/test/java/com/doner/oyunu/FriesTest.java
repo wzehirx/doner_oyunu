@@ -6,6 +6,7 @@ import com.doner.oyunu.engine.*;
 
 import org.junit.Test;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -92,9 +93,14 @@ public class FriesTest {
         for (int sd = 1; sd <= seeds; sd++) {
             SaveData s = day(d);
             GameEngine e = new GameEngine(sd, s);
+            // v2.0: gelen HER siparişi gelişte say (sabır kısaldığı için gidenler de sayılsın; anlık bekleyenler değil)
+            final List<Order> seen = new ArrayList<>();
+            e.addListener(new GameListenerAdapter() {
+                @Override public void onCustomerArrived(Order o) { seen.add(o); }
+            });
             e.startDay();
             for (int i = 0; i < 1500; i++) e.tick(0.1f);
-            for (Order o : e.getOrders()) for (OrderLine l : o.getLines()) {
+            for (Order o : seen) for (OrderLine l : o.getLines()) {
                 if (l.product.friesOk()) { total++; if (l.isFries()) fries++; }
             }
         }

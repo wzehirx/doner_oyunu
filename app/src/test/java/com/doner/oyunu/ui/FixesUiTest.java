@@ -74,7 +74,7 @@ public class FixesUiTest {
         assertFalse("kaydırılan sipariş listesinin içinde olmamalı", insideScrollView(btn));
 
         Order o = firstOrder(h);
-        h.orderCard(o).performClick(); h.run(100);
+        h.selectOrder(o); h.run(100);
         for (String id : new ArrayList<>(o.nextStep().needs.keySet())) e.getSave().inventory.set(id, 0);
         Ingredient miss = e.missingIngredient(o.id);
         int evBase = sam.getSentAccessibilityEvents().size();
@@ -116,7 +116,7 @@ public class FixesUiTest {
         Order o = e.spawnOrder(java.util.Arrays.asList("hatay_durum"), new ArrayList<String>());
         assertNotNull(o);
         h.run(300);
-        h.orderCard(o).performClick(); h.run(100);
+        h.selectOrder(o); h.run(100);
         Step harc = o.getLine(0).step(1);
         assertEquals("Harç ve döner ekle", harc.name);
         assertEquals(Station.DONER, harc.station);

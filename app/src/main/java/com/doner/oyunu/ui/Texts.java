@@ -13,6 +13,7 @@ import com.doner.oyunu.engine.OrderLine;
 import com.doner.oyunu.engine.PortionSize;
 import com.doner.oyunu.engine.PrepKind;
 import com.doner.oyunu.engine.Product;
+import com.doner.oyunu.engine.ReadyAction;
 import com.doner.oyunu.engine.SaveData;
 import com.doner.oyunu.engine.Shop;
 import com.doner.oyunu.engine.Station;
@@ -298,8 +299,159 @@ public final class Texts {
         }
     }
 
-    public static String slotsText(GameEngine e) {
-        return "Boş yuva " + e.getFreeSlots() + " / " + e.getSlotCount();
+    // ------------------------------------------------------------------ v2.0: eller, istasyon doluluğu, sıradaki sipariş
+    /** Eller etiketi (kısa, saniyesiz: odakta sık değişmesin): "Elin boş" / "Elin dolu: Döneri dilimle". */
+    public static String handsLabel(GameEngine e) {
+        ActiveStep h = e.getHandsJob();
+        String t = h == null ? "Elin boş" : "Elin dolu: " + h.step.name;
+        String cooking = cookingText(e);
+        return cooking.isEmpty() ? t : t + ". Pişiyor: " + cooking;
+    }
+
+    /** Eller satırının görsel metni (saniyeli): "Elin dolu: Döneri dilimle · 2 sn". */
+    public static String handsVisual(GameEngine e) {
+        ActiveStep h = e.getHandsJob();
+        String t = h == null ? "Elin boş" : "Elin dolu: " + h.step.name + " · " + Math.max(1, (int) Math.ceil(h.getHandsRemaining())) + " sn";
+        String cooking = cookingText(e);
+        return cooking.isEmpty() ? t : t + "\nPişiyor: " + cooking;
+    }
+
+    /** Pişen pasif istasyonlar: "Ekmek ısıtıcı 1/2, Ocak 2/2" (boşsa ""). */
+    public static String cookingText(GameEngine e) {
+        List<String> parts = new ArrayList<>();
+        for (Station st : Station.values()) {
+            int cap = e.getStationCapacity(st), used = e.getStationUsed(st);
+            if (cap > 0 && used > 0) parts.add(st.displayName + " " + used + "/" + cap);
+        }
+        return join(parts);
+    }
+
+    /**
+     * İstasyon düğmesi etiketi (v2.0, kısa): "Ekmek ısıtıcı 1/2", "Ocak 2/2, dolu", "Döner makinesi, çalışıyor, iş var,
+     * hazır 4 porsiyon". needed: odaktaki siparişin bu istasyonda yapılacak işi var. ≤60 karakter (önemsiz parça atılır).
+     */
+    public static String stationShort(GameEngine e, Station st, boolean needed) {
+        int cap = e.getStationCapacity(st), used = e.getStationUsed(st);
+        boolean busy = false, appr = false, player = false;
+        for (ActiveStep a : e.getStationJobs(st)) { busy = true; if (a.isApprentice()) appr = true; else player = true; }
+        String head = st.displayName + (cap > 0 ? " " + used + "/" + cap : "");
+        List<String> parts = new ArrayList<>();
+        if (cap > 0) { if (used >= cap) parts.add("dolu"); }
+        else if (busy) parts.add(appr && !player ? "çırak çalışıyor" : "çalışıyor");
+        if (needed) parts.add("iş var");
+        String stock = stationStock(e, st);
+        if (!stock.isEmpty()) parts.add(stock);
+        while (true) {
+            StringBuilder sb = new StringBuilder(head);
+            for (String p : parts) sb.append(", ").append(p);
+            if (sb.length() <= 60 || parts.isEmpty()) return sb.toString();
+            parts.remove(parts.size() - 1);
+        }
+    }
+
+    /** İstasyonun hazır stoğu: "hazır 4 porsiyon", "hazır 3 bardak ayran", "hazır tepsi 18", "hazır 2 patates" (yoksa ""). */
+    public static String stationStock(GameEngine e, Station st) {
+        if (st == Station.DONER && e.getReadyDonerHalves() > 0) return "hazır " + PortionSize.halvesText(e.getReadyDonerHalves()) + " porsiyon";
+        if (st == Station.ICECEK && e.getReadyDrinks() > 0) return "hazır " + e.getReadyDrinks() + " bardak ayran";
+        if (st == Station.SOS && e.getTrayTotal() > 0) return "hazır tepsi " + e.getTrayTotal();
+        if (st == Station.IZGARA && e.getReadyFries() > 0) return "hazır " + e.getReadyFries() + " patates";
+        return "";
+    }
+
+    /** İstasyon düğmesinin görsel durum satırı: "1/2 · İş var" / "Çalışıyor" / "Boş". */
+    public static String stationVisual(GameEngine e, Station st, boolean needed) {
+        int cap = e.getStationCapacity(st), used = e.getStationUsed(st);
+        boolean busy = !e.getStationJobs(st).isEmpty(), appr = false;
+        for (ActiveStep a : e.getStationJobs(st)) if (a.isApprentice()) appr = true;
+        String t = cap > 0 ? used + "/" + cap + (used >= cap ? " dolu" : "") : (busy ? (appr ? "Çırak çalışıyor" : "Çalışıyor") : "Boş");
+        return needed ? "▶ İş var · " + t : t;
+    }
+
+    /**
+     * "Şimdi yapılabilecekler" satırının etiketi (≤60, saniyesiz): "Ekmeği ısıt, Ekmek ısıtıcı", "Ayran: Ayranı doldur, İçecek
+     * dolabı", "Döneri dilimle, Döner makinesi, boy seç", "Patates kızart, Ocak dolu (2/2)", "Ekmeği ısıt sürüyor, çırak",
+     * "Teslim et". Durum renkle değil metinle söylenir.
+     */
+    public static String actionLabel(GameEngine e, ReadyAction a) {
+        if (a.kind == ReadyAction.Kind.DELIVER) return "Teslim et";
+        Order o = e.getOrder(a.orderId);
+        String prefix = o != null && o.lineCount() > 1 && a.itemIndex >= 0 ? o.getLine(a.itemIndex).product.name + ": " : "";
+        String step = a.stepName;
+        String station = a.station == null ? "" : a.station.displayName;
+        String status = "";
+        switch (a.status) {
+            case NOW:
+                if (a.needsMenu) status = a.text.endsWith(", boy seç") ? "boy seç" : a.text.endsWith(", malzemeleri seç") ? "malzemeleri seç" : "seçenekler";
+                break;
+            case HANDS_BUSY: status = "elin dolu"; break;
+            case STATION_FULL: status = a.station == null ? "dolu" : e.stationFullText(a.station); station = ""; break;
+            case OUT_OF_STOCK: status = "malzeme yok"; break;
+            default: // RUNNING
+                step = step + " sürüyor";
+                if (!a.passive) station = "";
+                status = a.byApprentice ? "çırak" : "";
+                break;
+        }
+        String[] cands = {
+                prefix + step + (station.isEmpty() ? "" : ", " + station) + (status.isEmpty() ? "" : ", " + status),
+                prefix + step + (status.isEmpty() ? "" : ", " + status),
+                step + (status.isEmpty() ? "" : ", " + status),
+        };
+        for (String c : cands) if (c.length() <= 60) return c;
+        String c = cands[2];
+        return c.substring(0, 60);
+    }
+
+    /** Odak siparişinin başlık satırı: "Sipariş 2 · Ali". */
+    public static String focusTitle(Order o) { return "Sipariş " + o.getPosition() + " · " + o.customer.name; }
+
+    /** Odak siparişinin kalem özeti (tek satır): "Ekmek arası döner (yarım ekmek) ve Ayran · 180 TL". */
+    public static String focusItems(Order o) { return o.itemsText() + " · " + o.price() + " TL"; }
+
+    /** Eklenen malzemeler (kalem başına bir satır; hiç yoksa ""). */
+    public static String focusAdded(Order o) {
+        StringBuilder sb = new StringBuilder();
+        for (OrderLine l : o.getLines()) {
+            String t = addedLine(l);
+            if (t.isEmpty()) continue;
+            if (sb.length() > 0) sb.append('\n');
+            if (o.lineCount() > 1) sb.append(l.product.name).append(": ");
+            sb.append(t);
+        }
+        return sb.toString();
+    }
+
+    /** Sabır satırı (görsel): "Sabır iyi · 34 sn". */
+    public static String patienceVisual(Order o) {
+        String w = patienceWord(o.customer.patienceFraction());
+        return Character.toUpperCase(w.charAt(0)) + w.substring(1) + " · " + Math.max(0, Math.round(o.customer.getPatienceLeft())) + " sn";
+    }
+
+    /**
+     * Diğer siparişlerin tek satırlık özeti (etiket, ≤60, saniyesiz): "Sırada 3 sipariş daha, en acili Ayşe, sabır kritik" /
+     * "Sırada başka sipariş yok". Süresizde sabır söylenmez.
+     */
+    public static String queueLabel(int others, int readyOthers, Order urgent, boolean timed) {
+        if (others <= 0) return "Sırada başka sipariş yok";
+        String base = "Sırada " + others + " sipariş daha";
+        List<String> parts = new ArrayList<>();
+        if (readyOthers > 0) parts.add(readyOthers + " teslime hazır");
+        if (timed && urgent != null) parts.add("en acili " + urgent.customer.name + ", " + patienceWord(urgent.customer.patienceFraction()));
+        while (true) {
+            StringBuilder sb = new StringBuilder(base);
+            for (String p : parts) sb.append(", ").append(p);
+            if (sb.length() <= 60 || parts.isEmpty()) return sb.toString();
+            parts.remove(0);
+        }
+    }
+
+    /** Sıra özetinin görsel metni (saniyeli): "Sırada 3 sipariş daha · en acili Ayşe 12 sn". */
+    public static String queueVisual(int others, int readyOthers, Order urgent, boolean timed) {
+        if (others <= 0) return "Sırada başka sipariş yok";
+        String t = "Sırada " + others + " sipariş daha";
+        if (readyOthers > 0) t += " · " + readyOthers + " teslime hazır";
+        if (timed && urgent != null) t += " · en acili " + urgent.customer.name + " " + Math.max(0, Math.round(urgent.customer.getPatienceLeft())) + " sn";
+        return t;
     }
 
     public static String deliverDescription(GameEngine e) {
@@ -526,7 +678,8 @@ public final class Texts {
         String mid = m == FlowMode.RAHAT
                 ? "Rahat akışta boy ve malzemeler otomatik; her istasyona bir kez dokun. "
                 : "Dengeli akışta standart olan otomatik; istek ya da yarım ekmek, duble varsa farkı yap, sonra Malzemeleri bitir. Hedefi oku ile kontrol et. ";
-        return "Hazırlıkta önceden döner dilimle, ayran doldur; sonra Dükkânı aç. Siparişi seç, önerilen istasyona dokun; seçenekleri Eylemler menüsünden de seçebilirsin. "
+        return "Hazırlıkta önceden döner dilimle, ayran doldur; sonra Dükkânı aç. Sıradaki siparişin altındaki işe ya da istasyona dokun; seçenekleri Eylemler menüsünden de seçebilirsin. "
+                + "Ekmeği ısıtıcıya, patatesi ocağa koy, başka işe geç. "
                 + mid + "Kalemler bitince siparişi paketle, sonra Teslim et. Acele et, sabır tükenirse müşteri gider.";
     }
 
@@ -579,13 +732,20 @@ public final class Texts {
                         + "Bitince Dükkânı aç; istersen Hazırlık yapmadan aç. Gün sonunda artan hazır döner, patates ve tepsi israf olur; hazır ayran ertesi güne kalır. "
                         + "Dükkân açılınca hazırlık düğmeleri ve hazır stok göstergeleri ekrandan kalkar; gün içinde hazırlığı istasyonun Eylemler menüsünden ya da panelinden yaparsın."});
         l.add(new String[]{"Oyun ekranı",
-                "Üstte durum çubuğu var: para, yıldız, kalan süre ve bekleyen sipariş. Ortada siparişler, altında istasyonlar: "
-                        + "döner makinesi, ekmek ısıtıcı, sos ve salata tezgahı, Ocak, paketleme, içecek dolabı, tatlı tezgahı. "
+                "Üstte durum çubuğu var: para, yıldız, kalan süre ve bekleyen sipariş; altında elinin durumu: Elin boş ya da Elin dolu. "
+                        + "Ortada Sıradaki sipariş: müşteri, ürünler, sabır ve şimdi yapılabilecek işler. Bir işe dokununca başlar ya da seçenekleri açılır. "
+                        + "Altında diğer siparişlerin tek satırlık özeti; dokununca sipariş listesi açılır. Sonra bugünün istasyonları: "
+                        + "döner makinesi, ekmek ısıtıcı, sos ve salata tezgahı, Ocak, paketleme, içecek dolabı, tatlı tezgahı. Ekmek ısıtıcı ve Ocak doluluğu söyler, örneğin Ocak 1/2. "
                         + "En altta Teslim et, Sonraki sipariş, Duraklat ve Durumu oku düğmeleri bulunur."});
         l.add(new String[]{"Sipariş hazırlama",
-                "Siparişe dokunarak seç. Her ürün bir kalemdir; istediğin sırayla yaparsın, istersen kalemi seçersin. "
-                        + "Sistem önerilen adımı söyler, ilgili istasyona dokun. Tek işlem varsa hemen başlar, birden çok seçenek varsa panel açılır. "
+                "Sıradaki sipariş en acil olandır; Sonraki sipariş düğmesi ya da sipariş listesi başka siparişe geçer. Her ürün bir kalemdir; işleri istediğin sırayla yaparsın. "
+                        + "Şimdi yapılabilecek işlere ya da istasyona dokun. Tek işlem varsa hemen başlar, birden çok seçenek varsa panel açılır. "
                         + "Malzeme ekleme, kalemin diğer adımları bitince açılır. Tüm kalemler hazır olunca Siparişi paketle, sonra Teslim et."});
+        l.add(new String[]{"Eller ve makineler",
+                "Elinle aynı anda tek iş yaparsın: döner dilimle, malzeme ekle, ayran doldur, paketle. "
+                        + "Ekmek ısıtıcı ve Ocak makinedir: ekmeği ya da patatesi koyar, hemen başka işe geçersin; iş kendi biter. "
+                        + "Elin dolu derse elindeki işin bitmesini bekle. Ocak dolu ya da Ekmek ısıtıcı dolu derse bir yerin boşalmasını bekle. "
+                        + "Markette Ekmek ısıtıcı ve Geniş ocak yükseltmeleri yer ekler."});
         l.add(new String[]{"Seçenekler ve TalkBack Eylemleri",
                 "İstasyon düğmelerinin seçenekleri iki yolla kullanılır, ikisi de aynı sonucu verir. "
                         + "TalkBack Eylemleri: düğmeye odaklan, Eylemler menüsünü aç, seçeneği seç; hemen uygulanır. "
@@ -613,15 +773,15 @@ public final class Texts {
                         + "Kapalıyken süre yoktur: durum çubuğunda kalan müşteri yazar, kimse gitmez; kota kadar müşteri gelip hepsi teslim edilince gün biter. "
                         + "Kapalıyken hız bonusu yoktur ve bahşişler biraz azdır; hatalar yine yıldız düşürür."});
         l.add(new String[]{"Çırak",
-                "Markette çırak alırsın; kendi başına çalışır. Seviye 1: paketler, içecek doldurur. Seviye 2: ekmek ve lavaş ısıtır, tepsi hazırlar. "
-                        + "Seviye 3: döner dilimler, Ocak ve tatlı işlerini yapar. Senden yüzde yirmi yavaştır, hata yapmaz. "
+                "Markette çırak alırsın; kendi başına çalışır, kendi eli vardır. Seviye 1: paketler, ayran doldurur, dolaptan içecek alır. Seviye 2: ekmek ve lavaş ısıtır, tepsi hazırlar. "
+                        + "Seviye 3: döner dilimler, Ocak ve tatlı işlerini yapar. Önce diğer siparişlere, iş kalmazsa senin siparişine yardım eder. Senden yüzde yirmi yavaştır, hata yapmaz. "
                         + "Boy ve malzemeyi her zaman sen seçersin. Ayarlardan çırak duyurularını kapatabilirsin."});
         l.add(new String[]{"Hatalar ve eksik malzeme",
                 "Yanlış istasyona dokunursan hata sesi gelir, yıldız çok az düşer. Malzeme biterse Acil al düğmesi çıkar; yüzde elli pahalıdır. "
-                        + "Boş yuva yoksa bir işlemin bitmesini bekle."});
+                        + "Elin dolu ya da istasyon dolu uyarısında hata sesi gelir; biraz bekle."});
         l.add(new String[]{"Sesler",
                 "Her olayın kendi sesi ve titreşimi vardır. Siparişler stereo çalar: birinci sipariş solda, üçüncü sağda. "
-                        + "İşlem sesleri işlem süresince sürer. Gün boyunca dükkân ambiyansı kısık çalar; Ayarlardan ambiyans, müzik ve efekt sesini ayrı ayarlarsın."});
+                        + "İşlem sesleri işlem süresince sürer; ekmek ısıtıcı ve ocak, içindeki iş bitene kadar ses verir. Ayran, kutu içecek ve dolap kendi sesleriyle çalar. Gün boyunca dükkân ambiyansı kısık çalar; Ayarlardan ambiyans, müzik ve efekt sesini ayrı ayarlarsın."});
         l.add(new String[]{"Market",
                 "Her günün başında markete uğra. Önerilen malzemeleri al, günün tahmini ihtiyacını alır. "
                         + "Mutfak aletleri işleri hızlandırır, buzdolabı stoku büyütür, restoran öğeleri müşteri, sabır ve bahşişi artırır."});
@@ -632,14 +792,15 @@ public final class Texts {
     }
 
     public static String quickHelp() {
-        return "Hazırlıkta önceden döner dilimle, ayran doldur; sonra Dükkânı aç. Siparişi seç, önerilen istasyona dokun; seçenekleri Eylemler menüsünden de seçebilirsin. "
-                + "Döner makinesinde boyu sen seç. Sos tezgahında malzemeleri tek tek ekle, Hedefi oku ile kontrol et, bitince Malzemeleri bitir. "
+        return "Hazırlıkta önceden döner dilimle, ayran doldur; sonra Dükkânı aç. Sıradaki siparişin altındaki işe ya da istasyona dokun; seçenekleri Eylemler menüsünden de seçebilirsin. "
+                + "Ekmeği ısıtıcıya, patatesi ocağa koy, başka işe geç. Döner makinesinde boyu sen seç. Sos tezgahında malzemeleri tek tek ekle, Hedefi oku ile kontrol et, bitince Malzemeleri bitir. "
                 + "Kalemler bitince siparişi paketle, sonra Teslim et. Acele et, sabır tükenirse müşteri gider.";
     }
 
     // ------------------------------------------------------------------ çırak (market)
     public static String apprenticeLevelsText(int currentLevel) {
-        String t = "Seviye 1: paketler, içecek doldurur. Seviye 2: ekmek ve lavaş ısıtır, tepsi hazırlar. Seviye 3: döner dilimler, Ocak ve tatlı işlerini yapar. "
+        String t = "Seviye 1: paketler, ayran doldurur, dolaptan içecek alır. Seviye 2: ekmek ve lavaş ısıtır, tepsi hazırlar. Seviye 3: döner dilimler, Ocak ve tatlı işlerini yapar. "
+                + "Önce diğer siparişlere, iş kalmazsa senin siparişine yardım eder; kendi eli vardır. "
                 + "Senden yüzde yirmi yavaştır, hata yapmaz. Boy ve malzemeyi sen seçersin; Gerçekçi akışta seviye 2 ile Standart malzemelerle bitir kısayolu açılır.";
         if (currentLevel > 0) t += " Şu an seviye " + currentLevel + ".";
         return t;
@@ -657,8 +818,10 @@ public final class Texts {
     public static final String TUT_PREP = "Hazırlık aşaması. Hazır olunca Dükkânı aç düğmesine dokun.";
     public static final String TUT_PREP_DONE = "";
     public static final String TUT_OPEN = "";
-    public static final String TUT_CUSTOMER = "Müşteri geldi. Siparişe dokunarak seç.";
-    public static final String TUT_SELECTED = "Önerilen istasyona dokun.";
+    public static final String TUT_CUSTOMER = "Müşteri geldi. Sıradaki siparişin altındaki işe dokun.";
+    public static final String TUT_SELECTED = "Yapılacak işe ya da önerilen istasyona dokun.";
+    /** v2.0: ilk pasif iş (ekmek ısıtıcı / ocak) koyulunca bir kez. */
+    public static final String TUT_PASSIVE = "Makine kendi işler, elin boş. Başka işe geç.";
     public static final String TUT_STEP = "";
     public static final String TUT_SIZE = "Döner boyunu sen seçersin.";
     public static final String TUT_TOPPING = "Sos tezgahına dokun, malzemeleri tek tek ekle, sonra Malzemeleri bitir.";

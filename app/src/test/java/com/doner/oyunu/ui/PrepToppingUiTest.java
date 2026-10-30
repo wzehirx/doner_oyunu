@@ -83,7 +83,7 @@ public class PrepToppingUiTest {
 
     /** Seçili siparişin kalem/istasyon akışıyla topping adımının (SOS) seçenek paneline kadar gelir. */
     private void toPanel(UiHarness h, Order o) {
-        h.orderCard(o).performClick(); h.run(100);
+        h.selectOrder(o); h.run(100);
         long t = 0;
         while (!sosPanelOpen(h) && t < 60_000) { UiBot.step(h); h.run(100); t += 100; }
         assertTrue("sos seçenek paneli açılmalı", sosPanelOpen(h));
@@ -169,7 +169,7 @@ public class PrepToppingUiTest {
         GameEngine e = h.engine();
         e.getSave().inventory.add("ayran", 10);
         Order o = spawn(h, list("ekmek_arasi"), list());
-        h.orderCard(o).performClick(); h.run(100);
+        h.selectOrder(o); h.run(100);
         // sipariş bekliyor: Döner makinesi düğmesinin Eylemler menüsünde hazırlık seçenekleri bulunur ve çalışır
         View tile = h.stationTile(Station.DONER);
         int id4 = UiBot.actionIdByLabel(tile, "4 porsiyon");
@@ -274,43 +274,48 @@ public class PrepToppingUiTest {
         }
     }
 
-    // ------------------------------------------------------------------ kalem bazlı sipariş kartı
-    @Test public void orderCardListsItemsRequestsAndPackRow() {
+    // ------------------------------------------------------------------ sıradaki sipariş (v2.0: kalem/adım listesi yok)
+    /**
+     * v0.5'in kalem bazlı kartı (her kalem + her adım + paket satırı) v2.0'da kalktı: tek "Sıradaki sipariş" başlığı (kalemler
+     * tek satır, istek) ve yalnızca ŞİMDİ yapılabilecekler. Aynı akış (ayran kalemi, döner boyu, kilitli paketleme) satırlarla.
+     */
+    @Test public void focusSectionShowsItemsRequestsAndOnlyReadyActions() {
         UiHarness h = day();
         GameEngine e = h.engine();
         e.getSave().inventory.add("ayran", 10);
         Order o = spawn(h, list("ekmek_arasi", "ayran"), list("soğansız"));
         assertNotNull(h.findText("İstek: soğansız"));
-        View k1 = itemRow(h, 1), k2 = itemRow(h, 2);
-        assertNotNull(k1); assertNotNull(k2);
-        String d1 = UiHarness.label(k1);
-        assertEquals("Sipariş 1, kalem 1, Ekmek arası döner, 0/3 adım", d1);
-        String pack = UiHarness.label(h.findLabel("Siparişi paketle"));
-        assertTrue(pack, pack.contains("kilitli"));
-        // kalem seç
-        k2.performClick(); h.run(100);
-        assertEquals(1, e.getSelectedItem());
-        assertEquals(o.id, e.getSelectedOrderId());
-        assertTrue(UiHarness.label(itemRow(h, 2)).endsWith(", seçili"));
-        // istasyon dokunuşu seçili kalemi yapar (ayran)
-        h.stationTile(Station.ICECEK).performClick(); h.run(200);
+        assertNotNull("kalemler tek satırda", h.findText(o.itemsText()));
+        assertNull("eski kalem satırı yok", itemRow(h, 1));
+        String head = UiHarness.label(h.focusHeader());
+        assertTrue(head, head.startsWith("Sipariş 1, " + o.customer.name + ", " + o.itemsText()));
+        assertTrue(head, head.contains("soğansız"));
+        View ayran = UiBot.row(h, "Ayran: Ayranı doldur");
+        assertNotNull("ayran kaleminin işi: " + h.clickables(), ayran);
+        assertNull("henüz açılmamış adım listede yok", UiBot.row(h, "Ekmek arası döner: Malzemeleri ekle"));
+        assertNull("paketleme henüz yok", UiBot.row(h, "Siparişi paketle"));
+        // tek dokunuş: ayran kalemi başlar (kalem seçmeye gerek yok)
+        ayran.performClick(); h.run(200);
         assertTrue(o.getLine(1).isStepRunning(0));
-        assertTrue(UiHarness.label(itemRow(h, 2)).contains("Ayranı doldur sürüyor"));
+        assertNotNull("süren iş satırı", UiBot.row(h, "Ayran: Ayranı doldur sürüyor"));
         h.run(3000);
         assertTrue(o.getLine(1).isDone());
-        assertTrue(UiHarness.label(itemRow(h, 2)).contains(", hazır"));
-        // serbest sıra: şimdi döner kalemini yap
-        itemRow(h, 1).performClick(); h.run(100);
-        h.stationTile(Station.DONER).performClick(); h.run(100);
+        assertNull("biten iş listeden kalkar", UiBot.row(h, "Ayran: Ayranı doldur"));
+        // döner: satır menü açar (Gerçekçi: boy seç)
+        View doner = UiBot.row(h, "Ekmek arası döner: Döneri dilimle");
+        assertNotNull(h.clickables().toString(), doner);
+        assertTrue(UiHarness.label(doner), UiHarness.label(doner).contains("boy seç"));
+        doner.performClick(); h.run(100);
         assertTrue("döner makinesi boy seçenekleri paneli", UiBot.panelOpen(h));
+        assertEquals(Station.DONER.id, UiBot.panelOf(h).stationId);
         h.click("Tam ekmek"); h.run(200);
         assertFalse(UiBot.panelOpen(h));
         assertTrue(o.getLine(0).isStepRunning(1));
         h.run(5000);
-        // paketleme hâlâ kilitli: yıldız cezası yok
+        // paketleme hâlâ kilitli: Paketleme istasyonu nedenini söyler, yıldız cezası yok
         double stars = e.getStars();
         int wrong = e.getSummary().wrongTaps;
-        h.click("Siparişi paketle"); h.run(100);
+        h.stationTile(Station.PAKET).performClick(); h.run(100);
         assertEquals(stars, e.getStars(), 1e-9);
         assertEquals(wrong, e.getSummary().wrongTaps);
         assertNotNull("kilit açıklaması görünmeli", h.findText("Paketlemeden önce tüm kalemler hazır olmalı"));
@@ -327,7 +332,7 @@ public class PrepToppingUiTest {
         UiHarness h = day();
         GameEngine e = h.engine();
         Order o = spawn(h, list("ekmek_arasi"), list());
-        h.orderCard(o).performClick(); h.run(100);
+        h.selectOrder(o); h.run(100);
         h.stationTile(Station.SOS).performClick(); h.run(100);
         assertFalse(UiBot.panelOpen(h));
         assertEquals(0, e.getSummary().wrongTaps);
@@ -492,7 +497,7 @@ public class PrepToppingUiTest {
         Order o = e.spawnOrder(list("ekmek_arasi"), list(), Arrays.asList(com.doner.oyunu.engine.PortionSize.HALF));
         h.run(300);
         assertNotNull("kartta yarım ekmek yazar", h.findText("Ekmek arası döner (yarım ekmek)"));
-        h.orderCard(o).performClick(); h.run(100);
+        h.selectOrder(o); h.run(100);
         long t = 0;
         while (!o.getLine(0).isStepDone(0) && t < 30_000) { // ekmek ısıt
             if (o.getLine(0).isStepOpen(0)) h.stationTile(Station.EKMEK).performClick();
@@ -523,7 +528,7 @@ public class PrepToppingUiTest {
         GameEngine e = h.engine();
         com.doner.oyunu.audio.SoundManager snd = h.act.sound;
         Order o = spawn(h, list("ekmek_arasi"), list());
-        h.orderCard(o).performClick(); h.run(100);
+        h.selectOrder(o); h.run(100);
         assertEquals(0, snd.activeLoopCount());
         h.stationTile(Station.EKMEK).performClick(); h.run(200);
         assertTrue(o.isRunning());

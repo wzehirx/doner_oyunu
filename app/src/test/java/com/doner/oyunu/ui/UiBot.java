@@ -106,7 +106,7 @@ final class UiBot {
                 String ing = op.ingredientId;
                 if (target.contains(ing) && line.addedCount(ing) == 0) {
                     if (op.enabled) pickOption(h, p, op.id);
-                    return; // eklenirken ya da yuva doluyken bekle
+                    return; // eklenirken ya da elin doluyken bekle
                 }
             }
             for (StationOption op : ops) {
@@ -186,7 +186,7 @@ final class UiBot {
         if (e.getFreeSlots() <= 0) return;
         Order sel = e.getSelectedOrder();
         if (sel == null || sel.isReady()) {
-            for (Order o : e.getOrders()) if (!o.isReady()) { View c = h.orderCard(o); if (c != null) { c.performClick(); return; } }
+            for (Order o : e.getOrders()) if (!o.isReady()) { h.selectOrder(o); return; }
             return;
         }
         Step n = sel.nextStep();
@@ -196,7 +196,47 @@ final class UiBot {
         }
         // seçili siparişte başlatılacak iş yok (hepsi sürüyor): bekleyen başka siparişe geç
         for (Order o : e.getOrders()) {
-            if (o.id != sel.id && !o.isReady() && o.nextStep() != null) { View c = h.orderCard(o); if (c != null) c.performClick(); return; }
+            if (o.id != sel.id && !o.isReady() && o.nextStep() != null) { h.selectOrder(o); return; }
+        }
+    }
+
+    /**
+     * v2.0 sade düzenin YOLU: bot yalnızca "Sıradaki sipariş"in eylem satırlarıyla, "Sonraki sipariş" düğmesiyle ve
+     * açılan seçenek panelleriyle oynar (istasyon düğmelerine ya da sipariş listesine dokunmaz).
+     */
+    static void stepViaRows(UiHarness h) {
+        GameEngine e = h.engine();
+        if (h.findLabel("Devam et") != null) return;
+        if (e.getState() == GameEngine.State.PREP || e.getState() == GameEngine.State.READY) {
+            if (panelOpen(h)) h.click("Kapat");
+            else h.skipPrep();
+            return;
+        }
+        if (e.getState() != GameEngine.State.RUNNING) return;
+        View em = h.findLabel("Acil al");
+        if (em != null) { em.performClick(); return; }
+        if (panelOpen(h)) { panel(h); return; }
+        GameScreen.FocusHeaderAccess fa = h.access();
+        for (int i = 0; i < fa.visibleActions(); i++) {
+            com.doner.oyunu.engine.ReadyAction a = fa.action(i);
+            if (a == null) continue;
+            if (a.kind == com.doner.oyunu.engine.ReadyAction.Kind.DELIVER || a.isDoable()) {
+                assertTrue("eylem satırı tıklanabilir", fa.actionRow(i).performClick());
+                return;
+            }
+        }
+        // sıradakinde yapılacak iş yok: başka siparişte iş varsa "Sonraki sipariş"
+        Order focus = e.getFocusOrder();
+        Order sug = e.getSuggestedOrder();
+        if (sug != null && focus != null && sug.id != focus.id) h.click("Sonraki sipariş");
+    }
+
+    static void playDayViaRows(UiHarness h, long maxMs) {
+        long t = 0;
+        while (h.screen() instanceof GameScreen && t < maxMs) {
+            stepViaRows(h);
+            h.run(100);
+            t += 100;
         }
     }
 

@@ -95,7 +95,7 @@ public class GameDetailTest {
         long t = 0;
         while (e.getOrders().isEmpty() && t < 20000) { h.run(100); t += 100; }
         Order o = e.getOrders().get(0);
-        h.orderCard(o).performClick(); h.run(100);
+        h.selectOrder(o); h.run(100);
         // sıradaki adımın tüm malzemelerini sıfırla
         for (String id : new ArrayList<>(o.nextStep().needs.keySet())) e.getSave().inventory.set(id, 0);
         int missingCount = o.nextStep().needs.size();

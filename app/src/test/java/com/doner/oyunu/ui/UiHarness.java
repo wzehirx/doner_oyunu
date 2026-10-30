@@ -166,11 +166,48 @@ final class UiHarness {
         return null;
     }
 
+    /**
+     * v2.0: ekranda tek sipariş kartı vardır ("Sıradaki sipariş" başlığı). Sipariş sıradakiyse başlık görünümü, değilse null
+     * (diğer siparişler yalnızca tek satırlık özette ve sipariş listesinde).
+     */
     View orderCard(Order o) {
-        for (View v : visibleViews(root())) {
-            if (v.isClickable() && label(v).startsWith("Sipariş " + o.getPosition() + ", " + o.customer.name)) return v;
+        Order f = engine().getFocusOrder();
+        return f != null && f.id == o.id ? access().header() : null;
+    }
+
+    /** "Sıradaki sipariş" başlığı. */
+    View focusHeader() { return access().header(); }
+
+    GameScreen.FocusHeaderAccess access() { return ((GameScreen) screen()).focusAccess(); }
+
+    /**
+     * Siparişi ARAYÜZDEN seçer (eski "karta dokun"un yerine): sıradaki siparişse başlığa dokunur; değilse diğer siparişlerin
+     * özet satırına dokunup açılan sipariş listesinde siparişe dokunur. Zaten seçiliyse bir şey yapmaz.
+     */
+    void selectOrder(Order o) {
+        GameEngine e = engine();
+        Order sel = e.getSelectedOrder();
+        if (sel != null && sel.id == o.id) return;
+        GameScreen.FocusHeaderAccess fa = access();
+        Order f = e.getFocusOrder();
+        if (f != null && f.id == o.id) {
+            if (!fa.header().performClick()) throw new AssertionError("başlık tıklanamadı");
+            idle(50);
+            return;
         }
-        return null;
+        if (!fa.queue().performClick()) throw new AssertionError("sıra özeti tıklanamadı");
+        idle(50);
+        android.widget.Button b = fa.orderButton(o.id);
+        if (b == null) throw new AssertionError("sipariş listesinde yok: " + o.id + " mevcut=" + clickables());
+        b.performClick();
+        idle(50);
+    }
+
+    /** Görünür, tıklanabilir ve erişilebilir görünüm sayısı (etiketleriyle birlikte denetim için). */
+    List<View> visibleClickables() {
+        List<View> l = new ArrayList<>();
+        for (View v : visibleViews(root())) if (v.isClickable() && v.isImportantForAccessibility()) l.add(v);
+        return l;
     }
 
     Object field(Object target, String name) {

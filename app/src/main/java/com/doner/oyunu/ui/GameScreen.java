@@ -27,6 +27,7 @@ import com.doner.oyunu.engine.GameListenerAdapter;
 import com.doner.oyunu.engine.Catalog;
 import com.doner.oyunu.engine.Ingredient;
 import com.doner.oyunu.engine.PortionSize;
+import com.doner.oyunu.engine.ReadyAction;
 import com.doner.oyunu.engine.StationOption;
 import com.doner.oyunu.engine.Narrator;
 import com.doner.oyunu.engine.Order;
@@ -42,8 +43,8 @@ import com.doner.oyunu.engine.ToppingSfx;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Random;
 import java.util.List;
@@ -51,14 +52,24 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Oyun ekranı: önce HAZIRLIK aşaması (müşteri yok, süre akmaz), sonra gün. Canlı durum çubuğu, çalışanlar şeridi,
- * kalem bazlı sipariş kartları, istasyon ızgarası, hazırlık bölümü, istasyon eylem menüleri (TalkBack Eylemleri + seçenek paneli),
- * eylem düğmeleri, duraklatma paneli.
+ * Oyun ekranı (v2.0 sade düzen). Önce HAZIRLIK aşaması (müşteri yok, süre akmaz), sonra gün.
+ * <p>Gün düzeni (yukarıdan aşağı, TalkBack sırası): durum çubuğu (para, yıldız, süre / kalan müşteri, bekleyen),
+ * eller satırı ("Elin boş" / "Elin dolu: …", pişen makineler), son olay, acil al; kaydırılan gövdede çırak satırı,
+ * <b>Sıradaki sipariş</b> (tek sipariş: müşteri, kalemlerin tek satırlık özeti, sabır; altında yalnızca O siparişin
+ * "şimdi yapılabilecekler" satırları, motorun {@code getReadyActions}), diğer siparişlerin TEK satırlık özeti (dokununca
+ * sipariş listesi), bugünün istasyonları (kısa doluluk etiketi, TalkBack Eylemleri + seçenek paneli); en altta Teslim et,
+ * Sonraki sipariş, Duraklat, Durumu oku.
+ * <p>Kararlılık: görünümler bir kez kurulur; her yenilemede yalnızca metin/etiket yerinde güncellenir (değişince). Eylem
+ * satırları sabit bir havuzdur ({@link #MAX_ACTIONS}); odaktaki satır gizlenecekse odak ilk satıra/başlığa taşınır.
  */
 public final class GameScreen extends Screen implements Choreographer.FrameCallback {
 
     /** Öğretici son aşama numarası (ilk teslimden sonra biter). */
     static final int TUTORIAL_END = 10;
+    /** "Şimdi yapılabilecekler" satır havuzu (sabit; satırlar yeniden kullanılır). */
+    static final int MAX_ACTIONS = 6;
+    /** Çalışanlar kutusunun satır havuzu. */
+    private static final int MAX_WORKER_ROWS = 6;
     /** Ekran açıldıktan sonra hazırlık aşamasının başlama gecikmesi (ekran başlığı önce okunsun). */
     private static final long PREP_BEGIN_DELAY_MS = 600;
 
@@ -86,6 +97,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     private String emergencyKey = "";
     private boolean tutorialActive;
     private int tutorialStage;
+    private boolean tutPassiveShown;
     /** Hazırlık düzeni (gün başlamadı) mı gösteriliyor. */
     private boolean prepUi = true;
     private boolean prepBegun;
@@ -93,10 +105,23 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     private MenuPanel panel;
     /** Panel kapanınca odağın döneceği düğme. */
     private View panelOrigin;
+    /** Açık sipariş listesi (yoksa null). */
+    private OrdersPanel ordersPanel;
     /** Stokta olmadığı için eklenemeyen malzemeler (acil al düğmesi bunları da sunar). */
     private final Set<String> wantEmergency = new LinkedHashSet<>();
     private boolean tutSizeShown;
     private final Random fx = new Random();
+    /** Bir eylem satırından iş yapıldı: sonraki yenilemede odak ilk satıra (yoksa sipariş başlığına) döner. */
+    private int focusRequest;
+    private static final int FOCUS_NONE = 0, FOCUS_FIRST_ACTION = 1, FOCUS_HEADER = 2;
+    /**
+     * TalkBack erişilebilirlik odağının en son bulunduğu "Sıradaki sipariş" bölümü görünümü (başlık, eylem satırı, sıra
+     * özeti); odak bölüm dışına geçtiyse null. Erişilebilirlik olaylarından izlenir (odak yerleşim geçişlerinde de bilinir).
+     */
+    private View lastA11yFocus;
+    private boolean focusSeenInGroup;
+    /** Pasif istasyon döngüleri (istasyon + ses başına tek): şu an çalan anahtarlar. */
+    private final Set<String> stationLoops = new HashSet<>();
 
     // ------------------------------------------------------------------ görünümler
     private FrameLayout host;
@@ -107,17 +132,18 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     private LinearLayout statusBar;
     private String statusKey = "";
     private int lastAnnounceBucket = Integer.MAX_VALUE;
+    private TextView handsTv;
     private TextView noticeTv;
     private WorkersBox workersBox;
     private PrepBox prepBox;
-    private LinearLayout ordersGroup, stationsGroup;
-    private LinearLayout cardsBox;
-    private TextView emptyTv;
+    private LinearLayout focusGroup, stationsGroup, grid;
+    private TextView focusHeading;
+    private FocusHeader focusHeader;
+    private final ActionRow[] actionRows = new ActionRow[MAX_ACTIONS];
+    private QueueRow queueRow;
     private Button emergencyBtn;
-    private final Map<Integer, OrderCard> cards = new LinkedHashMap<>();
     private final Map<Station, StationTile> tiles = new HashMap<>();
-    private TextView slotsTv;
-    private LinearLayout slotsCell;
+    private String gridKey = "";
     private Button deliverBtn, nextBtn, pauseBtn, readBtn, openBtn, skipBtn;
     private LinearLayout openBar;
     private FrameLayout overlay;
@@ -159,6 +185,15 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
         buildStatusBar();
 
+        // v2.0: eller ve pişen makineler TEK yerde (eski ortak iş göstergesinin yerine)
+        handsTv = Ui.label(ctx, "", 16, Theme.CREAM, true);
+        handsTv.setFocusable(true);
+        handsTv.setPadding(dp(10), dp(6), dp(10), dp(6));
+        handsTv.setMinHeight(dp(48));
+        handsTv.setGravity(Gravity.CENTER_VERTICAL);
+        handsTv.setBackground(Ui.round(ctx, Theme.CARD, Theme.STROKE, 1.5f, 14));
+        content.addView(handsTv, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 0, 0, 4));
+
         // Son önemli olay (hatalı sipariş, kilitli adım, reddedilen seçim...): görsel + okunabilir.
         noticeTv = Ui.label(ctx, "", 16, Theme.GOLD, true);
         noticeTv.setFocusable(true);
@@ -166,7 +201,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         noticeTv.setPadding(dp(6), dp(2), dp(6), dp(4));
         content.addView(noticeTv);
 
-        // Acil al: kaydırılan listenin DIŞINDA, durum çubuğunun hemen altında sabit; kartların altına düşmez.
+        // Acil al: kaydırılan listenin DIŞINDA, durum çubuğunun hemen altında sabit.
         emergencyBtn = Ui.button(ctx, "", Ui.DANGER);
         emergencyBtn.setVisibility(View.GONE);
         tap(emergencyBtn, new Runnable() { @Override public void run() { doEmergency(); } });
@@ -183,19 +218,33 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         body.addView(workersBox, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 2, 0, 2));
         prepBox = new PrepBox();
 
-        ordersGroup = column();
-        ordersGroup.addView(sectionHeading("Siparişler"));
-        emptyTv = Ui.label(ctx, "Henüz sipariş yok. Müşteri bekleniyor.", 17, Theme.MUTED, false);
-        emptyTv.setFocusable(true);
-        emptyTv.setPadding(dp(4), dp(6), dp(4), dp(6));
-        ordersGroup.addView(emptyTv);
-        cardsBox = column();
-        ordersGroup.addView(cardsBox);
-        body.addView(ordersGroup);
+        focusGroup = column();
+        focusHeading = sectionHeading("Sıradaki sipariş");
+        focusGroup.addView(focusHeading);
+        focusHeader = new FocusHeader();
+        tap(focusHeader, new Runnable() { @Override public void run() { onFocusHeader(); } });
+        focusGroup.addView(focusHeader, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 2, 0, 4));
+        for (int i = 0; i < MAX_ACTIONS; i++) {
+            final int idx = i;
+            ActionRow r = new ActionRow();
+            tap(r, new Runnable() { @Override public void run() { onActionRow(idx); } });
+            actionRows[i] = r;
+            focusGroup.addView(r, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 8, 3, 0, 3));
+        }
+        queueRow = new QueueRow();
+        tap(queueRow, new Runnable() { @Override public void run() { openOrdersPanel(); } });
+        focusGroup.addView(queueRow, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 8, 0, 2));
+        body.addView(focusGroup);
+        trackAccessibilityFocus();
 
         stationsGroup = column();
         stationsGroup.addView(sectionHeading("İstasyonlar"));
-        buildGrid(stationsGroup);
+        grid = column();
+        for (Station st : Station.values()) {
+            StationTile t = new StationTile(st);
+            tiles.put(st, t);
+        }
+        stationsGroup.addView(grid);
         body.addView(stationsGroup);
 
         buildBottomBar();
@@ -249,28 +298,31 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         content.addView(statusBar, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 0, 0, 4));
     }
 
-    private void buildGrid(LinearLayout parent) {
-        Station[] all = Station.values();
+    /** Görünür istasyonları ikişerli satırlara dizer (yalnızca görünür küme değişince; düğmeler yeniden kullanılır). */
+    private void layoutGrid(List<Station> visible) {
+        StringBuilder k = new StringBuilder();
+        for (Station st : visible) k.append(st.name()).append('|');
+        if (k.toString().equals(gridKey)) return;
+        gridKey = k.toString();
+        for (StationTile t : tiles.values()) {
+            if (t.getParent() instanceof ViewGroup) ((ViewGroup) t.getParent()).removeView(t);
+        }
+        grid.removeAllViews();
         LinearLayout row = null;
-        for (int i = 0; i < all.length; i++) {
+        for (int i = 0; i < visible.size(); i++) {
             if (i % 2 == 0) {
                 row = new LinearLayout(ctx);
                 row.setOrientation(LinearLayout.HORIZONTAL);
-                parent.addView(row, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 4));
+                grid.addView(row, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 4));
             }
-            StationTile t = new StationTile(all[i]);
-            tiles.put(all[i], t);
-            row.addView(t, Ui.lp(ctx, 0, Ui.WRAP, 1f, i % 2 == 0 ? 0 : 5, 0, i % 2 == 0 ? 5 : 0, 0));
+            boolean last = i == visible.size() - 1 && i % 2 == 0;
+            row.addView(tiles.get(visible.get(i)), Ui.lp(ctx, 0, Ui.WRAP, 1f, i % 2 == 0 ? 0 : 5, 0, i % 2 == 0 && !last ? 5 : 0, 0));
+            if (last) { // tek kalan düğme yarım genişlikte kalsın
+                View spacer = new View(ctx);
+                Ui.decorative(spacer);
+                row.addView(spacer, Ui.lp(ctx, 0, 1, 1f, 5, 0, 0, 0));
+            }
         }
-        slotsCell = column();
-        slotsCell.setGravity(Gravity.CENTER);
-        slotsCell.setBackground(Ui.round(ctx, Theme.CARD, Theme.STROKE, 1.5f, 16));
-        slotsCell.setMinimumHeight(dp(104));
-        slotsTv = Ui.label(ctx, "", 16, Theme.CREAM, false);
-        slotsTv.setGravity(Gravity.CENTER);
-        slotsCell.addView(slotsTv);
-        Ui.groupAsText(slotsCell);
-        row.addView(slotsCell, Ui.lp(ctx, 0, Ui.WRAP, 1f, 5, 0, 0, 0));
     }
 
     private void buildBottomBar() {
@@ -327,7 +379,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         boolean prep = st == GameEngine.State.READY || st == GameEngine.State.PREP;
         if (!force && prep == prepUi) return;
         prepUi = prep;
-        ordersGroup.setVisibility(prep ? View.GONE : View.VISIBLE);
+        focusGroup.setVisibility(prep ? View.GONE : View.VISIBLE);
         stationsGroup.setVisibility(prep ? View.GONE : View.VISIBLE);
         openBar.setVisibility(prep ? View.VISIBLE : View.GONE);
         deliverBtn.setVisibility(prep ? View.GONE : View.VISIBLE);
@@ -363,6 +415,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         Choreographer.getInstance().removeFrameCallback(this);
         frameQueued = false;
         a.sound.stopAllLoops();
+        stationLoops.clear();
     }
 
     @Override public void onPause() {
@@ -375,6 +428,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
     @Override public boolean onBack() {
         if (finishing) { showSummary(); return true; } // gün bitti: beklemeden özete geç
+        if (ordersPanel != null && !paused) { closeOrdersPanel(true); a.speaker.announce("Sipariş listesi kapatıldı.", true); return true; }
         if (panel != null && !paused) { cancelPanel(panel); return true; }
         if (paused) resumeGame(); else pauseGame();
         return true;
@@ -418,6 +472,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         if (paused || finishing || exited) return;
         paused = true;
         confirmQuit = false;
+        if (ordersPanel != null) closeOrdersPanel(false);
         Choreographer.getInstance().removeFrameCallback(this);
         frameQueued = false;
         a.sound.pauseLoops();
@@ -442,7 +497,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     }
 
     private void updateContentHidden() {
-        boolean hide = paused || panel != null;
+        boolean hide = paused || panel != null || ordersPanel != null;
         content.setImportantForAccessibility(hide ? View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                 : View.IMPORTANT_FOR_ACCESSIBILITY_YES);
     }
@@ -555,7 +610,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     //  (2) seçenek paneli: düğmeye normal dokunuş (TalkBack açıkken çift dokunuş) büyük düğmeli panel açar (MenuPanel).
 
     private void openPanel(MenuPanel p, View origin) {
-        if (panel != null) return;
+        if (panel != null || ordersPanel != null) return;
         panel = p;
         panelOrigin = origin;
         host.addView(p.overlay, new FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH));
@@ -574,7 +629,11 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         dirty = true;
         View back = panelOrigin;
         panelOrigin = null;
-        if (focusBack && !paused && back != null) a.focusOn(back);
+        if (focusBack && !paused && back != null) {
+            // panel bir eylem satırından açıldıysa odak, satırın yeni içeriğine göre ilk satıra/başlığa döner
+            if (back instanceof ActionRow) focusRequest = FOCUS_FIRST_ACTION;
+            else a.focusOn(back);
+        }
     }
 
     private void cancelPanel(MenuPanel p) {
@@ -602,7 +661,8 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             if (p != panel || paused || finishing) return;
             Station st = Station.byId(p.stationId);
             Order o = p.orderId >= 0 ? engine.getOrder(p.orderId) : null;
-            StartResult r = applyOption(o, st, op.id);
+            StationSource src = p.source instanceof StationSource ? (StationSource) p.source : null;
+            StartResult r = applyOption(o, src == null ? -1 : src.item, st, op.id);
             if (p != panel) return; // eylem günü bitirmiş olabilir
             if (shouldClose(op, r)) closePanel(true);
             else { p.refresh(); updateEmergency(engine.getSelectedOrder()); }
@@ -617,16 +677,21 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         }
     };
 
-    /** Bir istasyonun (ve isteğe bağlı sipariş / et filtresinin) seçenek kaynağı; panel ve TalkBack eylemleri kullanır. */
+    /** Bir istasyonun (ve isteğe bağlı sipariş / kalem / et filtresinin) seçenek kaynağı; panel ve TalkBack eylemleri kullanır. */
     private final class StationSource implements MenuPanel.Source, ActionMenu.Source {
         final Station st;
         /** -2: her seferinde en uygun siparişi seç (düğme eylemleri); -1: yalnızca hazırlık; >=0: sabit sipariş. */
         final int fixedOrder;
+        /** Sabit kalem (eylem satırından açıldı); -1: otomatik (seçili kalem, sonra ilk uygun). */
+        final int item;
         final String meatFilter;
 
-        StationSource(Station st, int fixedOrder, String meatFilter) {
+        StationSource(Station st, int fixedOrder, String meatFilter) { this(st, fixedOrder, -1, meatFilter); }
+
+        StationSource(Station st, int fixedOrder, int item, String meatFilter) {
             this.st = st;
             this.fixedOrder = fixedOrder;
+            this.item = item;
             this.meatFilter = meatFilter;
         }
 
@@ -639,7 +704,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         @Override public List<StationOption> options() {
             if (finishing || exited) return new ArrayList<>();
             Order o = engine.getState() == GameEngine.State.RUNNING ? order() : null;
-            List<StationOption> all = engine.getStationOptions(o == null ? -1 : o.id, -1, st.id);
+            List<StationOption> all = engine.getStationOptions(o == null ? -1 : o.id, o == null ? -1 : item, st.id);
             if (meatFilter == null) return all;
             List<StationOption> out = new ArrayList<>();
             for (StationOption op : all) {
@@ -653,7 +718,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         @Override public String status() {
             Order o = order();
             if (o == null || st != Station.SOS) return "";
-            int li = engine.resolveStationItem(o.id, -1, st.id);
+            int li = engine.resolveStationItem(o.id, item, st.id);
             return li < 0 ? "" : Texts.addedStatus(o.getLine(li));
         }
     }
@@ -695,18 +760,21 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
     /** TalkBack özel eylemi seçildi (panel açmadan uygular). */
     private void onStationAction(Station st, String optionId) {
-        if (paused || finishing || panel != null) return;
+        if (blocked()) return;
         if (engine.getState() != GameEngine.State.RUNNING) { a.speaker.say("Önce dükkânı aç.", true); return; }
         a.sound.play("sfx_tap");
-        applyOption(pickOrderFor(st), st, optionId);
+        applyOption(pickOrderFor(st), -1, st, optionId);
     }
 
     private void onPrepAction(Station st, String optionId) {
-        if (paused || finishing || panel != null) return;
+        if (blocked()) return;
         if (!prepBegun) beginPrepNow();
         a.sound.play("sfx_tap");
-        applyOption(null, st, optionId);
+        applyOption(null, -1, st, optionId);
     }
+
+    /** Duraklatma, gün sonu ya da açık bir panel eylemleri engeller. */
+    private boolean blocked() { return paused || finishing || panel != null || ordersPanel != null; }
 
     private void ensureSelected(Order t) {
         Order sel = engine.getSelectedOrder();
@@ -714,12 +782,12 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     }
 
     /**
-     * Seçeneği motora uygular (TEK yol: düğme dokunuşu, TalkBack eylemi ve panel hep buradan geçer). Sonucun
+     * Seçeneği motora uygular (TEK yol: düğme dokunuşu, eylem satırı, TalkBack eylemi ve panel hep buradan geçer). Sonucun
      * duyurusunu motor olaylarıyla Narrator yapar; olay vermeyen sonuçlar burada sesle bildirilir.
      */
-    private StartResult applyOption(Order t, Station st, String optionId) {
+    private StartResult applyOption(Order t, int item, Station st, String optionId) {
         if (t != null) ensureSelected(t);
-        StartResult r = engine.applyStationOption(t == null ? -1 : t.id, -1, st.id, optionId);
+        StartResult r = engine.applyStationOption(t == null ? -1 : t.id, t == null ? -1 : item, st.id, optionId);
         switch (r) {
             case OUT_OF_STOCK:
                 if (optionId.startsWith("add:")) wantEmergency.add(optionId.substring(4));
@@ -729,14 +797,13 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
                 a.haptics.warning();
                 break;
             case NO_ORDER:
-            case ORDER_BUSY:
             case ORDER_READY:
             case NOT_RUNNING:
             case INVALID:
                 if (optionId.equals("step") || optionId.startsWith("size:")) error(narrator.startResultText(r));
                 break;
             default:
-                break;
+                break; // HANDS_BUSY / STATION_FULL / ORDER_BUSY: motor olayı (onHandsBusy…) ses + duyuru verir
         }
         dirty = true;
         return r;
@@ -753,9 +820,9 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         return StationOption.direct(ops);
     }
 
-    private void openMenu(String title, Station st, Order target, View origin, String meatFilter) {
+    private void openMenu(String title, Station st, Order target, int item, View origin, String meatFilter) {
         int oid = target == null ? -1 : target.id;
-        final StationSource src = new StationSource(st, oid, meatFilter);
+        final StationSource src = new StationSource(st, oid, item, meatFilter);
         MenuPanel p = new MenuPanel(a, title, st.id, oid, src, panelHost);
         boolean hasSize = false;
         for (StationOption op : src.options()) if (op.group == StationOption.Group.SIZE) hasSize = true;
@@ -789,9 +856,9 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         return st == Station.PAKET && !o.isPacking() && !o.allLinesDone();
     }
 
-    /** İstasyona dokunulunca hangi sipariş: önce seçili, sonra uygun adımı olan diğerleri; yoksa kilitli adımı olan. */
+    /** İstasyona dokunulunca hangi sipariş: önce sıradaki (odak) sipariş, sonra uygun adımı olan diğerleri; yoksa kilitli adımı olan. */
     private Order pickOrderFor(Station st) {
-        Order sel = engine.getSelectedOrder();
+        Order sel = engine.getFocusOrder();
         List<Order> cand = new ArrayList<>();
         if (sel != null) cand.add(sel);
         for (Order o : engine.getOrders()) if (sel == null || o.id != sel.id) cand.add(o);
@@ -802,7 +869,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
     /** İstasyon düğmesine dokunuldu (TalkBack kapalıyken tek, açıkken varsayılan çift dokunuş). */
     private void onStation(Station st) {
-        if (paused || finishing || panel != null) return;
+        if (blocked()) return;
         if (engine.getState() != GameEngine.State.RUNNING) {
             a.speaker.say("Önce dükkânı aç.", true);
             return;
@@ -814,39 +881,70 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
                 error(engine.getOrders().isEmpty() ? "Henüz sipariş yok." : "Önce bir sipariş seç.");
                 return;
             }
-            applyOption(target, st, "step"); // istasyonda iş yok: motor yanlış istasyonu bildirir
+            applyOption(target, -1, st, "step"); // istasyonda iş yok: motor yanlış istasyonu bildirir
             return;
         }
         StationOption direct = directOption(ops);
-        if (direct != null) { applyOption(target, st, direct.id); return; }
+        if (direct != null) { applyOption(target, -1, st, direct.id); return; }
         if (target != null) ensureSelected(target);
-        openMenu(st.displayName + ": seçenekler", st, target, tiles.get(st), null);
+        openMenu(st.displayName + ": seçenekler", st, target, -1, tiles.get(st), null);
     }
 
-    private void onSelectItem(int orderId, int itemIndex) {
-        if (paused || finishing || panel != null) return;
+    /** Sıradaki sipariş başlığına dokunuldu: seçili değilse seçer (motor duyurur), seçiliyse ayrıntıyı okur. */
+    private void onFocusHeader() {
+        if (blocked()) return;
+        Order o = engine.getFocusOrder();
+        if (engine.getState() != GameEngine.State.RUNNING || o == null) { a.speaker.force("Bekleyen sipariş yok."); return; }
         Order sel = engine.getSelectedOrder();
-        if (sel == null || sel.id != orderId) engine.selectOrder(orderId);
-        engine.selectItem(itemIndex);
+        if (sel == null || sel.id != o.id) engine.selectOrder(o.id);
+        else a.speaker.force(narrator.focusText());
         dirty = true;
     }
 
-    private void onPackRow(int orderId) {
-        if (paused || finishing || panel != null) return;
-        Order o = engine.getOrder(orderId);
-        if (o == null) return;
-        if (o.isReady()) {
-            Order sel = engine.getSelectedOrder();
-            if (sel == null || sel.id != orderId) engine.selectOrder(orderId);
-            a.speaker.say("Sipariş paketlendi. Teslim et düğmesine dokun.", true);
+    /** "Şimdi yapılabilecekler" satırına dokunuldu: tek dokunuşla uygula, menü gerekiyorsa istasyon panelini aç. */
+    private void onActionRow(int idx) {
+        if (blocked()) return;
+        ActionRow row = actionRows[idx];
+        ReadyAction act = row.action;
+        Order o = act == null ? null : engine.getOrder(act.orderId);
+        if (act == null || o == null || engine.getState() != GameEngine.State.RUNNING) { dirty = true; return; }
+        switch (act.kind) {
+            case DELIVER:
+                ensureSelected(o);
+                engine.deliver(o.id);
+                wantEmergency.clear();
+                focusRequest = FOCUS_HEADER;
+                dirty = true;
+                return;
+            default:
+                break;
+        }
+        if (act.status == ReadyAction.Status.RUNNING) {
+            a.speaker.force(act.text + ".");
             return;
         }
-        applyOption(o, Station.PAKET, "step");
+        if (act.optionId != null) {
+            applyOption(o, act.itemIndex, act.station, act.optionId);
+            focusRequest = FOCUS_FIRST_ACTION;
+            return;
+        }
+        // menü gerekli (boy seçimi, tek tek malzeme) ya da kaynak bekleniyor: istasyon menüsü o kalem için açılır
+        ensureSelected(o);
+        List<StationOption> ops = engine.getStationOptions(o.id, act.itemIndex, act.station.id);
+        if (ops.isEmpty()) { applyOption(o, act.itemIndex, act.station, "step"); return; }
+        if (!act.needsMenu) {
+            // tek adımlı iş ama şu an kaynak yok (elin dolu / istasyon dolu): uygula ki motor nedenini duyursun (ses + titreşim)
+            StationOption single = null;
+            int steps = 0;
+            for (StationOption op : ops) if (op.group != StationOption.Group.PREP) { steps++; if (op.group == StationOption.Group.STEP) single = op; }
+            if (steps == 1 && single != null) { applyOption(o, act.itemIndex, act.station, single.id); return; }
+        }
+        openMenu(act.station.displayName + ": seçenekler", act.station, o, act.itemIndex, row, null);
     }
 
     private void onDeliver() {
-        if (paused || finishing || panel != null) return;
-        Order target = engine.getSelectedOrder();
+        if (blocked()) return;
+        Order target = engine.getFocusOrder();
         if (target == null || !target.isReady()) {
             target = null;
             for (Order o : engine.getOrders()) if (o.isReady()) { target = o; break; }
@@ -857,9 +955,15 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         dirty = true;
     }
 
+    /** "Sonraki sipariş": önerilen siparişe geçer (teslime hazır > yapılabilir işi olan en acil); zaten oysa sıradakine. */
     private void onNext() {
-        if (paused || finishing || panel != null) return;
-        if (!engine.selectNextOrder()) error("Henüz sipariş yok.");
+        if (blocked()) return;
+        Order sug = engine.getSuggestedOrder();
+        Order sel = engine.getSelectedOrder();
+        boolean ok;
+        if (sug != null && (sel == null || sel.id != sug.id)) ok = engine.selectSuggestedOrder();
+        else ok = engine.selectNextOrder();
+        if (!ok) error("Henüz sipariş yok.");
         dirty = true;
     }
 
@@ -876,37 +980,35 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     }
 
     private void onOpenShop() {
-        if (paused || finishing || panel != null) return;
+        if (blocked()) return;
         if (!prepUi) return;
         if (!engine.startDay()) return;
         prepBegun = true;
         applyPhase(false);
         refresh(true);
-        a.focusOn(emptyTv);
+        a.focusOn(focusHeading);
     }
 
     /** Hazırlık düğmesine dokunuldu: tek seçenek doğrudan uygulanır, birden çoksa panel açılır. */
     private void onPrep(Station st, String meatFilter, View origin, String title) {
-        if (paused || finishing || panel != null) return;
+        if (blocked()) return;
         if (!prepBegun) beginPrepNow();
         List<StationOption> ops = new StationSource(st, -1, meatFilter).options();
         if (ops.isEmpty()) { error("Bu hazırlık şu an yapılamaz."); return; }
-        if (ops.size() == 1) { applyOption(null, st, ops.get(0).id); return; }
-        openMenu(title, st, null, origin, meatFilter);
+        if (ops.size() == 1) { applyOption(null, -1, st, ops.get(0).id); return; }
+        openMenu(title, st, null, -1, origin, meatFilter);
     }
 
-    /** Seçim yoksa kısa süre sonra kendiliğinden bir sipariş seçer; son 5 sn geri sayım tıkı. */
+    /** Seçim yoksa kısa süre sonra önerilen siparişi ({@code getSuggestedOrder}) kendiliğinden seçer; son 5 sn geri sayım tıkı. */
     private void updateAuto(float dt) {
         if (engine.getState() != GameEngine.State.RUNNING) return;
         boolean allow = !tutorialActive || tutorialStage >= 5;
-        if (engine.getSelectedOrderId() < 0 && !engine.getOrders().isEmpty() && allow) {
+        if (engine.getSelectedOrderId() < 0 && !engine.getOrders().isEmpty() && allow && panel == null && ordersPanel == null) {
             noSelTimer += dt;
             if (noSelTimer >= 1.5f) {
                 noSelTimer = 0f;
-                Order pick = null;
-                for (Order o : engine.getOrders()) if (!o.isReady() && !o.isRunning()) { pick = o; break; }
-                if (pick == null) pick = engine.getOrders().get(0);
-                engine.selectOrder(pick.id);
+                Order pick = engine.getSuggestedOrder();
+                if (pick != null) engine.selectOrder(pick.id);
             }
         } else {
             noSelTimer = 0f;
@@ -916,6 +1018,142 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             int sec = (int) Math.ceil(left);
             if (sec != lastTickSecond) { lastTickSecond = sec; a.sound.play("sfx_tick"); }
         }
+    }
+
+    // ================================================================== sipariş listesi
+    private void openOrdersPanel() {
+        if (blocked()) return;
+        Order focus = engine.getFocusOrder();
+        int others = 0;
+        for (Order o : engine.getOrders()) if (focus == null || o.id != focus.id) others++;
+        if (engine.getState() != GameEngine.State.RUNNING || others == 0) {
+            a.speaker.force(engine.getOrders().isEmpty() ? "Bekleyen sipariş yok." : "Sırada başka sipariş yok.");
+            return;
+        }
+        ordersPanel = new OrdersPanel();
+        host.addView(ordersPanel.overlay, new FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH));
+        updateContentHidden();
+        a.focusOn(ordersPanel.titleView);
+    }
+
+    private void closeOrdersPanel(boolean focusBack) {
+        OrdersPanel p = ordersPanel;
+        if (p == null) return;
+        host.removeView(p.overlay);
+        ordersPanel = null;
+        updateContentHidden();
+        dirty = true;
+        if (focusBack && !paused) focusRequest = FOCUS_HEADER;
+    }
+
+    /**
+     * Tüm siparişler (en acil önce), her biri TEK düğme: dokununca seçilir ve liste kapanır, odak "Sıradaki sipariş"
+     * başlığına döner. Ana ekranı kalabalıklaştırmadan istenen siparişe geçmenin yolu.
+     */
+    private final class OrdersPanel {
+        final FrameLayout overlay;
+        final TextView titleView;
+        private final LinearLayout list;
+        private final Map<Integer, Button> buttons = new HashMap<>();
+        private String key = "";
+
+        OrdersPanel() {
+            overlay = new FrameLayout(ctx);
+            overlay.setBackgroundColor(0xF01A0E08);
+            overlay.setClickable(true);
+            overlay.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            LinearLayout pnl = column();
+            pnl.setBackground(Ui.round(ctx, Theme.CARD, Theme.GOLD, 3, 20));
+            pnl.setPadding(dp(16), dp(16), dp(16), dp(16));
+            titleView = Ui.label(ctx, "Siparişler", 24, Theme.GOLD, true);
+            Ui.heading(titleView);
+            pnl.addView(titleView);
+            TextView info = Ui.label(ctx, engine.isTimed() ? "En acil önce. Dokunduğun sipariş sıradaki olur." : "Dokunduğun sipariş sıradaki olur.", 17, Theme.CREAM, false);
+            info.setFocusable(true);
+            info.setPadding(0, dp(6), 0, dp(6));
+            pnl.addView(info);
+            list = column();
+            pnl.addView(list);
+            Button close = Ui.button(ctx, "Kapat", Ui.SECONDARY);
+            close.setContentDescription("Kapat");
+            tap(close, new Runnable() {
+                @Override public void run() {
+                    if (ordersPanel == OrdersPanel.this && !paused) {
+                        closeOrdersPanel(true);
+                        a.speaker.announce("Sipariş listesi kapatıldı.", true);
+                    }
+                }
+            });
+            pnl.addView(close, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 8, 0, 0));
+            ScrollView sv = new ScrollView(ctx);
+            sv.setFillViewport(true);
+            FrameLayout wrap = new FrameLayout(ctx);
+            FrameLayout.LayoutParams plp = new FrameLayout.LayoutParams(Ui.MATCH, Ui.WRAP, Gravity.CENTER);
+            plp.setMargins(dp(14), dp(14), dp(14), dp(14));
+            wrap.addView(pnl, plp);
+            sv.addView(wrap, new ViewGroup.LayoutParams(Ui.MATCH, Ui.MATCH));
+            overlay.addView(sv, new FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH));
+            refresh();
+        }
+
+        private List<Order> sorted() {
+            List<Order> l = new ArrayList<>(engine.getOrders());
+            final boolean timed = engine.isTimed();
+            java.util.Collections.sort(l, new java.util.Comparator<Order>() {
+                @Override public int compare(Order x, Order y) {
+                    if (x.isReady() != y.isReady()) return x.isReady() ? -1 : 1;
+                    if (timed) {
+                        int c = Float.compare(x.customer.patienceFraction(), y.customer.patienceFraction());
+                        if (c != 0) return c;
+                    }
+                    return Integer.compare(x.getPosition(), y.getPosition());
+                }
+            });
+            return l;
+        }
+
+        /** Sipariş kümesi değişince listeyi kurar; değilse etiketleri yerinde günceller. */
+        void refresh() {
+            List<Order> l = sorted();
+            StringBuilder k = new StringBuilder();
+            for (Order o : l) k.append(o.id).append('|');
+            if (!k.toString().equals(key)) {
+                key = k.toString();
+                list.removeAllViews();
+                buttons.clear();
+                for (final Order o : l) {
+                    Button b = Ui.button(ctx, "", Ui.SECONDARY);
+                    b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
+                    b.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+                    b.setMinHeight(dp(64));
+                    b.setMinimumHeight(dp(64));
+                    final int id = o.id;
+                    tap(b, new Runnable() { @Override public void run() { pick(id); } });
+                    buttons.put(o.id, b);
+                    list.addView(b, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 4));
+                }
+            }
+            Order sel = engine.getSelectedOrder();
+            for (Order o : l) {
+                Button b = buttons.get(o.id);
+                if (b == null) continue;
+                boolean isSel = sel != null && sel.id == o.id;
+                String label = Texts.orderDescription(o, isSel, engine.getActiveFor(o.id), engine.isTimed());
+                String text = Texts.focusTitle(o) + "\n" + o.itemsText() + (engine.isTimed() && !o.isReady() ? "\n" + Texts.patienceVisual(o) : (o.isReady() ? "\nTeslime hazır" : ""));
+                if (!text.contentEquals(b.getText())) b.setText(text);
+                Ui.setDesc(b, label);
+            }
+        }
+
+        private void pick(int id) {
+            if (ordersPanel != this || paused || finishing) return;
+            boolean ok = engine.selectOrder(id); // motor duyurur: seçildi + önerilen
+            closeOrdersPanel(true);
+            if (!ok) a.speaker.announce("Bu sipariş artık yok.", true);
+        }
+
+        /** Testler: sipariş düğmesi. */
+        Button button(int orderId) { return buttons.get(orderId); }
     }
 
     // ================================================================== yenileme
@@ -935,28 +1173,18 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         pendingTv.setText(String.valueOf(orders.size()));
         updateStatusDescription(orders.size(), selected);
 
-        // sipariş kartları
-        for (Iterator<Map.Entry<Integer, OrderCard>> it = cards.entrySet().iterator(); it.hasNext(); ) {
-            Map.Entry<Integer, OrderCard> e = it.next();
-            if (engine.getOrder(e.getKey()) == null) { cardsBox.removeView(e.getValue()); it.remove(); }
-        }
-        int idx = 0;
-        for (Order o : orders) {
-            OrderCard c = cards.get(o.id);
-            if (c == null) {
-                c = new OrderCard(o);
-                cards.put(o.id, c);
-                cardsBox.addView(c, Math.min(idx, cardsBox.getChildCount()), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 4));
-            }
-            c.update(o, selected != null && selected.id == o.id);
-            idx++;
-        }
-        emptyTv.setVisibility(orders.isEmpty() ? View.VISIBLE : View.GONE);
+        // eller (tek yer)
+        String hv = Texts.handsVisual(engine);
+        if (!hv.contentEquals(handsTv.getText())) handsTv.setText(hv);
+        Ui.setDesc(handsTv, Texts.handsLabel(engine));
+
+        // sıradaki sipariş + şimdi yapılabilecekler + diğerlerinin özeti
+        if (!prepUi) updateFocus(orders);
 
         // acil alım
         updateEmergency(selected);
 
-        // açık seçenek paneli: listeyi tazele (malzeme eklerken durum değişir); sipariş gittiyse kapat
+        // açık seçenek paneli: listeyi tazele (malzeme eklerken / eller boşalınca durum değişir); sipariş gittiyse kapat
         if (panel != null) {
             if (panel.orderId >= 0 && engine.getOrder(panel.orderId) == null) {
                 closePanel(true);
@@ -966,27 +1194,145 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
                 if (panel.optionCount() == 0) closePanel(true);
             }
         }
+        if (ordersPanel != null) ordersPanel.refresh();
 
-        // çalışanlar şeridi + hazırlık bölümü
+        // çalışanlar + hazırlık bölümü
         workersBox.update();
         prepBox.update();
 
         // istasyonlar
-        if (!prepUi) {
-            for (Map.Entry<Station, StationTile> e : tiles.entrySet()) e.getValue().update();
-            slotsTv.setText("Boş yuva\n" + engine.getFreeSlots() + " / " + engine.getSlotCount());
-            Ui.setDesc(slotsCell, Texts.slotsText(engine));
-        }
+        if (!prepUi) updateStations(orders);
+        syncStationLoops();
 
         // teslim
         boolean anyReady = false;
         for (Order o : orders) if (o.isReady()) anyReady = true;
         Ui.setDesc(deliverBtn, Texts.deliverDescription(engine));
-        deliverBtn.setText(anyReady ? "Teslim et  (hazır)" : "Teslim et");
+        String dt = anyReady ? "Teslim et  (hazır)" : "Teslim et";
+        if (!dt.contentEquals(deliverBtn.getText())) deliverBtn.setText(dt);
         Ui.dim(deliverBtn, !anyReady);
 
         updateMusic(orders.size());
+        applyFocusRequest();
     }
+
+    /** Sıradaki sipariş bölümü: başlık, eylem satırları (havuz), sıra özeti. Görünümler yeniden yaratılmaz. */
+    private void updateFocus(List<Order> orders) {
+        Order focus = engine.getFocusOrder();
+        boolean timed = engine.isTimed();
+        focusHeader.update(focus, timed);
+        List<ReadyAction> acts = focus == null ? new ArrayList<ReadyAction>() : engine.getReadyActions(focus.id);
+        int shown = Math.min(acts.size(), MAX_ACTIONS);
+        boolean rescue = false;
+        for (int i = 0; i < MAX_ACTIONS; i++) {
+            ActionRow r = actionRows[i];
+            if (i < shown) {
+                r.update(acts.get(i), i == MAX_ACTIONS - 1 && acts.size() > MAX_ACTIONS ? acts.size() - MAX_ACTIONS : 0);
+                if (r.getVisibility() != View.VISIBLE) r.setVisibility(View.VISIBLE);
+            } else if (r.getVisibility() != View.GONE) {
+                if (r.isAccessibilityFocused() || lastA11yFocus == r) rescue = true;
+                r.action = null;
+                r.setVisibility(View.GONE);
+            }
+        }
+        // diğer siparişler: tek satır
+        int others = 0, readyOthers = 0;
+        Order urgent = null;
+        for (Order o : orders) {
+            if (focus != null && o.id == focus.id) continue;
+            others++;
+            if (o.isReady()) readyOthers++;
+            if (urgent == null || (timed ? o.customer.patienceFraction() < urgent.customer.patienceFraction() : o.getPosition() < urgent.getPosition())) urgent = o;
+        }
+        queueRow.update(others, readyOthers, urgent, timed);
+        if (rescue && focusRequest == FOCUS_NONE) focusRequest = FOCUS_FIRST_ACTION;
+    }
+
+    /** Bir eylemden sonra odağı mantıklı ve kalıcı yere taşır (zaten oradaysa dokunmaz: yeniden okutmaz). */
+    private void applyFocusRequest() {
+        int req = focusRequest;
+        if (req == FOCUS_NONE || paused || panel != null || ordersPanel != null || finishing) return;
+        focusRequest = FOCUS_NONE;
+        if (prepUi) return;
+        View target = focusHeader;
+        if (req == FOCUS_FIRST_ACTION && actionRows[0].getVisibility() == View.VISIBLE) target = actionRows[0];
+        if (!target.isAccessibilityFocused() && lastA11yFocus != target) a.focusOn(target);
+    }
+
+    /**
+     * Erişilebilirlik odağını izler: bölüm içindeki görünüm odak alınca kaydedilir, ekranın başka bir yeri odak alınca
+     * silinir. Gizlenecek satır odaktaysa odak kurtarılır; işlem sonrası odak zaten hedefteyse yeniden gönderilmez.
+     */
+    private void trackAccessibilityFocus() {
+        focusGroup.setAccessibilityDelegate(new View.AccessibilityDelegate() {
+            @Override public boolean onRequestSendAccessibilityEvent(ViewGroup g, View child, android.view.accessibility.AccessibilityEvent ev) {
+                if (ev.getEventType() == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) {
+                    lastA11yFocus = child;
+                    focusSeenInGroup = true;
+                }
+                return super.onRequestSendAccessibilityEvent(g, child, ev);
+            }
+        });
+        host.setAccessibilityDelegate(new View.AccessibilityDelegate() {
+            @Override public boolean onRequestSendAccessibilityEvent(ViewGroup g, View child, android.view.accessibility.AccessibilityEvent ev) {
+                if (ev.getEventType() == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) {
+                    if (!focusSeenInGroup) lastA11yFocus = null;
+                    focusSeenInGroup = false;
+                }
+                return super.onRequestSendAccessibilityEvent(g, child, ev);
+            }
+        });
+    }
+
+    /** İstasyon düğmeleri: bugünün menüsündekiler + bir siparişin ya da işin kullandığı (senaryo) istasyonlar. */
+    private void updateStations(List<Order> orders) {
+        Order focus = engine.getFocusOrder();
+        List<Station> visible = new ArrayList<>();
+        for (Station st : Station.values()) {
+            boolean show = inUse.contains(st) || !engine.getStationJobs(st).isEmpty();
+            if (!show) for (Order o : orders) if (usesStation(o, st)) { show = true; break; }
+            if (show) visible.add(st);
+        }
+        layoutGrid(visible);
+        for (Station st : visible) tiles.get(st).update(Texts.needsStation(focus, st));
+    }
+
+    private static boolean usesStation(Order o, Station st) {
+        for (OrderLine l : o.getLines()) for (int i = 0; i < l.stepCount(); i++) if (l.step(i).station == st) return true;
+        return false;
+    }
+
+    /**
+     * Pasif istasyon sesleri (ekmek ısıtıcı, ocak): iş başına değil İSTASYON + ses başına tek döngü; iş sürdükçe uzar, istasyon
+     * boşalınca durur. Aynı ısıtıcıda iki ekmek tek döngü; ocakta patates ve mühürleme ayrı; farklı istasyonlar ayrı döngü.
+     * Oyuncu başka işe geçse de (eller boş) döngü sürer.
+     */
+    private void syncStationLoops() {
+        Set<String> want = new HashSet<>();
+        for (Station st : Station.values()) {
+            if (!engine.isPassiveStation(st)) continue;
+            Map<String, Float> bySound = new HashMap<>();
+            for (ActiveStep job : engine.getStationJobs(st)) {
+                if (!job.isPassive()) continue;
+                String sfx = job.isPrep() ? sfxForPrep(job.prep) : sfxForStep(job.step);
+                Float cur = bySound.get(sfx);
+                float rem = Math.max(0.05f, job.getRemaining());
+                if (cur == null || rem > cur) bySound.put(sfx, rem);
+            }
+            for (Map.Entry<String, Float> e : bySound.entrySet()) {
+                String key = stationLoopKey(st, e.getKey());
+                want.add(key);
+                a.sound.holdLoop(key, e.getKey(), panForStation(st), 0.9f, e.getValue() + 0.1f);
+            }
+        }
+        for (Iterator<String> it = stationLoops.iterator(); it.hasNext(); ) {
+            String k = it.next();
+            if (!want.contains(k)) { a.sound.stopLoop(k); it.remove(); }
+        }
+        stationLoops.addAll(want);
+    }
+
+    static String stationLoopKey(Station st, String sfx) { return "st:" + st.name() + ":" + sfx; }
 
     /** Acil al düğmesini eksik TÜM malzemeler için günceller; yeni belirince duyurur ve odağı ona taşır. */
     private void updateEmergency(Order selected) {
@@ -1016,7 +1362,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         String label = Texts.emergencyLabel(missing, cost);
         String desc = Texts.emergencyDescription(missing, cost);
         emergencyBtn.setVisibility(View.VISIBLE);
-        emergencyBtn.setText(label);
+        if (!label.contentEquals(emergencyBtn.getText())) emergencyBtn.setText(label);
         Ui.setDesc(emergencyBtn, desc);
         if (panel != null) panel.setEmergency(label, desc);
         StringBuilder key = new StringBuilder().append(missingOrderId);
@@ -1025,7 +1371,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             emergencyKey = key.toString();
             // Belirdi (ya da eksik küme değişti): duyuru Narrator'da yapıldı (acil, kesici);
             // TalkBack erişilebilirlik odağı da doğrudan düğmeye taşınır (panel açıksa panelde kalır).
-            if (panel == null && !paused) a.focusOn(emergencyBtn);
+            if (panel == null && ordersPanel == null && !paused) { focusRequest = FOCUS_NONE; a.focusOn(emergencyBtn); }
         }
     }
 
@@ -1075,6 +1421,30 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         handler.postDelayed(clearNotice, 9000);
     }
 
+    // ================================================================== testler için (paket içi)
+    FocusHeaderAccess focusAccess() { return new FocusHeaderAccess(); }
+
+    /** Testlerin ekran yapısına erişimi (yansımasız). */
+    final class FocusHeaderAccess {
+        View header() { return focusHeader; }
+        View heading() { return focusHeading; }
+        View queue() { return queueRow; }
+        View hands() { return handsTv; }
+        View actionRow(int i) { return actionRows[i]; }
+        ReadyAction action(int i) { return actionRows[i].getVisibility() == View.VISIBLE ? actionRows[i].action : null; }
+        int visibleActions() {
+            int n = 0;
+            for (ActionRow r : actionRows) if (r.getVisibility() == View.VISIBLE) n++;
+            return n;
+        }
+        View tile(Station st) { return tiles.get(st); }
+        boolean ordersPanelOpen() { return ordersPanel != null; }
+        Button orderButton(int orderId) { return ordersPanel == null ? null : ordersPanel.button(orderId); }
+        Set<String> stationLoopKeys() { return new HashSet<>(stationLoops); }
+        /** Erişilebilirlik odağının izlenen yeri (bölüm dışında ise null). */
+        View a11yFocus() { return lastA11yFocus; }
+    }
+
     // ================================================================== bitiş
     /** Duyuru bitince ya da en geç bu kadar ms sonra özet ekranına geçilir. */
     static final long FINISH_MAX_MS = 4000;
@@ -1090,7 +1460,9 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         a.markStarted();
         a.saveNow();
         a.sound.stopAllLoops();
+        stationLoops.clear();
         if (panel != null) closePanel(false);
+        if (ordersPanel != null) closeOrdersPanel(false);
         final long t0 = SystemClock.uptimeMillis();
         Runnable r = new Runnable() {
             @Override public void run() {
@@ -1139,9 +1511,17 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         }
     }
 
-    /** Adımın istasyon sesi: kızartma adımı sfx_fry (döngü), diğerleri istasyonun sesi. */
+    /** Kutu içecek adımı ("Dolaptan al"): dolap sesiyle başlar, kutu açma sesiyle biter. */
+    static boolean isCanStep(Step s) { return s != null && s.station == Station.ICECEK && s.needs.containsKey("kutu_icecek"); }
+
+    /**
+     * Adımın istasyon sesi: kızartma adımı sfx_fry (döngü), içecekler v2.0 varyant havuzu (ayran doldurma: ayran dökme
+     * varyantları art arda; dolaptan al: dolap varyantları), diğerleri istasyonun sesi.
+     */
     static String sfxForStep(Step s) {
-        return s != null && s.isFry() ? "sfx_fry" : sfxForStation(s == null ? Station.IZGARA : s.station);
+        if (s != null && s.isFry()) return "sfx_fry";
+        if (isCanStep(s)) return "sfx_drink_fridge";
+        return sfxForStation(s == null ? Station.IZGARA : s.station);
     }
 
     static String sfxForPrep(PrepKind k) {
@@ -1154,9 +1534,21 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             case EKMEK: return "sfx_bread_warm";
             case SOS: return "sfx_sauce";
             case PAKET: return "sfx_wrap";
-            case ICECEK: return "sfx_pour";
-            default: return "sfx_grill_sizzle"; // ızgara ve tatlı/fırın
+            case ICECEK: return "sfx_drink_ayran";
+            default: return "sfx_grill_sizzle"; // ocak ve tatlı
         }
+    }
+
+    /** İçecek işinin bitiş sesi: kutu açma (kutu içecek) ya da bardak (ayran); içecek değilse null. */
+    static String drinkFinishSfx(Step s) {
+        if (s == null || s.station != Station.ICECEK) return null;
+        return isCanStep(s) ? "sfx_drink_can" : "sfx_drink_glass";
+    }
+
+    /** Siparişte içecek var mı (teslimde bardak sesi). */
+    static boolean hasDrink(Order o) {
+        for (OrderLine l : o.getLines()) for (int i = 0; i < l.stepCount(); i++) if (l.step(i).station == Station.ICECEK) return true;
+        return false;
     }
 
     /** Çırak sesi: kısık (%60) ve pan merkez. */
@@ -1169,6 +1561,11 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     private static String apprenticeKey(int worker) { return "a:" + worker; }
 
     private static String autoKey(Order o, int itemIndex) { return "auto:" + o.id + ":" + itemIndex; }
+
+    /** Pasif iş mi (ses döngüsünü istasyon eşitlemesi kurar). */
+    private boolean passiveStep(Step s) {
+        return s != null && s.isPassive() && engine.isPassiveStation(s.station);
+    }
 
     /** Motor olaylarını ses + titreşim + arayüz yenilemeye çevirir (anlatım Narrator'dadır). */
     private final class Feedback extends GameListenerAdapter {
@@ -1219,7 +1616,8 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
                 tutSizeShown = true;
                 a.speaker.say("Öğretici. " + Texts.tutSize(engine.getFlowMode()), false, Narrator.CAT_TUTORIAL, narrator.freshSinceNow());
             }
-            a.sound.startLoop(playerKey(o, step), sfxForStep(step), panForStation(step.station), 1f, seconds);
+            // pasif iş (ısıtıcı, ocak): ses istasyon döngüsünde (syncStationLoops); aktif iş: iş başına döngü
+            if (!passiveStep(step)) a.sound.startLoop(playerKey(o, step), sfxForStep(step), panForStation(step.station), 1f, seconds);
             a.haptics.stepStart();
             tutorial(6, Texts.TUT_STEP);
             dirty = true;
@@ -1227,6 +1625,8 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
         @Override public void onStepFinished(Order o, Step step, boolean complete) {
             a.sound.stopLoop(playerKey(o, step));
+            String drink = drinkFinishSfx(step);
+            if (drink != null) a.sound.play(drink, panForStation(Station.ICECEK), 0.9f);
             a.sound.play("sfx_step_done", panForPosition(o));
             a.haptics.stepDone();
             dirty = true;
@@ -1259,9 +1659,38 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             dirty = true;
         }
 
-        @Override public void onNoFreeSlot(Order o) {
+        // ---- v2.0 kaynak modeli: eller ve makineler (eski onNoFreeSlot artık gelmez)
+        @Override public void onHandsBusy(Order o, ActiveStep current) {
             a.sound.play("sfx_error");
             a.haptics.error();
+            notice(narrator.handsBusy(o, current));
+            dirty = true;
+        }
+
+        @Override public void onStationFull(Order o, Station station, int used, int capacity) {
+            a.sound.play("sfx_error", panForStation(station));
+            a.haptics.error();
+            notice(narrator.stationFull(o, station, used, capacity));
+            dirty = true;
+        }
+
+        @Override public void onAlreadyRunning(Order o, ActiveStep job) {
+            a.sound.play("sfx_warning", 0f, 0.6f);
+            a.haptics.warning();
+            notice(narrator.alreadyRunning(o, job));
+            dirty = true;
+        }
+
+        /** Pasif işi koyma bitti: eller serbest. Hafif tık + titreşim; menüler/eylem satırları yenilenir. */
+        @Override public void onHandsFree(ActiveStep job) {
+            a.sound.play("sfx_tick", panForStation(job.getStation()), 0.5f);
+            a.haptics.tap();
+            actionSig.clear(); // TalkBack eylem listeleri ("Elin dolu" kilitleri kalktı) yeniden kurulsun
+            if (tutorialActive && !tutPassiveShown) {
+                tutPassiveShown = true;
+                a.speaker.say("Öğretici. " + Texts.TUT_PASSIVE, false, Narrator.CAT_TUTORIAL, narrator.freshSinceNow());
+            }
+            dirty = true;
         }
 
         @Override public void onToppingsRejected(Order o, int itemIndex, StartResult reason, Ingredient ingredient) {
@@ -1385,16 +1814,17 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         }
 
         @Override public void onPrepStarted(PrepKind kind, boolean byApprentice, float seconds) {
-            if (!byApprentice) {
+            if (!byApprentice && kind != PrepKind.FRIES) { // patates hazırlığı pasiftir: ocak döngüsü
                 a.sound.startLoop(prepKey(kind), sfxForPrep(kind), panForStation(kind.station), 1f, seconds);
-                a.haptics.stepStart();
             }
+            if (!byApprentice) a.haptics.stepStart();
             dirty = true;
         }
 
         @Override public void onPrepFinished(PrepKind kind, boolean byApprentice, int amount) {
             if (!byApprentice) {
                 a.sound.stopLoop(prepKey(kind));
+                if (kind == PrepKind.DRINK) a.sound.play("sfx_drink_glass", panForStation(Station.ICECEK), 0.8f);
                 a.sound.play("sfx_step_done", panForStation(kind.station));
                 a.haptics.stepDone();
                 tutorial(2, Texts.TUT_PREP_DONE);
@@ -1411,10 +1841,18 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
         @Override public void onApprenticeAction(ApprenticeAction act) {
             String key = apprenticeKey(act.worker);
+            boolean passive = act.prep == PrepKind.FRIES || (act.prep == null && passiveStep(act.step));
             if (act.started) {
-                a.sound.startLoop(key, act.prep == PrepKind.FRIES ? "sfx_fry" : sfxForStep(act.step), 0f, APPRENTICE_VOLUME, act.seconds);
+                // pasif işi koyup geçer: sesi istasyon döngüsü verir; çırağın eli için ses kurulmaz
+                if (!passive) {
+                    String sfx = act.prep != null ? sfxForPrep(act.prep) : sfxForStep(act.step);
+                    a.sound.startLoop(key, sfx, 0f, APPRENTICE_VOLUME, act.seconds);
+                }
             } else {
-                a.sound.stopLoop(key);
+                // pasif iş bitişi çırağın ŞU ANKİ işinin sesini kesmesin
+                if (!passive) a.sound.stopLoop(key);
+                String drink = act.prep == PrepKind.DRINK ? "sfx_drink_glass" : (act.prep == null ? drinkFinishSfx(act.step) : null);
+                if (drink != null) a.sound.play(drink, 0f, APPRENTICE_VOLUME);
                 a.sound.play("sfx_step_done", 0f, APPRENTICE_VOLUME);
             }
             dirty = true;
@@ -1458,6 +1896,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
         @Override public void onOrderDelivered(Order o, int money, int tip, boolean happy) {
             a.sound.play("sfx_deliver", 0.3f);
+            if (hasDrink(o)) a.sound.playLater("sfx_drink_glass", 0.3f, 90); // bardak/kutu tezgâha konur
             a.sound.playLater("sfx_coin", 0.3f, 160);
             a.sound.playLater(happy ? "sfx_customer_happy" : "sfx_customer_angry", 0.6f, 480);
             a.haptics.deliver();
@@ -1478,6 +1917,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
         @Override public void onDayFinished(DaySummary s) {
             a.sound.stopAllLoops();
+            stationLoops.clear();
             a.sound.play("sfx_day_end");
             a.haptics.dayEnd();
             beginFinish(s);
@@ -1485,74 +1925,74 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
         @Override public void onDayFailed(DaySummary s) {
             a.sound.stopAllLoops();
+            stationLoops.clear();
             a.sound.play("sfx_day_end");
             a.haptics.dayEnd();
             beginFinish(s);
         }
     }
 
-    // ================================================================== çalışanlar şeridi
-    /** Çalışan işleri (oyuncunun hazırlığı, çırak işleri) gösterir: "Çırak: ayran dolduruyor". */
+    // ================================================================== çalışanlar
+    /**
+     * Çalışanlar: TEK odak noktası (satırlar ayrı odak değil). Hazırlıkta oyuncunun ve çırağın hazırlık işleri ("Sen: döner
+     * dilimleme", "Çırak: ayran dolduruyor"); gün içinde yalnızca çırak(lar)ın elindeki iş ya da "boşta" (oyuncunun işi eller
+     * satırında, pişen işler istasyon düğmelerinde). Satır görünümleri sabit havuzdur.
+     */
     private final class WorkersBox extends LinearLayout {
-        private final List<TextView> labels = new ArrayList<>();
-        private final List<BarView> bars = new ArrayList<>();
-        private final List<ActiveStep> jobs = new ArrayList<>();
-        private String key = "";
+        private final TextView[] labels = new TextView[MAX_WORKER_ROWS];
+        private final BarView[] bars = new BarView[MAX_WORKER_ROWS];
 
         WorkersBox() {
             super(ctx);
             setOrientation(VERTICAL);
+            setPadding(dp(12), dp(6), dp(12), dp(6));
+            setMinimumHeight(dp(48));
+            setBackground(Ui.round(ctx, Theme.CARD, Theme.GREEN, 1.5f, 14));
+            for (int i = 0; i < MAX_WORKER_ROWS; i++) {
+                labels[i] = Ui.label(ctx, "", 16, Theme.CREAM, true);
+                bars[i] = new BarView(ctx, 5);
+                addView(labels[i], Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, i == 0 ? 0 : 4, 0, 0));
+                addView(bars[i], Ui.lp(ctx, Ui.MATCH, Ui.dp(ctx, 5), 0, 2, 0, 0));
+            }
+            Ui.groupAsText(this);
         }
 
         void update() {
-            List<ActiveStep> now = new ArrayList<>();
-            for (ActiveStep s : engine.getActiveSteps()) if (s.isApprentice() || s.isPrep()) now.add(s);
-            StringBuilder k = new StringBuilder();
-            for (ActiveStep s : now) k.append(Texts.jobLabel(engine, s)).append('|');
-            if (now.isEmpty() && engine.getApprenticeLevel() > 0) k.append("boşta");
-            if (!k.toString().equals(key)) {
-                key = k.toString();
-                removeAllViews();
-                labels.clear();
-                bars.clear();
-                if (now.isEmpty() && engine.getApprenticeLevel() > 0) {
-                    addRow("Çırak: boşta", null);
-                } else {
-                    for (ActiveStep s : now) addRow(Texts.jobLabel(engine, s), s);
+            List<String> rows = new ArrayList<>();
+            List<ActiveStep> jobs = new ArrayList<>();
+            int level = engine.getApprenticeLevel();
+            if (prepUi) {
+                for (ActiveStep s : engine.getActiveSteps()) if (s.isPrep() || s.isApprentice()) { rows.add(Texts.jobLabel(engine, s)); jobs.add(s); }
+                if (rows.isEmpty() && level > 0) { rows.add("Çırak: boşta"); jobs.add(null); }
+            } else {
+                for (int w = 1; w <= level; w++) {
+                    ActiveStep hands = null;
+                    for (ActiveStep s : engine.getActiveSteps()) if (s.worker == w && s.holdsHands()) hands = s;
+                    String who = level > 1 ? "Çırak " + w : "Çırak";
+                    rows.add(hands == null ? who + ": boşta" : Texts.jobLabel(engine, hands));
+                    jobs.add(hands);
                 }
             }
-            jobs.clear();
-            jobs.addAll(now);
-            for (int i = 0; i < jobs.size() && i < bars.size(); i++) {
-                BarView b = bars.get(i);
-                if (b != null) b.set(jobs.get(i).progress(), jobs.get(i).isApprentice() ? Theme.GREEN : Theme.ORANGE);
+            int n = Math.min(rows.size(), MAX_WORKER_ROWS);
+            StringBuilder desc = new StringBuilder();
+            for (int i = 0; i < MAX_WORKER_ROWS; i++) {
+                boolean on = i < n;
+                labels[i].setVisibility(on ? View.VISIBLE : View.GONE);
+                ActiveStep j = on ? jobs.get(i) : null;
+                bars[i].setVisibility(j != null ? View.VISIBLE : View.GONE);
+                if (!on) continue;
+                if (!rows.get(i).contentEquals(labels[i].getText())) labels[i].setText(rows.get(i));
+                if (j != null) bars[i].set(j.progress(), j.isApprentice() ? Theme.GREEN : Theme.ORANGE);
+                if (desc.length() > 0) desc.append(". ");
+                desc.append(rows.get(i));
             }
-            setVisibility(getChildCount() == 0 ? View.GONE : View.VISIBLE);
-        }
-
-        private void addRow(String label, ActiveStep s) {
-            LinearLayout row = new LinearLayout(ctx);
-            row.setOrientation(VERTICAL);
-            row.setPadding(dp(12), dp(8), dp(12), dp(8));
-            row.setMinimumHeight(dp(48));
-            row.setBackground(Ui.round(ctx, Theme.CARD, s != null && s.isApprentice() ? Theme.GREEN : Theme.STROKE, 1.5f, 14));
-            TextView t = Ui.label(ctx, label, 16, Theme.CREAM, true);
-            row.addView(t);
-            BarView b = null;
-            if (s != null) {
-                b = new BarView(ctx, 6);
-                row.addView(b, Ui.lp(ctx, Ui.MATCH, Ui.dp(ctx, 6), 0, 4, 0, 0));
-            }
-            Ui.groupAsText(row);
-            row.setContentDescription(label + ".");
-            addView(row, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 3, 0, 3));
-            labels.add(t);
-            bars.add(b);
+            setVisibility(n == 0 ? View.GONE : View.VISIBLE);
+            if (n > 0) Ui.setDesc(this, desc.append('.').toString());
         }
     }
 
     // ================================================================== hazırlık bölümü
-    /** Hazır stok göstergeleri + hazırlık düğmeleri (hazırlık aşamasında ve gün içinde). */
+    /** Hazır stok göstergeleri + hazırlık düğmeleri (yalnızca hazırlık aşamasında). */
     private final class PrepBox extends LinearLayout {
         private final TextView[] cells = new TextView[4];
         private final List<Button> doners = new ArrayList<>();
@@ -1626,22 +2066,23 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         }
 
         void update() {
-            cells[0].setText("Hazır döner\n" + PortionSize.halvesText(engine.getReadyDonerHalves()));
+            if (!prepUi) return; // gün içinde ekranda değil
+            setText(cells[0], "Hazır döner\n" + PortionSize.halvesText(engine.getReadyDonerHalves()));
             Ui.setDesc(cells[0], Texts.stockCellDescription(engine, PrepKind.DONER));
             if (engine.menuHasDrinkPrep()) {
                 cells[1].setVisibility(View.VISIBLE);
-                cells[1].setText("Hazır ayran\n" + engine.getReadyDrinks() + " / " + engine.getReadyCapacity(PrepKind.DRINK));
+                setText(cells[1], "Hazır ayran\n" + engine.getReadyDrinks() + " / " + engine.getReadyCapacity(PrepKind.DRINK));
                 Ui.setDesc(cells[1], Texts.stockCellDescription(engine, PrepKind.DRINK));
             } else {
                 cells[1].setVisibility(View.GONE);
             }
-            cells[2].setText("Hazır tepsi\n" + engine.getTrayTotal());
+            setText(cells[2], "Hazır tepsi\n" + engine.getTrayTotal());
             Ui.setDesc(cells[2], Texts.stockCellDescription(engine, PrepKind.TRAY));
             if (friesBtn != null) {
                 cells[3].setVisibility(View.VISIBLE);
-                cells[3].setText("Hazır patates\n" + engine.getReadyFries() + " / " + engine.getReadyCapacity(PrepKind.FRIES));
+                setText(cells[3], "Hazır patates\n" + engine.getReadyFries() + " / " + engine.getReadyCapacity(PrepKind.FRIES));
                 Ui.setDesc(cells[3], Texts.stockCellDescription(engine, PrepKind.FRIES));
-                friesBtn.setText(Texts.prepButtonLabel(engine, PrepKind.FRIES, null));
+                setText(friesBtn, Texts.prepButtonLabel(engine, PrepKind.FRIES, null));
                 Ui.setDesc(friesBtn, Texts.prepButtonDescription(engine, PrepKind.FRIES, null));
                 refreshActions(friesBtn);
             } else {
@@ -1650,186 +2091,171 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             for (int i = 0; i < doners.size(); i++) {
                 Ingredient m = meats.get(i);
                 Button b = doners.get(i);
-                b.setText(Texts.prepButtonLabel(engine, PrepKind.DONER, m));
+                setText(b, Texts.prepButtonLabel(engine, PrepKind.DONER, m));
                 Ui.setDesc(b, Texts.prepButtonDescription(engine, PrepKind.DONER, m));
                 refreshActions(b);
             }
             if (drinkBtn != null) {
-                drinkBtn.setText(Texts.prepButtonLabel(engine, PrepKind.DRINK, null));
+                setText(drinkBtn, Texts.prepButtonLabel(engine, PrepKind.DRINK, null));
                 Ui.setDesc(drinkBtn, Texts.prepButtonDescription(engine, PrepKind.DRINK, null));
                 refreshActions(drinkBtn);
             }
-            trayBtn.setText(Texts.prepButtonLabel(engine, PrepKind.TRAY, null));
+            setText(trayBtn, Texts.prepButtonLabel(engine, PrepKind.TRAY, null));
             Ui.setDesc(trayBtn, Texts.prepButtonDescription(engine, PrepKind.TRAY, null));
             refreshActions(trayBtn);
         }
     }
 
-    // ================================================================== sipariş kartı
-    /** Kalem satırı: kalem adı + adımları; dokununca kalem seçilir. */
-    private final class ItemRow extends LinearLayout {
-        final int index;
-        private final TextView title, steps;
-        private final BarView bar;
+    private static void setText(TextView t, String s) {
+        if (!s.contentEquals(t.getText())) t.setText(s);
+    }
+
+    // ================================================================== sıradaki sipariş
+    /**
+     * Sıradaki siparişin başlığı (tek düğme): "Sipariş 2 · Ali", kalemlerin tek satırlık özeti, istek, eklenenler, sabır
+     * göstergesi. Etiket kısa ve saniyesizdir (sabır kelimeyle); dokununca seçer ya da ayrıntıyı okur.
+     */
+    private final class FocusHeader extends LinearLayout {
+        private final TextView head, items, requests, added, patLabel;
+        private final BarView patBar;
         private int bgKey = -1;
 
-        ItemRow(int index) {
+        FocusHeader() {
             super(ctx);
-            this.index = index;
             setOrientation(VERTICAL);
-            setPadding(dp(12), dp(8), dp(12), dp(8));
-            setMinimumHeight(dp(60));
-            title = Ui.label(ctx, "", 17, Theme.CREAM, true);
-            steps = Ui.label(ctx, "", 14, Theme.MUTED, false);
-            bar = new BarView(ctx, 5);
-            addView(title);
-            addView(steps);
-            addView(bar, Ui.lp(ctx, Ui.MATCH, Ui.dp(ctx, 5), 0, 4, 0, 0));
+            setPadding(dp(12), dp(10), dp(12), dp(10));
+            setMinimumHeight(dp(64));
+            head = Ui.label(ctx, "", 20, Theme.GOLD, true);
+            items = Ui.label(ctx, "", 17, Theme.CREAM, false);
+            requests = Ui.label(ctx, "", 16, Theme.GOLD, true);
+            added = Ui.label(ctx, "", 15, Theme.CREAM, false);
+            patLabel = Ui.label(ctx, "", 15, Theme.MUTED, false);
+            patBar = new BarView(ctx, 8);
+            addView(head);
+            addView(items);
+            addView(requests);
+            addView(added);
+            addView(patLabel, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 0));
+            addView(patBar, Ui.lp(ctx, Ui.MATCH, Ui.dp(ctx, 8), 0, 3, 0, 0));
             Ui.groupAsButton(this);
         }
 
-        void update(final Order o, OrderLine l, boolean selItem) {
-            title.setText((selItem ? "▶ " : "") + (index + 1) + ". " + l.displayName() + "  ·  " + l.price() + " TL" + (l.isDone() ? "  ✓ hazır" : ""));
-            steps.setText(Texts.lineSteps(engine, o, l));
-            float prog = l.isDone() ? 1f : 0f;
-            if (!l.isDone()) {
-                int total = l.stepCount();
-                float sum = l.doneCount();
-                for (ActiveStep s : engine.getActiveSteps()) if (s.order == o && s.itemIndex == l.index) sum += s.progress();
-                prog = sum / Math.max(1, total);
+        void update(Order o, boolean timed) {
+            if (o == null) {
+                setText(head, "Bekleyen sipariş yok");
+                setText(items, "Müşteri bekleniyor.");
+                requests.setVisibility(GONE);
+                added.setVisibility(GONE);
+                patLabel.setVisibility(GONE);
+                patBar.setVisibility(GONE);
+                Ui.setDesc(this, "Bekleyen sipariş yok, müşteri bekleniyor");
+                background(0);
+                return;
             }
-            bar.set(prog, l.isDone() ? Theme.GREEN : Theme.CREAM);
-            int key = (selItem ? 1 : 0) | (l.isDone() ? 2 : 0) | (l.isRunning() ? 4 : 0);
-            if (key != bgKey) {
-                bgKey = key;
-                setBackground(Ui.round(ctx, selItem ? Theme.CARD_HI : Theme.BG_MID,
-                        l.isDone() ? Theme.GREEN : (selItem ? Theme.GOLD : (l.isRunning() ? Theme.ORANGE : Theme.STROKE)), selItem ? 3 : 1.5f, 12));
+            setText(head, Texts.focusTitle(o));
+            setText(items, Texts.focusItems(o));
+            if (o.hasRequests()) { requests.setVisibility(VISIBLE); setText(requests, "İstek: " + o.requestsText()); }
+            else requests.setVisibility(GONE);
+            String ad = Texts.focusAdded(o);
+            if (ad.isEmpty()) added.setVisibility(GONE); else { added.setVisibility(VISIBLE); setText(added, ad); }
+            int level = 0;
+            boolean showPat = timed && !o.isReady();
+            patLabel.setVisibility(showPat ? VISIBLE : GONE);
+            patBar.setVisibility(showPat ? VISIBLE : GONE);
+            if (showPat) {
+                float f = o.customer.patienceFraction();
+                level = Texts.patienceLevel(f);
+                setText(patLabel, Texts.patienceVisual(o));
+                patBar.set(f, level == 2 ? Theme.RED : (level == 1 ? Theme.ORANGE : Theme.GOLD));
             }
-            Ui.setDesc(this, Texts.lineDescription(engine, o, l, selItem));
+            Ui.setDesc(this, Texts.orderDescription(o, false, engine.getActiveFor(o.id), timed));
+            background(1 | (level << 1) | (o.isReady() ? 8 : 0));
+        }
+
+        private void background(int key) {
+            if (key == bgKey) return;
+            bgKey = key;
+            int level = (key >> 1) & 3;
+            boolean ready = (key & 8) != 0;
+            int stroke = ready ? Theme.GREEN : (level == 2 ? Theme.RED : (key == 0 ? Theme.STROKE : Theme.GOLD));
+            setBackground(Ui.round(ctx, key == 0 ? Theme.CARD : Theme.CARD_HI, stroke, level == 2 || ready ? 3.5f : 2.5f, 16));
         }
     }
 
-    /** Ortak "Siparişi paketle" satırı. */
-    private final class PackRow extends LinearLayout {
+    /** "Şimdi yapılabilecekler" satırı (havuzdan; ReadyAction değişince yerinde güncellenir). */
+    final class ActionRow extends LinearLayout {
+        ReadyAction action;
         private final TextView text;
+        private final BarView bar;
         private int bgKey = -1;
 
-        PackRow() {
+        ActionRow() {
             super(ctx);
             setOrientation(VERTICAL);
             setGravity(Gravity.CENTER_VERTICAL);
-            setPadding(dp(12), dp(8), dp(12), dp(8));
+            setPadding(dp(14), dp(10), dp(12), dp(10));
+            setMinimumHeight(dp(60));
+            text = Ui.label(ctx, "", 17, Theme.CREAM, true);
+            bar = new BarView(ctx, 5);
+            addView(text);
+            addView(bar, Ui.lp(ctx, Ui.MATCH, Ui.dp(ctx, 5), 0, 4, 0, 0));
+            setVisibility(GONE);
+            Ui.groupAsButton(this);
+        }
+
+        void update(ReadyAction act, int more) {
+            action = act;
+            String label = Texts.actionLabel(engine, act);
+            String vis = act.kind == ReadyAction.Kind.DELIVER ? "✓ Teslim et"
+                    : (act.isDoable() ? "▶ " : "") + act.text + (more > 0 ? "  (+" + more + " iş daha)" : "");
+            setText(text, vis);
+            Ui.setDesc(this, label);
+            boolean running = act.status == ReadyAction.Status.RUNNING;
+            bar.setVisibility(running ? VISIBLE : GONE);
+            if (running) {
+                ActiveStep job = null;
+                for (ActiveStep s : engine.getActiveSteps()) {
+                    if (s.order != null && s.order.id == act.orderId && s.itemIndex == act.itemIndex && s.step.name.equals(act.stepName)) job = s;
+                }
+                bar.set(job == null ? 0f : job.progress(), act.byApprentice ? Theme.GREEN : Theme.ORANGE);
+            }
+            int key = act.kind == ReadyAction.Kind.DELIVER ? 3 : act.isDoable() ? 1 : running ? 2 : 0;
+            text.setTextColor(key == 0 || key == 2 ? Theme.MUTED : Theme.CREAM);
+            if (key != bgKey) {
+                bgKey = key;
+                int stroke = key == 3 ? Theme.GREEN : key == 1 ? Theme.GOLD : key == 2 ? Theme.ORANGE : Theme.STROKE;
+                setBackground(Ui.round(ctx, key == 1 || key == 3 ? Theme.CARD_HI : Theme.BG_MID, stroke, key == 1 || key == 3 ? 3 : 1.5f, 14));
+            }
+        }
+    }
+
+    /** Diğer siparişlerin TEK satırlık özeti; dokununca sipariş listesi açılır. En acil kritikse kırmızı çerçeve + metin. */
+    private final class QueueRow extends LinearLayout {
+        private final TextView text;
+        private int bgKey = -1;
+
+        QueueRow() {
+            super(ctx);
+            setOrientation(VERTICAL);
+            setGravity(Gravity.CENTER_VERTICAL);
+            setPadding(dp(12), dp(10), dp(12), dp(10));
             setMinimumHeight(dp(56));
             text = Ui.label(ctx, "", 16, Theme.CREAM, true);
             addView(text);
             Ui.groupAsButton(this);
         }
 
-        void update(Order o) {
-            text.setText(Texts.packText(o));
-            int key = o.isReady() ? 3 : (o.isPacking() ? 2 : (o.canPack() ? 1 : 0));
+        void update(int others, int readyOthers, Order urgent, boolean timed) {
+            setText(text, Texts.queueVisual(others, readyOthers, urgent, timed));
+            Ui.setDesc(this, Texts.queueLabel(others, readyOthers, urgent, timed));
+            int level = timed && urgent != null && !urgent.isReady() ? Texts.patienceLevel(urgent.customer.patienceFraction()) : 0;
+            int key = others == 0 ? 0 : (readyOthers > 0 ? 4 : 1 + level);
             if (key != bgKey) {
                 bgKey = key;
-                setBackground(Ui.round(ctx, o.canPack() ? Theme.CARD_HI : Theme.BG_MID,
-                        key >= 2 ? Theme.GREEN : (key == 1 ? Theme.GOLD : Theme.STROKE), key == 1 ? 3 : 1.5f, 12));
+                int stroke = key == 3 ? Theme.RED : key == 4 ? Theme.GREEN : key == 2 ? Theme.ORANGE : Theme.STROKE;
+                setBackground(Ui.round(ctx, Theme.CARD, stroke, key >= 2 ? 3f : 1.5f, 14));
             }
-            Ui.setDesc(this, Texts.packDescription(o));
-        }
-    }
-
-    private final class OrderCard extends LinearLayout {
-        final int orderId;
-        private final LinearLayout header;
-        private final TextView head, items, requests, status, patLabel;
-        private final BarView patBar, stepBar;
-        private final List<ItemRow> rows = new ArrayList<>();
-        private final PackRow packRow;
-        private int bgKey = -1;
-
-        OrderCard(Order o) {
-            super(ctx);
-            orderId = o.id;
-            setOrientation(VERTICAL);
-            setPadding(dp(8), dp(8), dp(8), dp(8));
-
-            header = new LinearLayout(ctx);
-            header.setOrientation(VERTICAL);
-            header.setPadding(dp(6), dp(4), dp(6), dp(6));
-            header.setMinimumHeight(dp(64));
-            head = Ui.label(ctx, "", 19, Theme.GOLD, true);
-            items = Ui.label(ctx, "", 17, Theme.CREAM, false);
-            requests = Ui.label(ctx, "", 16, Theme.GOLD, true);
-            status = Ui.label(ctx, "", 16, Theme.CREAM, true);
-            patLabel = Ui.label(ctx, "", 15, Theme.MUTED, false);
-            patBar = new BarView(ctx, 8);
-            stepBar = new BarView(ctx, 6);
-            header.addView(head);
-            header.addView(items);
-            header.addView(requests);
-            header.addView(status, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 2, 0, 4));
-            header.addView(patLabel);
-            header.addView(patBar, Ui.lp(ctx, Ui.MATCH, Ui.dp(ctx, 8), 0, 3, 0, 5));
-            header.addView(stepBar, Ui.lp(ctx, Ui.MATCH, Ui.dp(ctx, 6), 0, 0, 0, 0));
-            Ui.groupAsButton(header);
-            tap(header, new Runnable() {
-                @Override public void run() {
-                    if (paused || finishing || panel != null) return;
-                    engine.selectOrder(orderId);
-                    dirty = true;
-                }
-            });
-            addView(header);
-
-            for (int i = 0; i < o.lineCount(); i++) {
-                final int idx = i;
-                ItemRow r = new ItemRow(i);
-                tap(r, new Runnable() { @Override public void run() { onSelectItem(orderId, idx); } });
-                rows.add(r);
-                addView(r, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 4, 4, 4, 0));
-            }
-            packRow = new PackRow();
-            tap(packRow, new Runnable() { @Override public void run() { onPackRow(orderId); } });
-            addView(packRow, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 4, 4, 4, 0));
-        }
-
-        void update(Order o, boolean sel) {
-            ActiveStep act = engine.getActiveFor(o.id);
-            float f = o.customer.patienceFraction();
-            int level = Texts.patienceLevel(f);
-            head.setText((sel ? "▶ " : "") + Texts.orderTitle(o));
-            items.setText(o.itemsText() + "  ·  " + o.price() + " TL");
-            if (o.hasRequests()) {
-                requests.setVisibility(View.VISIBLE);
-                requests.setText("İstek: " + o.requestsText());
-            } else {
-                requests.setVisibility(View.GONE);
-            }
-            status.setText(Texts.orderStatus(o, act, sel));
-            boolean timedDay = engine.isTimed();
-            patLabel.setVisibility(timedDay ? View.VISIBLE : View.GONE); // süresiz günde sabır göstergesi yok
-            patBar.setVisibility(timedDay ? View.VISIBLE : View.GONE);
-            if (timedDay) {
-                String w = Texts.patienceWord(f);
-                patLabel.setText(Character.toUpperCase(w.charAt(0)) + w.substring(1) + " · " + Math.max(0, Math.round(o.customer.getPatienceLeft())) + " sn");
-                int col = level == 2 ? Theme.RED : (level == 1 ? Theme.ORANGE : Theme.GOLD);
-                patBar.set(f, col);
-            }
-            float stepsDone = o.getNextStepIndex();
-            for (ActiveStep s : engine.getActiveSteps()) if (s.order == o) stepsDone += s.progress();
-            stepBar.set(stepsDone / Math.max(1, o.steps.size()), Theme.CREAM);
-            setSelected(sel);
-            int selItem = sel ? engine.getSelectedItem() : -1;
-            for (int i = 0; i < rows.size() && i < o.lineCount(); i++) rows.get(i).update(o, o.getLine(i), i == selItem);
-            packRow.update(o);
-            if (!timedDay) level = 0;
-            int key = (sel ? 1 : 0) | (level << 1) | (o.isReady() ? 8 : 0);
-            if (key != bgKey) {
-                bgKey = key;
-                int stroke = sel ? Theme.GOLD : (level == 2 ? Theme.RED : Theme.STROKE);
-                float sw = sel ? 3.5f : (level == 2 || o.isReady() ? 2.5f : 1.5f);
-                setBackground(Ui.round(ctx, sel ? Theme.CARD_HI : Theme.CARD, o.isReady() ? Theme.GREEN : stroke, sw, 16));
-            }
-            Ui.setDesc(header, Texts.orderDescription(o, sel, act, timedDay));
+            Ui.dim(this, others == 0);
         }
     }
 
@@ -1864,29 +2290,25 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             attachMenu(this, new StationSource(st, -2, null), st, true);
         }
 
-        void update() {
-            String vs = Texts.stationVisualStatus(engine, st);
-            boolean busy = vs.equals("Çalışıyor");
-            boolean needed = vs.equals("Şimdi bu");
+        void update(boolean needed) {
+            int cap = engine.getStationCapacity(st);
+            List<ActiveStep> jobs = engine.getStationJobs(st);
+            boolean busy = !jobs.isEmpty();
+            boolean full = cap > 0 && engine.getStationUsed(st) >= cap;
             ActiveStep act = null;
-            for (ActiveStep s : engine.getActiveSteps()) {
-                if (s.step.station != st) continue;
-                if (act == null || (act.isApprentice() && !s.isApprentice())) act = s;
-            }
-            stat.setText(needed ? "▶ Şimdi bu" : (busy ? (act != null && act.isApprentice() ? "Çırak çalışıyor" : "Çalışıyor") : "Boş"));
+            for (ActiveStep s : jobs) if (act == null || s.getRemaining() < act.getRemaining()) act = s;
+            setText(stat, Texts.stationVisual(engine, st, needed));
             stat.setTextColor(needed ? Theme.GOLD : Theme.MUTED);
             stat.setTypeface(needed || busy ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
             bar.set(act == null ? 0f : act.progress(), act != null && act.isApprentice() ? Theme.GREEN : Theme.ORANGE);
             icon.setPhase(engine.getElapsed() * 3f);
-            int key = (needed ? 1 : 0) | (busy ? 2 : 0);
+            int key = (needed ? 1 : 0) | (busy ? 2 : 0) | (full ? 4 : 0);
             if (key != bgKey) {
                 bgKey = key;
                 setBackground(Ui.round(ctx, busy ? Theme.CARD_HI : Theme.CARD,
-                        needed ? Theme.GOLD : (busy ? Theme.ORANGE : Theme.STROKE), needed ? 4 : 2, 16));
+                        needed ? Theme.GOLD : (full ? Theme.RED : (busy ? Theme.ORANGE : Theme.STROKE)), needed || full ? 4 : 2, 16));
             }
-            boolean used = inUse.contains(st);
-            Ui.dim(this, !used);
-            Ui.setDesc(this, Texts.stationDescription(narrator, engine, st, used));
+            Ui.setDesc(this, Texts.stationShort(engine, st, needed));
             refreshActions(this);
         }
     }

@@ -52,14 +52,22 @@ public class AudioSpeechTest {
         assertFalse(names.isEmpty());
         Set<String> sfxList = new HashSet<>(Arrays.asList(SoundManager.SFX));
         for (String n : names) {
-            int id = c.getResources().getIdentifier(n, "raw", c.getPackageName());
-            assertTrue("res/raw içinde yok: " + n, id != 0);
-            if (n.startsWith("sfx_")) assertTrue("SoundManager.SFX listesinde yok (yüklenmez, hep sessiz): " + n, sfxList.contains(n));
+            // v2.0 varyant havuzu: ad ya kendi dosyasıdır ya da <ad>_1.. varyantları vardır (sfx_drink_glass -> _1, _2)
+            assertTrue("res/raw içinde yok (ne dosya ne varyant): " + n, rawOrPool(c, n));
+            if (n.startsWith("sfx_") && !isVariantFile(n)) assertTrue("SoundManager.SFX listesinde yok (yüklenmez, hep sessiz): " + n, sfxList.contains(n));
         }
-        for (String n : SoundManager.SFX) assertTrue("SFX raw yok: " + n, c.getResources().getIdentifier(n, "raw", c.getPackageName()) != 0);
+        for (String n : SoundManager.SFX) assertTrue("SFX raw yok: " + n, rawOrPool(c, n));
         for (String n : new String[]{"music_menu", "music_day_calm", "music_day_busy", "music_shop"})
             assertTrue(n, c.getResources().getIdentifier(n, "raw", c.getPackageName()) != 0);
     }
+
+    private static boolean rawOrPool(Context c, String n) {
+        return c.getResources().getIdentifier(n, "raw", c.getPackageName()) != 0
+                || c.getResources().getIdentifier(n + "_1", "raw", c.getPackageName()) != 0;
+    }
+
+    /** "sfx_drink_ayran_1" gibi doğrudan varyant dosyası adı (havuz adı SFX'te). */
+    private static boolean isVariantFile(String n) { return n.matches(".*_[0-9]+$"); }
 
     private void scan(File d, Set<String> out) throws Exception {
         Pattern p = Pattern.compile("\"((?:sfx|music)_[a-z_]+)\"");

@@ -28,8 +28,29 @@ public final class SoundManager {
             "sfx_customer_arrive", "sfx_order_new", "sfx_slice", "sfx_bread_warm", "sfx_sauce", "sfx_wrap", "sfx_veg_tomato", "sfx_veg_lettuce",
             "sfx_grill_sizzle", "sfx_fry", "sfx_pour", "sfx_step_done", "sfx_deliver", "sfx_coin", "sfx_error",
             "sfx_warning", "sfx_customer_happy", "sfx_customer_angry", "sfx_star_up", "sfx_star_down",
-            "sfx_day_start", "sfx_day_end", "sfx_buy", "sfx_tap", "sfx_tick"
+            "sfx_day_start", "sfx_day_end", "sfx_buy", "sfx_tap", "sfx_tick",
+            // v2.0 içecek sesleri: yalnızca varyant dosyaları vardır (sfx_drink_ayran_1..3, _can_1..2, _fridge_1..2, _glass_1..2)
+            "sfx_drink_ayran", "sfx_drink_can", "sfx_drink_fridge", "sfx_drink_glass"
     };
+
+    /**
+     * v2.0 varyant havuzu: bir ad ({@code sfx_drink_ayran}) çalınınca res/raw'daki {@code <ad>_1.._N} dosyalarından (ve varsa
+     * {@code <ad>}'ın kendisinden) rastgele biri seçilir; aynı varyant art arda çalınmaz. Tek dosyalı sesler tek elemanlı
+     * havuzdur.
+     */
+    static final int MAX_VARIANTS = 12;
+    /**
+     * Zincirli sesler: istasyon işi süresince döngü yerine varyantlar ART ARDA çalınır (biri bitince sıradaki başlar, kısa
+     * dosya döngüsü "takılma" gibi duyulmaz); iş bitince çalan ses sönerek biter.
+     */
+    public static final String[] CHAINED = {"sfx_drink_ayran", "sfx_drink_fridge", "sfx_drink_can"};
+    /** Tek atış seslerinde hafif rastgelelik (perde ±%4, ses ±%6); arayüz sinyalleri (tık, hata, uyarı) sabit kalır. */
+    static final float ONESHOT_RATE_JITTER = 0.04f, ONESHOT_VOL_JITTER = 0.06f;
+    static final String[] NO_JITTER = {"sfx_tap", "sfx_tick", "sfx_error", "sfx_warning"};
+    /** Aynı ses bu kadar ms içinde ikinci kez istenirse yok sayılır (üst üste binme). */
+    static final long DEDUPE_MS = 60;
+    /** Aynı ses, öncekisi bitmeden yeniden çalınınca eskisi bu sürede sönerek biter. */
+    static final long FADE_MS = 120;
 
     /** Döngülenebilen istasyon sesleri: SoundPool döngüsüyle adım süresince çalar. */
     public static final String[] LOOPED = {"sfx_grill_sizzle", "sfx_fry", "sfx_pour", "sfx_wrap", "sfx_bread_warm"};
@@ -57,6 +78,22 @@ public final class SoundManager {
     private final Handler sfxHandler = new Handler(Looper.getMainLooper());
     private final Map<String, Integer> ids = new HashMap<>();
     private final Set<Integer> loaded = new HashSet<>();
+    /** Havuz adı -> varyant dosyaları (res/raw adları). */
+    private final Map<String, List<String>> pools = new HashMap<>();
+    /** Dosya -> süre (ms; okunamadıysa 0). */
+    private final Map<String, Long> durations = new HashMap<>();
+    /** Havuz adı -> son çalınan varyant (art arda aynısı çalınmasın). */
+    private final Map<String, String> lastVariant = new HashMap<>();
+    /** Havuz adı -> son tek atış sesi (üst üste binme denetimi). */
+    private final Map<String, Voice> lastVoice = new HashMap<>();
+    /** Sönümlenen sesler (iptal edilmez; release temizler). */
+    private final Handler fadeHandler = new Handler(Looper.getMainLooper());
+
+    private static final class Voice {
+        int stream;
+        long startAt, durMs;
+        float left, right;
+    }
     private SoundPool pool;
     /** Ses çıkışı (SoundPool); testte yerine konabilir. */
     private Sink sink = new PoolSink();
@@ -80,6 +117,7 @@ public final class SoundManager {
 
     public SoundManager(Context context) {
         ctx = context.getApplicationContext();
+        buildPools();
         focus = new AudioFocus(ctx, AudioAttributes.USAGE_GAME, AudioAttributes.CONTENT_TYPE_MUSIC,
                 AudioManager.AUDIOFOCUS_GAIN, new AudioFocus.Listener() {
             @Override public void onFocusChange(int change) { onMusicFocusChange(change); }
@@ -95,13 +133,111 @@ public final class SoundManager {
                     if (status == 0) loaded.add(sampleId);
                 }
             });
-            for (String name : SFX) {
-                int res = resId(name);
-                if (res == 0) continue;
-                try { ids.put(name, pool.load(ctx, res, 1)); } catch (Exception ignored) { }
+            for (List<String> files : pools.values()) {
+                for (String f : files) {
+                    if (ids.containsKey(f)) continue;
+                    int res = resId(f);
+                    if (res == 0) continue;
+                    try { ids.put(f, pool.load(ctx, res, 1)); } catch (Exception ignored) { }
+                }
             }
         } catch (Exception e) {
             pool = null;
+        }
+    }
+
+    /** Varyant havuzlarını ve süreleri kurar (yalnızca kaynaklara bakar; SoundPool gerekmez). */
+    private void buildPools() {
+        for (String name : SFX) {
+            List<String> files = new ArrayList<>();
+            if (resId(name) != 0) files.add(name);
+            for (int i = 1; i <= MAX_VARIANTS; i++) {
+                String v = name + "_" + i;
+                if (resId(v) == 0) break;
+                files.add(v);
+            }
+            if (files.isEmpty()) continue;
+            pools.put(name, files);
+            for (String f : files) {
+                if (durations.containsKey(f)) continue;
+                long ms = 0L;
+                try { ms = OggInfo.durationMs(ctx.getResources().openRawResource(resId(f))); } catch (Exception ignored) { }
+                durations.put(f, ms);
+            }
+        }
+    }
+
+    /** Havuzun varyant dosyaları (bilinmeyen ad: boş liste). */
+    public List<String> variants(String name) {
+        List<String> l = pools.get(name);
+        return l == null ? new ArrayList<String>() : new ArrayList<>(l);
+    }
+
+    /** Dosyanın süresi (ms); bilinmiyorsa 0. */
+    public long durationMs(String file) {
+        Long d = durations.get(file);
+        return d == null ? 0L : d;
+    }
+
+    /** Havuzdan çalınacak varyantı seçer: rastgele, bir önceki ile aynı olmayan. Havuz yoksa adın kendisi. */
+    String pickVariant(String name) {
+        List<String> l = pools.get(name);
+        if (l == null || l.isEmpty()) return name;
+        String pick;
+        if (l.size() == 1) pick = l.get(0);
+        else {
+            String last = lastVariant.get(name);
+            do { pick = l.get(rnd.nextInt(l.size())); } while (pick.equals(last));
+        }
+        lastVariant.put(name, pick);
+        return pick;
+    }
+
+    private static boolean jitters(String name) {
+        for (String n : NO_JITTER) if (n.equals(name)) return false;
+        return true;
+    }
+
+    /**
+     * Havuzdan bir varyantı tek atış olarak çalar. Aynı havuzun önceki sesi {@link #DEDUPE_MS} içindeyse yeni istek atılır
+     * (üst üste binme); önceki ses hâlâ çalıyorsa {@link #FADE_MS} içinde sönerek biter (birbirini kesmez, çamurlaşmaz).
+     */
+    private int emitOneShot(String poolName, float pan, float volume, float rate) {
+        long now = SystemClock.uptimeMillis();
+        Voice prev = lastVoice.get(poolName);
+        if (prev != null && prev.stream != 0) {
+            if (now - prev.startAt < DEDUPE_MS) return 0;
+            if (now < prev.startAt + prev.durMs) fadeOut(prev.stream, prev.left, prev.right);
+        }
+        String file = pickVariant(poolName);
+        float l = left(pan, volume), r = right(pan, volume);
+        int stream = sink.start(file, l, r, Math.max(0.5f, Math.min(2f, rate)), 0);
+        Voice v = new Voice();
+        v.stream = stream;
+        v.startAt = now;
+        v.durMs = (long) (durationMs(file) / Math.max(0.5f, Math.min(2f, rate)));
+        v.left = l;
+        v.right = r;
+        lastVoice.put(poolName, v);
+        return stream;
+    }
+
+    /** Akışı kısa sürede kısarak durdurur. */
+    private void fadeOut(final int stream, final float l, final float r) {
+        if (stream == 0) return;
+        final int steps = 4;
+        for (int i = 1; i <= steps; i++) {
+            final int k = i;
+            fadeHandler.postDelayed(new Runnable() {
+                @Override public void run() {
+                    if (k < steps) {
+                        float f = 1f - k / (float) steps;
+                        sink.setVolume(stream, l * f, r * f);
+                    } else {
+                        sink.stop(stream);
+                    }
+                }
+            }, FADE_MS * i / steps);
         }
     }
 
@@ -173,10 +309,17 @@ public final class SoundManager {
     /** volume: 0..1 ek çarpan (ör. çırak sesleri için 0,6). */
     public void play(String name, float pan, float volume) { play(name, pan, volume, 1f); }
 
-    /** rate: çalma hızı/perde çarpanı (0,5-2); kısa tek atış malzeme sesleri varyasyon için kullanır. */
+    /**
+     * rate: çalma hızı/perde çarpanı (0,5-2). v2.0: ad bir varyant havuzudur (rastgele, art arda aynısı değil); arayüz
+     * sinyalleri dışında perde ve ses hafif rastgeledir; aynı sesin üst üste binmesi engellenir.
+     */
     public void play(String name, float pan, float volume, float rate) {
-        if (pool == null || sfxVolume <= 0f) return;
-        sink.start(name, left(pan, volume), right(pan, volume), Math.max(0.5f, Math.min(2f, rate)), 0);
+        if (pool == null || sfxVolume <= 0f || name == null) return;
+        if (jitters(name)) {
+            rate *= 1f + (rnd.nextFloat() * 2f - 1f) * ONESHOT_RATE_JITTER;
+            volume *= 1f + (rnd.nextFloat() * 2f - 1f) * ONESHOT_VOL_JITTER;
+        }
+        emitOneShot(name, pan, volume, rate);
     }
 
     private float left(float pan, float volume) {
@@ -195,6 +338,8 @@ public final class SoundManager {
         /** Akış kimliği (0: çalınamadı). */
         int start(String name, float left, float right, float rate, int loop);
         void stop(int stream);
+        /** Ses düzeyi (sönümleme); varsayılan: yok sayılır. */
+        default void setVolume(int stream, float left, float right) { }
     }
 
     private final class PoolSink implements Sink {
@@ -211,6 +356,12 @@ public final class SoundManager {
             if (p == null || stream == 0) return;
             try { p.stop(stream); } catch (Exception ignored) { }
         }
+
+        @Override public void setVolume(int stream, float left, float right) {
+            SoundPool p = pool;
+            if (p == null || stream == 0) return;
+            try { p.setVolume(stream, left, right); } catch (Exception ignored) { }
+        }
     }
 
     /** Ses çıkışını değiştirir (testlerde çalınan sesleri izlemek için). */
@@ -218,6 +369,11 @@ public final class SoundManager {
 
     public static boolean isLooped(String name) {
         for (String n : LOOPED) if (n.equals(name)) return true;
+        return false;
+    }
+
+    public static boolean isChained(String name) {
+        for (String n : CHAINED) if (n.equals(name)) return true;
         return false;
     }
 
@@ -234,6 +390,8 @@ public final class SoundManager {
         int stream;
         boolean running;
         Runnable pulse, stopper;
+        /** Zincirli seste o an çalan sesin düzeyi (sönümleme için). */
+        float chainL, chainR;
         /** Sıralı ses planı (otomatik malzeme: domates, marul, sos...); null: döngü/darbe işi. */
         List<Cue> cues;
         long totalMs;
@@ -303,21 +461,37 @@ public final class SoundManager {
                 Runnable r = new Runnable() {
                     @Override public void run() {
                         if (!j.running) return;
-                        sink.start(c.name, left(j.pan, j.volume), right(j.pan, j.volume), Math.max(0.5f, Math.min(2f, c.rate)), 0);
+                        emitOneShot(c.name, j.pan, j.volume, c.rate);
                     }
                 };
                 j.cueRunnables.add(r);
                 loopHandler.postDelayed(r, c.atMs - elapsed);
             }
         } else if (isLooped(j.name)) {
-            j.stream = sink.start(j.name, left(j.pan, j.volume), right(j.pan, j.volume), 1f, -1);
+            j.stream = sink.start(pickVariant(j.name), left(j.pan, j.volume), right(j.pan, j.volume), 1f, -1);
+        } else if (isChained(j.name)) {
+            // varyantlar art arda: biri bitince (süresi biliniyorsa) sıradaki başlar; iş bitince çalan ses söner
+            j.pulse = new Runnable() {
+                @Override public void run() {
+                    if (!j.running) return;
+                    String file = pickVariant(j.name);
+                    float rate = 1f + (rnd.nextFloat() * 2f - 1f) * ONESHOT_RATE_JITTER;
+                    j.chainL = left(j.pan, j.volume);
+                    j.chainR = right(j.pan, j.volume);
+                    j.stream = sink.start(file, j.chainL, j.chainR, rate, 0);
+                    long d = durationMs(file);
+                    long gap = Math.max(250L, (d > 0 ? (long) (d / rate) : 700L) - 30L);
+                    if (SystemClock.uptimeMillis() + gap < j.endAt - 150L) loopHandler.postDelayed(this, gap);
+                }
+            };
+            j.pulse.run();
         } else {
             j.pulse = new Runnable() {
                 @Override public void run() {
                     if (!j.running) return;
                     float rate = 1f + (rnd.nextFloat() * 2f - 1f) * PULSE_RATE_JITTER;
                     float vol = j.volume * (1f + (rnd.nextFloat() * 2f - 1f) * PULSE_VOL_JITTER);
-                    sink.start(j.name, left(j.pan, vol), right(j.pan, vol), rate, 0);
+                    emitOneShot(j.name, j.pan, vol, rate);
                     long gap = (long) ((PULSE_MIN_S + rnd.nextFloat() * (PULSE_MAX_S - PULSE_MIN_S)) * 1000f);
                     if (SystemClock.uptimeMillis() + gap < j.endAt) loopHandler.postDelayed(this, gap);
                 }
@@ -332,9 +506,35 @@ public final class SoundManager {
         if (j.pulse != null) loopHandler.removeCallbacks(j.pulse);
         for (Runnable r : j.cueRunnables) loopHandler.removeCallbacks(r);
         j.cueRunnables.clear();
-        if (j.stream != 0) sink.stop(j.stream);
+        if (j.stream != 0) {
+            if (isChained(j.name)) fadeOut(j.stream, j.chainL, j.chainR); else sink.stop(j.stream);
+        }
         j.stream = 0;
     }
+
+    /**
+     * İstasyon döngüsünü (anahtar başına tek) en az {@code seconds} daha sürdürür: aynı adla çalıyorsa yeniden başlatmadan
+     * süresini uzatır, yoksa başlatır. Aynı istasyonda birden çok pasif iş (iki ekmek) tek döngü paylaşır.
+     */
+    public void holdLoop(String key, String name, float pan, float volume, float seconds) {
+        if (key == null || name == null) return;
+        Job j = jobs.get(key);
+        if (j == null || !j.name.equals(name) || j.cues != null) { startLoop(key, name, pan, volume, seconds); return; }
+        long ms = (long) (Math.max(0f, seconds) * 1000f);
+        if (j.running) {
+            long end = SystemClock.uptimeMillis() + ms;
+            if (end > j.endAt) {
+                j.endAt = end;
+                loopHandler.removeCallbacks(j.stopper);
+                loopHandler.postDelayed(j.stopper, ms);
+            }
+        } else if (ms > j.remainingMs) {
+            j.remainingMs = ms;
+        }
+    }
+
+    /** Anahtarlı döngü var mı (duraklatılmış olsa da). */
+    public boolean hasLoop(String key) { return jobs.containsKey(key); }
 
     public void stopLoop(String key) {
         Job j = jobs.remove(key);
@@ -571,6 +771,8 @@ public final class SoundManager {
         sfxHandler.removeCallbacksAndMessages(null);
         stopAllLoops();
         loopHandler.removeCallbacksAndMessages(null);
+        fadeHandler.removeCallbacksAndMessages(null);
+        lastVoice.clear();
         releaseAmbience();
         fadeToken++;
         for (MediaPlayer old : new java.util.ArrayList<>(retiring)) {

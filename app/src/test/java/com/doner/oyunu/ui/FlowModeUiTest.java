@@ -82,7 +82,7 @@ public class FlowModeUiTest {
         Order o = h.engine().spawnOrder(Collections.singletonList("ekmek_arasi"), Arrays.asList(requests), Collections.singletonList(size));
         assertNotNull(o);
         h.run(300);
-        h.orderCard(o).performClick();
+        h.selectOrder(o);
         h.run(100);
         return o;
     }

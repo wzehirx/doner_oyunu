@@ -84,7 +84,7 @@ public class A11yTest {
         assertFalse(e.getOrders().isEmpty());
         audit(h, "Oyun(sipariş var)");
         Order o = e.getOrders().get(0);
-        h.orderCard(o).performClick();
+        h.selectOrder(o);
         h.run(100);
         audit(h, "Oyun(seçili)");
         // siparişi bitir -> hazır
@@ -143,13 +143,15 @@ public class A11yTest {
         h.run(300);
         audit(h, "Sipariş kartı(kalemli, istekli)");
         assertNotNull(h.findText("İstek: soğansız"));
-        h.orderCard(o).performClick(); h.run(100);
+        h.selectOrder(o); h.run(100);
         audit(h, "Sipariş kartı(seçili)");
+        // v2.0: kalem satırları yok; "şimdi yapılabilecekler" satırı kalemi adıyla söyler ve tek dokunuşla başlatır
         View item2 = null;
-        for (View v : UiHarness.visibleViews(h.root())) if (v.isClickable() && UiHarness.label(v).startsWith("Sipariş 1, kalem 2")) item2 = v;
-        assertNotNull(item2);
+        for (View v : UiHarness.visibleViews(h.root())) if (v.isClickable() && UiHarness.label(v).startsWith("Ayran: Ayranı doldur")) item2 = v;
+        assertNotNull("ayran kaleminin eylem satırı: " + h.clickables(), item2);
         item2.performClick(); h.run(100);
-        audit(h, "Sipariş kartı(kalem seçili)");
+        assertTrue("satır dokunuşu ayranı başlatır", o.getLine(1).isStepRunning(0));
+        audit(h, "Sipariş kartı(kalem işi sürüyor)");
         // sos tezgahı: kilitli -> açıklama, panel açılmaz
         h.stationTile(com.doner.oyunu.engine.Station.SOS).performClick(); h.run(100);
         assertFalse(UiBot.panelOpen(h));
@@ -235,7 +237,7 @@ public class A11yTest {
         Order o2 = e2.spawnOrder(java.util.Arrays.asList("ekmek_arasi"), new ArrayList<String>());
         h.run(300);
         audit(h, "Sipariş kartı(yazı 2x)");
-        h.orderCard(o2).performClick(); h.run(100);
+        h.selectOrder(o2); h.run(100);
         long tt = 0;
         while (!sosPanelOpen(h) && tt < 60_000) { UiBot.step(h); h.run(100); tt += 100; }
         assertTrue(sosPanelOpen(h));
@@ -281,12 +283,18 @@ public class A11yTest {
         e.getSave().inventory.add("ayran", 10);
         Order o = e.spawnOrder(lst("ekmek_arasi", "ayran"), lst("soğansız"));
         h.run(300);
-        h.orderCard(o).performClick(); h.run(100);
+        h.selectOrder(o); h.run(100);
         audit(h, "Oyun(eylemler)");
         A11yAudit a = A11yAudit.run(h, "eylemler");
         assertTrue("özel eylemler denetlenmeli", a.checkedActions > 0);
         // döner makinesi: boy seçenekleri (dilimleme henüz kilitli ama listede), hazırlık seçenekleri
-        for (com.doner.oyunu.engine.Station st : com.doner.oyunu.engine.Station.values()) assertActionsMatchEngine(h, st, o);
+        // v2.0: bugünün menüsündeki ve siparişin kullandığı istasyonlar görünür; diğerleri gizli
+        java.util.Set<com.doner.oyunu.engine.Station> shown = Texts.stationsInUse(e.getDay());
+        shown.add(com.doner.oyunu.engine.Station.ICECEK); // ayran kalemi (1. gün menüsünde değil, senaryo siparişi)
+        for (com.doner.oyunu.engine.Station st : com.doner.oyunu.engine.Station.values()) {
+            if (shown.contains(st)) assertActionsMatchEngine(h, st, o);
+            else assertNull("kullanılmayan istasyon gizli: " + st, h.stationTile(st));
+        }
         java.util.List<String> ekmek = A11yAudit.customActionLabels(h.stationTile(com.doner.oyunu.engine.Station.EKMEK));
         assertTrue(ekmek.toString(), anyContains(ekmek, "Ekmeği ısıt"));
         java.util.List<String> sos = A11yAudit.customActionLabels(h.stationTile(com.doner.oyunu.engine.Station.SOS));
@@ -312,7 +320,7 @@ public class A11yTest {
         e.setSpawning(false);
         Order o = e.spawnOrder(lst("ekmek_arasi"), lst());
         h.run(300);
-        h.orderCard(o).performClick(); h.run(100);
+        h.selectOrder(o); h.run(100);
         View sos = h.stationTile(com.doner.oyunu.engine.Station.SOS);
         assertTrue(anyContains(A11yAudit.customActionLabels(sos), "Önce kalemin diğer adımları bitmeli"));
         // ekmek ısıt + dilimle: topping adımı açılınca eylemler etkin olur
@@ -348,7 +356,7 @@ public class A11yTest {
         UiBot.viaActions = true;
         try {
             for (Order o : new Order[]{oa, ob}) {
-                h.orderCard(o).performClick(); h.run(100);
+                h.selectOrder(o); h.run(100);
                 long t = 0;
                 while (!o.getLine(0).isStepOpen(toppingIdx) && t < 60_000) { UiBot.step(h); h.run(100); t += 100; }
                 assertTrue(o.getLine(0).isStepOpen(toppingIdx));
@@ -356,7 +364,7 @@ public class A11yTest {
         } finally { UiBot.viaActions = false; }
         int stock0 = e.getSave().inventory.get("domates");
         // A: eylemlerle
-        h.orderCard(oa).performClick(); h.run(100);
+        h.selectOrder(oa); h.run(100);
         com.doner.oyunu.engine.Station sos = com.doner.oyunu.engine.Station.SOS;
         for (String lab : new String[]{"Domates ekle", "Marul ekle", "Domates bol ekle", "Son ekleneni geri al"}) {
             View tile = h.stationTile(sos);
@@ -372,7 +380,7 @@ public class A11yTest {
         assertTrue(tileA.performAccessibilityAction(UiBot.actionIdByLabel(tileA, "Malzemeleri bitir"), null));
         h.run(200);
         // B: panelle (aynı dizi)
-        h.orderCard(ob).performClick(); h.run(100);
+        h.selectOrder(ob); h.run(100);
         h.stationTile(sos).performClick(); h.run(100);
         assertTrue(UiBot.panelOpen(h));
         for (String lab : new String[]{"Domates ekle", "Marul ekle", "Domates bol ekle", "Son ekleneni geri al"}) {

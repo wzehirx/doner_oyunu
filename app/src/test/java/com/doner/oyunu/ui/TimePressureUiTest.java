@@ -153,7 +153,7 @@ public class TimePressureUiTest {
         String st = new Narrator(e).statusText();
         assertTrue(st, st.contains("kalan müşteri " + e.getRemainingCustomers()));
         assertFalse(st, st.contains("kalan süre"));
-        View card = h.orderCard(e.getOrders().get(0));
+        View card = h.orderCard(e.getFocusOrder()); // v2.0: tek sipariş kartı (sıradaki)
         assertNotNull(card);
         String d = UiHarness.label(card);
         assertFalse("kart açıklamasında sabır yok: " + d, d.contains("sabır") || d.contains("saniye kaldı"));
@@ -163,7 +163,7 @@ public class TimePressureUiTest {
     @Test public void timedDayStillShowsTimerAndPatience() {
         UiHarness t = day(true, 3, true);
         t.run(30_000);
-        View tc = t.orderCard(t.engine().getOrders().get(0));
+        View tc = t.orderCard(t.engine().getFocusOrder());
         assertTrue(UiHarness.label(tc), UiHarness.label(tc).contains("sabır"));
         assertNotNull(t.findText("Süre"));
         assertNull(t.findText("Kalan müşteri"));
@@ -240,7 +240,7 @@ public class TimePressureUiTest {
         e.setSpawning(false);
         Order o = e.spawnOrder(Collections.singletonList("ekmek_arasi"), Collections.<String>emptyList());
         h.run(300);
-        h.orderCard(o).performClick(); h.run(100);
+        h.selectOrder(o); h.run(100);
         assertNull(h.findLabel("Döner dilimle: "));
         assertNull(h.findLabel("Salata ve sos tepsisi hazırla"));
         assertNull(h.findLabel("Hazır stoğu oku"));

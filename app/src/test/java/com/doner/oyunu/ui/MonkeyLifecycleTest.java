@@ -126,7 +126,7 @@ public class MonkeyLifecycleTest {
         e.setSpawning(false);
         com.doner.oyunu.engine.Order o = e.spawnOrder(java.util.Arrays.asList("ekmek_arasi"), new ArrayList<String>());
         h.run(300);
-        h.orderCard(o).performClick(); h.run(100);
+        h.selectOrder(o); h.run(100);
         long t = 0;
         while (!sosPanelOpen(h) && t < 60_000) { UiBot.step(h); h.run(100); t += 100; }
         assertTrue(sosPanelOpen(h));
@@ -172,7 +172,7 @@ public class MonkeyLifecycleTest {
         e.setSpawning(false);
         com.doner.oyunu.engine.Order o = e.spawnOrder(java.util.Arrays.asList("ekmek_arasi"), new ArrayList<String>());
         h.run(300);
-        h.orderCard(o).performClick(); h.run(100);
+        h.selectOrder(o); h.run(100);
         long t = 0;
         while (!sosPanelOpen(h) && t < 60_000) { UiBot.step(h); h.run(100); t += 100; }
         assertTrue(sosPanelOpen(h));

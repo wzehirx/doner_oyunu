@@ -36,6 +36,13 @@ final class A11yAudit {
     int checkedToggles;
     /** v0.8 oyun ekranı denetimi yapıldı mı (gün içinde hazırlık bölümü yok; süresiz günde sabır/süre metni yok). */
     int checkedGameRules;
+    /** v2.0 sade oyun ekranı denetimi yapıldı mı (tek sıradaki sipariş, kalem listesi yok, eller satırı, sınırlı odak). */
+    int checkedV20;
+    /**
+     * v2.0: gün içinde (panel kapalı) ekranda en çok bu kadar tıklanabilir öğe olur, sipariş sayısından BAĞIMSIZ: sıradaki
+     * sipariş başlığı 1 + eylem satırları ≤6 + sıra özeti 1 + istasyonlar ≤7 + acil al 1 + alt çubuk 4.
+     */
+    static final int MAX_GAME_CLICKABLES = 20;
 
     static A11yAudit run(UiHarness h, String where) {
         A11yAudit a = new A11yAudit();
@@ -59,6 +66,7 @@ final class A11yAudit {
 
         List<View> shown = UiHarness.visibleViews(screenRoot);
         checkGameScreenRules(h, shown, where, a);
+        checkV20Rules(h, shown, where, a);
         boolean anyHeading = false;
         List<String> labels = new ArrayList<>();
         for (View v : shown) {
@@ -148,6 +156,48 @@ final class A11yAudit {
                 a.errors.add(where + ": gün içinde hazırlık bölümü görünmemeli: '" + shorten(lab) + "'");
             if (running && !e.isTimed() && (low.contains("sabır") || low.contains("saniye kaldı") || low.contains("kalan süre") || low.contains("mesai")))
                 a.errors.add(where + ": süre baskısı kapalıyken sabır/süre metni olmamalı: '" + shorten(lab) + "'");
+        }
+    }
+
+    /**
+     * v2.0 kuralları: (1) hiçbir etikette eski "yuva" kelimesi yok; (2) gün içinde (panel kapalıyken) TEK "Sıradaki sipariş"
+     * başlığı, "Sipariş …" etiketli en çok BİR tıklanabilir (sıradaki sipariş), kalem satırı ("Sipariş N, kalem") yok;
+     * (3) eller satırı ("Elin boş" / "Elin dolu…") görünür; (4) pasif istasyon düğmeleri doluluğu metinle söyler ("1/2");
+     * (5) tıklanabilir öğe sayısı sipariş sayısından bağımsız, ≤ {@link #MAX_GAME_CLICKABLES}.
+     */
+    private static void checkV20Rules(UiHarness h, List<View> shown, String where, A11yAudit a) {
+        for (View v : shown) {
+            String low = UiHarness.label(v).toLowerCase(new java.util.Locale("tr"));
+            if (low.contains("yuva")) a.errors.add(where + ": eski 'yuva' kelimesi: '" + shorten(UiHarness.label(v)) + "'");
+        }
+        if (!(h.screen() instanceof GameScreen)) return;
+        com.doner.oyunu.engine.GameEngine e = h.engine();
+        if (e.getState() != com.doner.oyunu.engine.GameEngine.State.RUNNING) return;
+        if (h.field(h.screen(), "panel") != null || h.access().ordersPanelOpen() || h.field(h.screen(), "overlay") != null) return;
+        a.checkedV20++;
+        int headings = 0, orderButtons = 0, clickables = 0;
+        boolean hands = false;
+        for (View v : shown) {
+            String lab = UiHarness.label(v);
+            if (v.isAccessibilityHeading() && lab.equals("Sıradaki sipariş")) headings++;
+            if (!v.isImportantForAccessibility()) continue;
+            if (v.isClickable()) {
+                clickables++;
+                if (lab.startsWith("Sipariş ")) orderButtons++;
+                if (lab.matches("^Sipariş \\d+, kalem.*")) a.errors.add(where + ": eski kalem satırı: '" + shorten(lab) + "'");
+            }
+            if ((v.isFocusable() || v.isClickable()) && lab.startsWith("Elin ")) hands = true;
+        }
+        if (headings != 1) a.errors.add(where + ": tek 'Sıradaki sipariş' başlığı olmalı, bulunan " + headings);
+        if (orderButtons > 1) a.errors.add(where + ": ekranda birden çok sipariş düğmesi: " + orderButtons);
+        if (!hands) a.errors.add(where + ": eller satırı ('Elin boş' / 'Elin dolu') yok");
+        if (clickables > MAX_GAME_CLICKABLES) a.errors.add(where + ": çok fazla tıklanabilir öğe: " + clickables + " > " + MAX_GAME_CLICKABLES);
+        for (com.doner.oyunu.engine.Station st : com.doner.oyunu.engine.Station.values()) {
+            View t = h.stationTile(st);
+            if (t == null || e.getStationCapacity(st) <= 0) continue;
+            String lab = UiHarness.label(t);
+            String want = st.displayName + " " + e.getStationUsed(st) + "/" + e.getStationCapacity(st);
+            if (!lab.startsWith(want)) a.errors.add(where + ": istasyon doluluğu etikette yok: '" + lab + "' (beklenen '" + want + "')");
         }
     }
 

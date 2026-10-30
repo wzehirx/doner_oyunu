@@ -60,7 +60,12 @@ public class UiFlowTest {
         assertNotNull(h.findLabel("Durumu oku"));
         assertNotNull(h.findLabel("Sonraki sipariş"));
         assertNull(h.findLabel("Dükkânı aç"));
-        for (Station s : Station.values()) assertNotNull("istasyon " + s, h.stationTile(s));
+        // v2.0 sade düzen: yalnızca bugünün menüsündeki istasyonlar görünür (kullanılmayanlar gizli: daha az odak noktası)
+        java.util.Set<Station> used = Texts.stationsInUse(h.act.save.day);
+        for (Station s : Station.values()) {
+            if (used.contains(s)) assertNotNull("istasyon " + s, h.stationTile(s));
+            else assertNull("bugün kullanılmayan istasyon gizli: " + s, h.stationTile(s));
+        }
     }
 
     @Test public void fullDayThroughUiReachesSummary() {
@@ -139,14 +144,19 @@ public class UiFlowTest {
         h.click("Yeni oyun"); h.settle();
         h.startDay();
         GameEngine e = h.engine();
-        long t = 0;
-        while (e.getOrders().isEmpty() && t < 20000) { h.run(100); t += 100; }
-        assertFalse(e.getOrders().isEmpty());
-        Order o = e.getOrders().get(0);
-        h.orderCard(o).performClick();
+        // v2.0: yalnızca bugünün istasyonları görünür; 1. günde (ekmek arası döner) her görünür istasyonun bu siparişte
+        // işi vardır. Yanlış istasyonu sınamak için senaryo siparişi: yalnızca ayran (İçecek dolabı); Ekmek ısıtıcı yanlış.
+        e.setSpawning(false);
+        e.getSave().inventory.add("ayran", 5);
+        Order o = e.spawnOrder(java.util.Arrays.asList("ayran"), new java.util.ArrayList<String>());
+        assertNotNull(o);
+        h.run(300);
+        h.selectOrder(o);
         h.run(100);
         Station need = o.nextStep().station;
-        Station wrong = need == Station.TATLI ? Station.SOS : Station.TATLI;
+        assertEquals(Station.ICECEK, need);
+        Station wrong = Station.EKMEK;
+        assertNotNull("yanlış istasyon görünür (bugünün menüsünde)", h.stationTile(wrong));
         double before = e.getStars();
         h.stationTile(wrong).performClick();
         h.run(100);

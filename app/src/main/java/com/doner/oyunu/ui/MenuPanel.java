@@ -47,6 +47,8 @@ final class MenuPanel {
     final Button closeBtn;
     private final MainActivity a;
     private final Source src;
+    /** Panelin seçenek kaynağı (GameScreen sabit kalemi buradan okur). */
+    final Source source;
     private final Host host;
     private final LinearLayout list;
     private final TextView infoTv, statusTv, msgTv;
@@ -61,6 +63,7 @@ final class MenuPanel {
     MenuPanel(MainActivity a, String title, int stationId, int orderId, Source src, Host host) {
         this.a = a;
         this.src = src;
+        this.source = src;
         this.host = host;
         this.stationId = stationId;
         this.orderId = orderId;

@@ -1394,7 +1394,6 @@ public final class GameEngine {
 
     private void prepOptions(List<StationOption> out, Station st) {
         boolean slot = slotFree();
-        String LOCK_SLOT = LOCK_HANDS;
         if (st == Station.DONER) {
             List<Ingredient> meats = getPrepMeats();
             for (Ingredient m : meats) {
@@ -1403,7 +1402,7 @@ public final class GameEngine {
                     int cap = upgrades.readyCapacity(PrepKind.DONER) * 2;
                     boolean full = getReadyMeatHalves(m.id) + 2 * pendingPrep(PrepKind.DONER, m.id) + 2 * n > cap;
                     boolean lack = !save.inventory.has(m.id, n);
-                    String reason = full ? "Hazır stok dolu" : lack ? "Malzeme yetmiyor: " + m.name : LOCK_SLOT;
+                    String reason = full ? "Hazır stok dolu" : lack ? "Malzeme yetmiyor: " + m.name : LOCK_HANDS;
                     out.add(new StationOption("prep:doner:" + m.id + ":" + n, StationOption.Group.PREP, name, name,
                             slot && !full && !lack, reason, m.id, false));
                 }
@@ -1412,7 +1411,7 @@ public final class GameEngine {
             int cap = upgrades.readyCapacity(PrepKind.DRINK);
             boolean full = save.readyDrinks + pendingPrep(PrepKind.DRINK, null) + PrepKind.DRINK.batch > cap;
             boolean lack = !save.inventory.has(Catalog.AYRAN, PrepKind.DRINK.batch);
-            String reason = full ? "Hazır stok dolu" : lack ? "Malzeme yetmiyor: Ayran şişesi" : LOCK_SLOT;
+            String reason = full ? "Hazır stok dolu" : lack ? "Malzeme yetmiyor: Ayran şişesi" : LOCK_HANDS;
             String name = PrepKind.DRINK.batch + " bardak ayran doldur";
             out.add(new StationOption("prep:drink", StationOption.Group.PREP, name, name,
                     slot && !full && !lack, reason, Catalog.AYRAN, false));
@@ -1430,7 +1429,7 @@ public final class GameEngine {
             boolean enough = pick.size() >= 2;
             String name = "Salata ve sos tepsisi hazırla";
             out.add(new StationOption("prep:tray", StationOption.Group.PREP, name, name,
-                    slot && enough, enough ? LOCK_SLOT : "Yeterli malzeme yok", null, false));
+                    slot && enough, enough ? LOCK_HANDS : "Yeterli malzeme yok", null, false));
         }
     }
 

@@ -439,7 +439,7 @@ public class V25UiTest {
         d.wagesDue = 340; d.wagesPaid = 300; d.wageDebt = 40;
         d.installmentsDue = 324; d.installmentsPaid = 324;
         d.seized = 120;
-        d.newBills.add(new Bill(5, BillType.ELEKTRIK, 315, 10, 12, 0) { });
+        d.newBills.add(Finance.issue(SaveData.newGame(), BillType.ELEKTRIK, 315, 10));
         d.billsDue = 900; d.billsLate = 1; d.loanDebt = 2600; d.creditScore = 58; d.priceComplaints = 2;
         StringBuilder sb = new StringBuilder();
         for (String[] r : Texts.summaryRows(d)) sb.append(r[0]).append('=').append(r[1]).append(';');

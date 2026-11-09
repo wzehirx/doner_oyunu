@@ -228,7 +228,7 @@ Akıllı bot (Campaign: fiyat, fatura, maaş borcu, gerekirse kredi): 0,8 ve 1,5
 12. **Kırılan UI testleri**: aşağıda (§B.16).
 
 ### B.16 Bu sürümde kırılan Robolectric UI testleri
-Tam çalıştırmada (606 test) yalnızca `FixesUiTest.emergencyButtonIsFixedOutsideTheScrollingListAndTakesFocusWithTalkBack` kırıldı (duyuruda malzeme adı artık küçük harf: "Stokta yok: döner ekmeği."); karşılaştırma büyük/küçük harften bağımsız yapılarak uyarlandı. Şu an kırık UI testi yok; ama UI ekranları v2.5 özelliklerini (fatura, banka, fiyat, çırak teslimi, epoch bildirimi) henüz göstermiyor ve `Texts.summaryRows` "Kira 0 lira" satırı üretir — §B.15.
+Tam çalıştırmada (606 test) yalnızca `FixesUiTest.emergencyButtonIsFixedOutsideTheScrollingListAndTakesFocusWithTalkBack` kırıldı (duyuruda malzeme adı artık küçük harf: "Stokta yok: döner ekmeği."); karşılaştırma büyük/küçük harften bağımsız yapılarak uyarlandı. Ayrıca `MonkeyLifecycleTest.gameMonkeyTalkBackDay3Apprentice1` seyrek kararsız ("istasyon düğmesi yok PAKET", `UiBot.doStation`): motor tohumu `System.nanoTime()` olduğundan her çalıştırma farklı; v2.5'te 3 başarısızlık görüldü (hepsi paralel Gradle yükü altında), ardından 28 art arda geçti; v2.0'da 8/8 geçti. Büyük olasılıkla çırak teslimiyle değişen zamanlama: UI ajanı bu testte `GameScreen.testSeed` sabitlemeli ve PAKET düğmesinin gizlendiği durumu incelemeli. Bunun dışında kırık UI testi yok; ama UI ekranları v2.5 özelliklerini (fatura, banka, fiyat, çırak teslimi, epoch bildirimi) henüz göstermiyor ve `Texts.summaryRows` "Kira 0 lira" satırı üretir — §B.15.
 
 ## A. v0.9 -> v2.0 (kaynak modeli, çırak, sıradaki sipariş)
 

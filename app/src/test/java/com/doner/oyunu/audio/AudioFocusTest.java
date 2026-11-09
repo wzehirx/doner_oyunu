@@ -240,6 +240,8 @@ public class AudioFocusTest {
         idle(600);
         assertFalse(act.sound.isDucked());
         act.speaker.force("Para yüz lira.");
+        // v2.5: TalkBack açıkken açık okuma dokunma olayından sonra (Speaker.EXPLICIT_DELAY_MS) duyurulur
+        idle(com.doner.oyunu.audio.Speaker.EXPLICIT_DELAY_MS + 20);
         assertTrue("konuşurken müzik kısılmalı", act.sound.isDucked());
         idle(10000);
         assertFalse("konuşma bitince müzik geri açılmalı", act.sound.isDucked());

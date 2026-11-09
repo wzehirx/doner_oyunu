@@ -84,7 +84,7 @@ public final class SettingsScreen extends Screen {
 
         body.addView(button("Sesli anlatımı dene", Ui.SECONDARY, new Runnable() {
             @Override public void run() {
-                a.speaker.force("Merhaba! Ben Döner Dükkanı anlatıcısıyım. Hızı ve sesi buradan ayarlayabilirsin.");
+                a.speaker.force("Merhaba! Ben Döner Dükkânı anlatıcısıyım. Hızı ve sesi buradan ayarlayabilirsin.");
             }
         }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 6, 0, 6));
 
@@ -119,6 +119,19 @@ public final class SettingsScreen extends Screen {
         TextView apprNote = Ui.label(ctx, "Açıkken çırağın işleri sesli duyurulur.", 15, Theme.MUTED, false);
         apprNote.setFocusable(true);
         body.addView(apprNote, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 4, 0, 4, 8));
+
+        // v2.5: çırak teslimi (seviye 1+; kapalıyken teslimi her zaman sen yaparsın)
+        addSwitch(body, "Çırak teslimi", s.apprenticeDelivery, new CompoundButton.OnCheckedChangeListener() {
+            @Override public void onCheckedChanged(CompoundButton b, boolean on) {
+                s.apprenticeDelivery = on;
+                a.saveNow();
+                a.sound.play("sfx_tap");
+                a.speaker.announce(on ? "Çırak teslimi açık: çırak teslime hazır siparişi teslim eder." : "Çırak teslimi kapalı: teslimi sen yaparsın.", true);
+            }
+        });
+        TextView delivNote = Ui.label(ctx, "Açıkken çırak teslime hazır siparişi müşteriye teslim eder.", 15, Theme.MUTED, false);
+        delivNote.setFocusable(true);
+        body.addView(delivNote, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 4, 0, 4, 8));
 
         root.addView(button("Geri", Ui.PRIMARY, new Runnable() {
             @Override public void run() { a.saveNow(); a.show(new MenuScreen(a)); }

@@ -160,7 +160,7 @@ public class PrepToppingUiTest {
         h.run(7000);
         assertEquals(4, e.getReadyDoner());
         assertTrue("saat gün içinde akar", e.getElapsed() > 5f);
-        assertTrue("hazır stok istasyon etiketinde", UiHarness.label(h.stationTile(Station.DONER)).contains("hazır 4 porsiyon"));
+        assertTrue("hazır stok istasyon etiketinde", UiHarness.label(h.stationTile(Station.DONER)).contains("hazır döner 4 porsiyon") /* v2.5 terim: "hazır döner 4 porsiyon" */);
         assertPrepSectionVisible(h, false);
     }
 
@@ -191,7 +191,7 @@ public class PrepToppingUiTest {
         // hazır stok, durum okumada ve istasyon etiketinde
         String status = new com.doner.oyunu.engine.Narrator(e).statusText();
         assertTrue(status, status.contains("Hazır: döner 4 porsiyon"));
-        assertTrue(UiHarness.label(h.stationTile(Station.DONER)).contains("hazır 4 porsiyon"));
+        assertTrue(UiHarness.label(h.stationTile(Station.DONER)).contains("hazır döner 4 porsiyon") /* v2.5 terim: "hazır döner 4 porsiyon" */);
         assertTrue(UiHarness.label(h.stationTile(Station.SOS)).contains("hazır tepsi"));
     }
 
@@ -213,7 +213,7 @@ public class PrepToppingUiTest {
         assertFalse(UiBot.panelOpen(h));
         h.run(8000);
         assertTrue("hazır ayran var", e.getReadyDrinks() > 0);
-        assertTrue(UiHarness.label(h.stationTile(Station.ICECEK)).contains("bardak ayran"));
+        assertTrue(UiHarness.label(h.stationTile(Station.ICECEK)).contains("hazır ayran") /* v2.5 terim: "hazır ayran 3 bardak" */);
         assertNull("hazır ayran göstergesi gün içinde yok", h.findText("Hazır ayran"));
     }
 

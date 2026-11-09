@@ -171,12 +171,18 @@ final class UiBot {
     static void step(UiHarness h) {
         GameEngine e = h.engine();
         if (h.findLabel("Devam et") != null) return; // duraklatıldı
+        if (Boolean.TRUE.equals(h.field(h.screen(), "paused"))) { // duraklatma > Faturalar paneli açık: kapat
+            if (h.field(h.screen(), "billsOverlay") != null) h.click("Kapat");
+            return;
+        }
         if (e.getState() == GameEngine.State.PREP || e.getState() == GameEngine.State.READY) {
             if (panelOpen(h)) h.click("Kapat");
             else h.skipPrep();
             return;
         }
         if (e.getState() != GameEngine.State.RUNNING) return;
+        // v2.5: sipariş listesi açıksa (rastgele dokunuşla açılmış olabilir) ana ekran TalkBack'ten gizlidir: önce kapat
+        if (h.access().ordersPanelOpen()) { h.click("Kapat"); return; }
         View em = h.findLabel("Acil al");
         if (em != null) { em.performClick(); return; }
         if (panelOpen(h)) { panel(h); return; }
@@ -207,12 +213,18 @@ final class UiBot {
     static void stepViaRows(UiHarness h) {
         GameEngine e = h.engine();
         if (h.findLabel("Devam et") != null) return;
+        if (Boolean.TRUE.equals(h.field(h.screen(), "paused"))) {
+            if (h.field(h.screen(), "billsOverlay") != null) h.click("Kapat");
+            return;
+        }
         if (e.getState() == GameEngine.State.PREP || e.getState() == GameEngine.State.READY) {
             if (panelOpen(h)) h.click("Kapat");
             else h.skipPrep();
             return;
         }
         if (e.getState() != GameEngine.State.RUNNING) return;
+        // v2.5: sipariş listesi açıksa (rastgele dokunuşla açılmış olabilir) ana ekran TalkBack'ten gizlidir: önce kapat
+        if (h.access().ordersPanelOpen()) { h.click("Kapat"); return; }
         View em = h.findLabel("Acil al");
         if (em != null) { em.performClick(); return; }
         if (panelOpen(h)) { panel(h); return; }

@@ -31,7 +31,8 @@ public final class Texts {
     private Texts() {}
 
     // ------------------------------------------------------------------ biçim
-    public static String money(int m) { return m + " TL"; }
+    /** Para (görsel ve konuşma aynı): "2500 lira" (terimler: "TL" kullanılmaz). */
+    public static String money(int m) { return m + " lira"; }
 
     public static String moneySpoken(int m) { return Narrator.fmtMoney(m); }
 
@@ -40,7 +41,7 @@ public final class Texts {
         return (s / 60) + ":" + (s % 60 < 10 ? "0" : "") + (s % 60);
     }
 
-    public static String percent(double v) { return Math.round(v * 100) + " yüzde"; }
+    public static String percent(double v) { return "yüzde " + Math.round(v * 100); }
 
     public static String percentShort(double v) { return "%" + Math.round(v * 100); }
 
@@ -73,7 +74,7 @@ public final class Texts {
 
     /** Kartta görünen durum satırı. */
     public static String orderStatus(Order o, ActiveStep act, boolean selected) {
-        if (o.isReady()) return "HAZIR: teslim et";
+        if (o.isReady()) return "Teslime hazır: teslim et";
         if (o.isPacking()) return "Paketleniyor";
         if (act != null) return act.step.name + " sürüyor";
         Step n = o.nextStep();
@@ -95,7 +96,7 @@ public final class Texts {
         StringBuilder sb = new StringBuilder("Sipariş ").append(o.getPosition()).append(", ").append(o.customer.name)
                 .append(", ").append(o.itemsText());
         if (o.hasRequests()) sb.append(", ").append(o.requestsText());
-        if (o.isReady()) sb.append(", hazır");
+        if (o.isReady()) sb.append(o.isDelivering() ? ", çırak teslim ediyor" : ", teslime hazır");
         else if (o.isPacking()) sb.append(", paketleniyor");
         if (timed && !o.isReady()) sb.append(", ").append(patienceWord(o.customer.patienceFraction()));
         if (selected) sb.append(", seçili");
@@ -253,17 +254,19 @@ public final class Texts {
 
     /** İş satırı etiketi: "Sen: ..." ya da "Çırak: ayran dolduruyor". */
     public static String jobLabel(GameEngine e, ActiveStep a) {
-        String who = a.isApprentice() ? (e.getApprenticeLevel() > 1 ? "Çırak " + a.worker : "Çırak") : "Sen";
+        String who = a.isApprentice() ? (e.getApprenticeWorkers() > 1 ? "Çırak " + a.worker : e.getApprenticeLevel() >= 4 ? "Kalfa" : "Çırak") : "Sen";
         String what;
         if (a.isPrep()) {
             if (a.isApprentice()) {
                 what = a.prep == PrepKind.DONER ? "döner dilimliyor" : a.prep == PrepKind.DRINK ? "ayran dolduruyor"
                         : a.prep == PrepKind.FRIES ? "patates kızartıyor" : "salata ve sos tepsisi hazırlıyor";
             } else what = prepKindName(a.prep);
+        } else if (a.isDeliver()) {
+            what = (a.isApprentice() ? "teslim ediyor" : "teslim") + ", sipariş " + a.order.getPosition();
         } else if (a.isPack()) {
-            what = a.order.getPosition() + " numaralı siparişi paketliyor";
+            what = (a.isApprentice() ? "paketliyor" : "paketleme") + ", sipariş " + a.order.getPosition();
         } else {
-            what = a.order.getPosition() + " numaralı siparişte: " + a.step.name;
+            what = "sipariş " + a.order.getPosition() + ", " + a.step.name;
         }
         return who + ": " + what;
     }
@@ -331,11 +334,15 @@ public final class Texts {
      * hazır 4 porsiyon". needed: odaktaki siparişin bu istasyonda yapılacak işi var. ≤60 karakter (önemsiz parça atılır).
      */
     public static String stationShort(GameEngine e, Station st, boolean needed) {
+        // v2.5: kesinti yüzünden kapalı istasyon: "Ocak kapalı, doğalgaz kesik" (eylem satırları ve kilit metniyle aynı)
+        if (e.isStationClosed(st)) return GameEngine.LOCK_CLOSED;
         int cap = e.getStationCapacity(st), used = e.getStationUsed(st);
         boolean busy = false, appr = false, player = false;
         for (ActiveStep a : e.getStationJobs(st)) { busy = true; if (a.isApprentice()) appr = true; else player = true; }
         String head = st.displayName + (cap > 0 ? " " + used + "/" + cap : "");
         List<String> parts = new ArrayList<>();
+        String cut = utilityTag(e, st);
+        if (!cut.isEmpty()) parts.add(cut);
         if (cap > 0) { if (used >= cap) parts.add("dolu"); }
         else if (busy) parts.add(appr && !player ? "çırak çalışıyor" : "çalışıyor");
         if (needed) parts.add("iş var");
@@ -349,17 +356,38 @@ public final class Texts {
         }
     }
 
-    /** İstasyonun hazır stoğu: "hazır 4 porsiyon", "hazır 3 bardak ayran", "hazır tepsi 18", "hazır 2 patates" (yoksa ""). */
+    /**
+     * v2.5: istasyonu yavaşlatan/kısan kesinti (kısa): "elektrik kesik", "doğalgaz kısık", "su kesik"; yoksa "". Kapalı Ocak
+     * için {@link GameEngine#LOCK_CLOSED} ayrıca döner ({@link #stationShort}).
+     */
+    public static String utilityTag(GameEngine e, Station st) {
+        com.doner.oyunu.engine.UtilityStatus u = e.getUtilityStatus();
+        if (u == null) return "";
+        switch (st) {
+            case EKMEK:
+            case ICECEK: return u.electric > 0 ? "elektrik kesik" : "";
+            case DONER: return u.electric >= 2 ? "elektrik kesik" : "";
+            case IZGARA: return u.gas == 1 ? "doğalgaz kısık" : "";
+            case SOS: return u.water > 0 ? "su kesik" : "";
+            default: return "";
+        }
+    }
+
+    /**
+     * İstasyonun hazır stoğu (terimler §3): "hazır döner 4 porsiyon", "hazır ayran 3 bardak", "hazır tepsi 18 kullanım",
+     * "hazır patates 2 porsiyon" (yoksa "").
+     */
     public static String stationStock(GameEngine e, Station st) {
-        if (st == Station.DONER && e.getReadyDonerHalves() > 0) return "hazır " + PortionSize.halvesText(e.getReadyDonerHalves()) + " porsiyon";
-        if (st == Station.ICECEK && e.getReadyDrinks() > 0) return "hazır " + e.getReadyDrinks() + " bardak ayran";
-        if (st == Station.SOS && e.getTrayTotal() > 0) return "hazır tepsi " + e.getTrayTotal();
-        if (st == Station.IZGARA && e.getReadyFries() > 0) return "hazır " + e.getReadyFries() + " patates";
+        if (st == Station.DONER && e.getReadyDonerHalves() > 0) return "hazır döner " + PortionSize.halvesText(e.getReadyDonerHalves()) + " porsiyon";
+        if (st == Station.ICECEK && e.getReadyDrinks() > 0) return "hazır ayran " + e.getReadyDrinks() + " bardak";
+        if (st == Station.SOS && e.getTrayTotal() > 0) return "hazır tepsi " + e.getTrayTotal() + " kullanım";
+        if (st == Station.IZGARA && e.getReadyFries() > 0) return "hazır patates " + e.getReadyFries() + " porsiyon";
         return "";
     }
 
     /** İstasyon düğmesinin görsel durum satırı: "1/2 · İş var" / "Çalışıyor" / "Boş". */
     public static String stationVisual(GameEngine e, Station st, boolean needed) {
+        if (e.isStationClosed(st)) return "Kapalı · doğalgaz kesik";
         int cap = e.getStationCapacity(st), used = e.getStationUsed(st);
         boolean busy = !e.getStationJobs(st).isEmpty(), appr = false;
         for (ActiveStep a : e.getStationJobs(st)) if (a.isApprentice()) appr = true;
@@ -373,7 +401,7 @@ public final class Texts {
      * "Teslim et". Durum renkle değil metinle söylenir.
      */
     public static String actionLabel(GameEngine e, ReadyAction a) {
-        if (a.kind == ReadyAction.Kind.DELIVER) return "Teslim et";
+        if (a.kind == ReadyAction.Kind.DELIVER) return a.status == ReadyAction.Status.RUNNING ? "Teslim ediliyor, çırak" : "Teslim et";
         Order o = e.getOrder(a.orderId);
         String prefix = o != null && o.lineCount() > 1 && a.itemIndex >= 0 ? o.getLine(a.itemIndex).product.name + ": " : "";
         String step = a.stepName;
@@ -385,7 +413,8 @@ public final class Texts {
                 break;
             case HANDS_BUSY: status = "elin dolu"; break;
             case STATION_FULL: status = a.station == null ? "dolu" : e.stationFullText(a.station); station = ""; break;
-            case OUT_OF_STOCK: status = "malzeme yok"; break;
+            case OUT_OF_STOCK: status = "stokta yok"; break;
+            case CLOSED: status = GameEngine.LOCK_CLOSED; station = ""; break;
             default: // RUNNING
                 step = step + " sürüyor";
                 if (!a.passive) station = "";
@@ -405,8 +434,8 @@ public final class Texts {
     /** Odak siparişinin başlık satırı: "Sipariş 2 · Ali". */
     public static String focusTitle(Order o) { return "Sipariş " + o.getPosition() + " · " + o.customer.name; }
 
-    /** Odak siparişinin kalem özeti (tek satır): "Ekmek arası döner (yarım ekmek) ve Ayran · 180 TL". */
-    public static String focusItems(Order o) { return o.itemsText() + " · " + o.price() + " TL"; }
+    /** Odak siparişinin kalem özeti (tek satır): "Ekmek arası döner (yarım ekmek) ve Ayran · 180 lira". */
+    public static String focusItems(Order o) { return o.itemsText() + " · " + o.price() + " lira"; }
 
     /** Eklenen malzemeler (kalem başına bir satır; hiç yoksa ""). */
     public static String focusAdded(Order o) {
@@ -454,11 +483,12 @@ public final class Texts {
         return t;
     }
 
+    /** "Teslim et, teslime hazır: Ali" / "Teslim et, teslime hazır sipariş yok" (çırağın teslim ettiği sayılmaz). */
     public static String deliverDescription(GameEngine e) {
         List<String> names = new ArrayList<>();
-        for (Order o : e.getOrders()) if (o.isReady()) names.add(o.customer.name);
-        if (names.isEmpty()) return "Teslim et, hazır sipariş yok";
-        return "Teslim et, hazır: " + join(names);
+        for (Order o : e.getOrders()) if (o.isReady() && !o.isDelivering()) names.add(o.customer.name);
+        String t = names.isEmpty() ? "Teslim et, teslime hazır sipariş yok" : "Teslim et, teslime hazır: " + join(names);
+        return t.length() <= 60 ? t : "Teslim et, " + names.size() + " sipariş teslime hazır";
     }
 
     public static String join(List<String> l) {
@@ -488,7 +518,7 @@ public final class Texts {
 
     /** Acil al düğmesi metni (görsel). */
     public static String emergencyLabel(List<Ingredient> missing, int cost) {
-        return "Acil al: " + names(missing) + " (" + cost + " TL)";
+        return "Acil al: " + names(missing) + " (" + cost + " lira)";
     }
 
     /** Acil al düğmesi erişilebilirlik açıklaması: malzeme adları ve toplam fiyat. */
@@ -533,7 +563,7 @@ public final class Texts {
     public static String upgradeButton(Upgrade u, SaveData save) {
         int lv = save.level(u.id);
         if (lv >= u.maxLevel()) return "En üst seviye";
-        return "Satın al: " + u.priceForNext(lv) + " TL";
+        return "Satın al: " + u.priceForNext(lv) + " lira";
     }
 
     public static String buyResult(Shop.BuyResult r, String name, int qty, int cost) {
@@ -552,13 +582,24 @@ public final class Texts {
         return Math.round(c.duration) + " saniye (en fazla " + Math.round(c.overtime) + " saniye mesai uzatması)";
     }
 
+    /**
+     * Brifing satırları (v2.5): önce fatura/kesinti/maaş uyarıları ({@code Finance.notices}, motorun gün açılışında
+     * söylediğiyle aynı), sonra süre, kasa, yaklaşan faturalar, maaş, yeni ürün/malzeme/müşteri tipi/yükseltme, menü
+     * (kesintide çıkanlar ayrıca), fiyat ve stok.
+     */
     public static List<String> briefingLines(SaveData save) {
         DayConfig c = DayConfig.forDay(save.day);
         List<String> l = new ArrayList<>();
+        l.addAll(com.doner.oyunu.engine.Finance.notices(save, save.day));
+        String cut = utilitySummary(save);
+        if (!cut.isEmpty()) l.add(cut);
         if (save.timePressure) l.add("Süre: " + durationText(c) + ".");
         else l.add("Bu gün süre yok, " + DayConfig.quotaFor(save) + " müşteri. Süre sayacı yok, müşteri sabrı azalmaz, kimse gitmez; kota kadar müşteri gelip hepsi teslim edilince gün biter.");
         l.add("Kasada " + save.money + " lira var. Yıldızın " + Narrator.fmtStars(save.stars) + ".");
-        l.add("Gün sonunda " + c.rent + " lira kira ödenecek.");
+        String bills = briefingBillsLine(save);
+        if (!bills.isEmpty()) l.add(bills);
+        String wage = Narrator.wageText(save);
+        if (!wage.isEmpty() && save.wageDebt <= 0) l.add(wage + " Gün sonunda kasadan ödenir.");
         l.add(save.timePressure
                 ? "Hedef: yıldızın 1,0'ın altına düşmeden günü bitir, müşterileri hızlı ve doğru hazırlanmış siparişlerle memnun et."
                 : "Hedef: yıldızın 1,0'ın altına düşmeden günü bitir. Acele etmene gerek yok; doğru hazırlanmış siparişler yıldızını korur. Hız bonusu ve hızlı teslim bahşişi yoktur, bahşişler biraz daha azdır.");
@@ -566,23 +607,26 @@ public final class Texts {
         if (news.isEmpty()) l.add("Bugün yeni ürün yok.");
         else {
             List<String> n = new ArrayList<>();
-            for (Product p : news) n.add(p.name + " (" + p.price + " lira)");
+            for (Product p : news) n.add(p.name + " (" + com.doner.oyunu.engine.Pricing.priceOf(save, p) + " lira)");
             l.add("Yeni ürün: " + join(n) + ".");
         }
         String newIng = Narrator.newIngredientsText(save.day);
         if (!newIng.isEmpty()) l.add(newIng);
+        String newType = Narrator.newTypesText(save.day);
+        if (!newType.isEmpty()) l.add(newType);
         String newSize = Narrator.newSizesText(save.day, save.flowMode);
         if (!newSize.isEmpty()) l.add(newSize);
         List<String> ups = new ArrayList<>();
-        for (Upgrade u : Catalog.upgrades()) {
-            for (int k = 0; k < u.maxLevel(); k++) {
-                if (u.unlockDays[k] == save.day) ups.add(u.name + " seviye " + (k + 1));
-            }
+        for (java.util.Map.Entry<Upgrade, Integer> en : Catalog.newUpgradeLevelsOnDay(save.day).entrySet()) {
+            ups.add(en.getKey().name + " seviye " + en.getValue());
         }
         if (!ups.isEmpty()) l.add("Markette yeni açılan yükseltme: " + join(ups) + ".");
-        List<String> menu = new ArrayList<>();
-        for (Product p : Catalog.productsForDay(save.day)) menu.add(p.name);
+        com.doner.oyunu.engine.UtilityStatus u = com.doner.oyunu.engine.UtilityStatus.of(save, save.day);
+        List<String> menu = new ArrayList<>(), off = new ArrayList<>();
+        for (Product p : Catalog.productsForDay(save.day)) (u.productAvailable(p) ? menu : off).add(p.name);
         l.add("Bugünkü menü: " + join(menu) + ".");
+        if (!off.isEmpty()) l.add("Kesinti yüzünden menüden çıkan: " + join(off) + ".");
+        if (!com.doner.oyunu.engine.Pricing.allDefault(save)) l.add(pricesSummary(save) + " " + Narrator.demandText(save));
         int rec = Shop.recommendedCost(save);
         if (rec > 0) l.add("Stoğun bugün için yetersiz olabilir. Önerilen malzemelerin maliyeti " + rec + " lira. Markete uğramanı öneririm.");
         else l.add("Stoğun bugün için yeterli görünüyor.");
@@ -593,6 +637,99 @@ public final class Texts {
         l.add("İstasyon seçeneklerini TalkBack Eylemleri menüsünden ya da düğmeye dokununca açılan panelden seçersin.");
         if (save.day == 1 && !save.tutorialDone) l.add("Öğretici açık: kısa sesli ipuçlarıyla ilk siparişi hazırlarsın.");
         return l;
+    }
+
+    /** Kesinti özeti (brifing): "Kesinti: elektrik kısmen kesik, Ocak kapalı." / çırak yok; hiçbiri yoksa "". */
+    public static String utilitySummary(SaveData save) {
+        com.doner.oyunu.engine.UtilityStatus u = com.doner.oyunu.engine.UtilityStatus.of(save, save.day);
+        List<String> cuts = new ArrayList<>();
+        if (u.electric > 0) cuts.add(u.electric >= 2 ? "elektrik tamamen kesik" : "elektrik kısmen kesik");
+        if (u.gas > 0) cuts.add(u.gas >= 2 ? "Ocak kapalı, doğalgaz kesik" : "doğalgaz kısık");
+        if (u.water > 0) cuts.add(u.water >= 2 ? "su tamamen kesik" : "su kesik");
+        if (u.evicted()) cuts.add("tahliye: kirayı ödemeden dükkân açılamaz");
+        if (cuts.isEmpty()) return "";
+        return "Kesinti: " + join(cuts) + ".";
+    }
+
+    /**
+     * Brifingte açık faturaların ve yaklaşan faturaların tek satırı: "Açık fatura 2, borç 640 lira. Yaklaşan: Kira
+     * yaklaşık 1680 lira, 7. gün sonunda kesilir." Hiçbiri yoksa "".
+     */
+    public static String briefingBillsLine(SaveData save) {
+        StringBuilder sb = new StringBuilder();
+        List<com.doner.oyunu.engine.Bill> open = com.doner.oyunu.engine.Finance.openBills(save);
+        if (!open.isEmpty()) sb.append("Açık fatura ").append(open.size()).append(", borç ")
+                .append(Narrator.fmtMoney(com.doner.oyunu.engine.Finance.totalDue(save))).append(". Faturalar düğmesinden ödersin.");
+        List<String> soon = new ArrayList<>();
+        for (com.doner.oyunu.engine.Bill b : com.doner.oyunu.engine.Finance.forecast(save, 2)) {
+            soon.add(b.type.displayName + " yaklaşık " + Narrator.fmtMoney(b.amount) + ", " + b.issuedDay + ". gün sonunda kesilir");
+        }
+        if (!soon.isEmpty()) sb.append(sb.length() > 0 ? " " : "").append("Yaklaşan: ").append(join(soon)).append('.');
+        return sb.toString();
+    }
+
+    /** "Fiyatlar: ortalama yüzde 110." (menünün ortalama yüzdesi). */
+    public static String pricesSummary(SaveData save) {
+        List<Product> menu = Catalog.productsForDay(save.day);
+        if (menu.isEmpty()) return "";
+        int sum = 0;
+        for (Product p : menu) sum += com.doner.oyunu.engine.Pricing.percent(save, p.id);
+        return "Fiyatlar: ortalama yüzde " + Math.round(sum / (float) menu.size()) + ".";
+    }
+
+    // ------------------------------------------------------------------ v2.5: fiyat, banka, fatura etiketleri (≤60)
+    /** Fiyat satırı düğme etiketi: "Ayran, 25 lira, yüzde 100" (kısa; ≤60). */
+    public static String priceRowLabel(SaveData save, Product p) {
+        String t = p.name + ", " + com.doner.oyunu.engine.Pricing.priceOf(save, p) + " lira, yüzde " + com.doner.oyunu.engine.Pricing.percent(save, p.id);
+        return t.length() <= 60 ? t : t.substring(0, 60);
+    }
+
+    /** Fiyat satırının görsel metni: "Ayran\n25 lira · yüzde 100 · referans 25 lira". */
+    public static String priceRowVisual(SaveData save, Product p) {
+        return p.name + "\n" + com.doner.oyunu.engine.Pricing.priceOf(save, p) + " lira · yüzde " + com.doner.oyunu.engine.Pricing.percent(save, p.id)
+                + " · referans " + p.price + " lira";
+    }
+
+    /** Fiyat düğmelerinin kısa açıklaması (Fiyatlar ekranı). */
+    public static final String PRICE_NOTE = "Ucuz: daha çok müşteri ve yıldız, az kâr. Pahalı: az müşteri, çok kâr, yıldız düşebilir. Fiyat gün başında geçerli olur.";
+
+    /** Fatura satırının kısa etiketi (≤60): "Elektrik faturası 315 lira, 2 gün kaldı" / "…, son gün bugün" / "…, 2 gün gecikti". */
+    public static String billLabel(com.doner.oyunu.engine.Bill b, int day) {
+        int left = b.daysLeft(day);
+        String when = left > 0 ? left + " gün kaldı" : left == 0 ? "son ödeme bugün" : (-left) + " gün gecikti";
+        String t = b.type.displayName + " " + b.amountDue(day) + " lira, " + when;
+        return t.length() <= 60 ? t : t.substring(0, 60);
+    }
+
+    /** Kredi satırının kısa etiketi (≤60): "Kredi 3000 lira, kalan 2400, 8 taksit". */
+    public static String loanLabel(com.doner.oyunu.engine.Loan l) {
+        String t = "Kredi " + l.principal + " lira, kalan " + l.totalOwed() + ", " + l.getInstallmentsLeft() + " taksit";
+        if (l.getOverdue() > 0) t += ", gecikmiş";
+        return t.length() <= 60 ? t : t.substring(0, 60);
+    }
+
+    /** Banka işlem sonucunun kısa cümlesi. */
+    public static String bankResult(com.doner.oyunu.engine.Bank.Result r) {
+        switch (r) {
+            case OK: return "Tamam.";
+            case OVER_LIMIT: return "Limit yetmiyor.";
+            case INVALID_AMOUNT: return "Tutar geçersiz: en az 500 lira.";
+            case INVALID_TERM: return "Vade geçersiz.";
+            case TOO_MANY_LOANS: return "En çok 3 kredi alınabilir.";
+            case BLOCKED: return "Taksitler art arda ödenmedi: yeni kredi verilmez.";
+            case NOT_ENOUGH_MONEY: return "Kasada yeterli para yok.";
+            default: return "İşlem yapılamadı.";
+        }
+    }
+
+    /** Fatura/maaş ödeme sonucunun kısa cümlesi (başarı dışındakiler). */
+    public static String payResult(com.doner.oyunu.engine.Finance.PayResult r, int due) {
+        switch (r) {
+            case NOT_ENOUGH_MONEY: return "Kasada yeterli para yok. " + due + " lira gerekli.";
+            case NOTHING_DUE: return "Ödenecek borç yok.";
+            case UNKNOWN: return "Bu fatura artık yok.";
+            default: return "Ödendi.";
+        }
     }
 
     // ------------------------------------------------------------------ süre baskısı (v0.8)
@@ -658,8 +795,8 @@ public final class Texts {
     /** Akışa göre malzeme öğretici metni (tek kısa cümle; Gerçekçi = {@link #TUT_TOPPING}). */
     public static String tutTopping(FlowMode m) {
         switch (m) {
-            case RAHAT: return "Sos tezgahına dokun, malzemeler otomatik eklenir.";
-            case DENGELI: return "Sos tezgahına dokun; varsayılanlar eklenir. İstek varsa farkı yap, sonra Malzemeleri bitir.";
+            case RAHAT: return "Sos ve salata tezgâhına dokun, malzemeler otomatik eklenir.";
+            case DENGELI: return "Sos ve salata tezgâhına dokun; varsayılanlar eklenir. İstek varsa farkı yap, sonra Malzemeleri bitir.";
             default: return TUT_TOPPING;
         }
     }
@@ -692,15 +829,34 @@ public final class Texts {
         r.add(new String[]{"Satış", s.revenue + " lira"});
         r.add(new String[]{"Bahşiş", s.tips + " lira"});
         if (s.emergencySpend > 0) r.add(new String[]{"Acil alım", s.emergencySpend + " lira"});
+        // v2.5: günlük kira kalktı (haftalık kira faturası). Eski özetler (rentDue > 0) için satır korunur.
         if (s.rentUnpaid() > 0) {
             r.add(new String[]{"Kira", s.rent + " lira ödendi (" + s.rentDue + " lira gerekiyordu, " + s.rentUnpaid() + " lira ödenemedi)"});
-        } else {
+        } else if (s.rent > 0) {
             r.add(new String[]{"Kira", s.rent + " lira"});
         }
+        if (s.wagesDue > 0 || s.wagesPaid > 0) r.add(new String[]{"Çırak maaşı", s.wagesPaid + " lira"});
+        if (s.wageDebt > 0) r.add(new String[]{"Maaş borcu", s.wageDebt + " lira, ödemezsen çırak yarın gelmez"});
+        if (s.installmentsDue > 0 || s.installmentsPaid > 0) {
+            r.add(new String[]{"Kredi taksiti", s.installmentsPaid + " lira" + (s.installmentsMissed > 0 ? ", " + s.installmentsMissed + " taksit ödenemedi" : "")});
+        }
+        if (s.seized > 0) r.add(new String[]{"Haciz", s.seized + " lira"});
+        if (s.spoiledStock > 0) r.add(new String[]{"Bozulan et", s.spoiledStock + " porsiyon, " + s.spoiledCost + " lira"});
         int p = s.profit();
         r.add(new String[]{"Net kazanç", (p < 0 ? "eksi " + (-p) : String.valueOf(p)) + " lira"});
         r.add(new String[]{"Kasada", s.moneyAfter + " lira"});
+        if (!s.newBills.isEmpty()) {
+            List<String> nb = new ArrayList<>();
+            for (com.doner.oyunu.engine.Bill b : s.newBills) nb.add(b.type.displayName.toLowerCase(TR) + " " + b.amount + " lira, son ödeme " + b.dueDay + ". gün");
+            r.add(new String[]{"Yeni faturalar", join(nb)});
+        }
+        if (s.billsDue > 0) r.add(new String[]{"Açık fatura borcu", s.billsDue + " lira" + (s.billsLate > 0 ? ", " + s.billsLate + " fatura gecikmiş" : "")});
+        if (s.loanDebt > 0) r.add(new String[]{"Kredi borcu", s.loanDebt + " lira"});
+        if (s.creditScore > 0 && (s.loanDebt > 0 || s.billsDue > 0 || !s.newBills.isEmpty())) r.add(new String[]{"Kredi notu", String.valueOf(s.creditScore)});
         r.add(new String[]{"Yıldız", Narrator.fmtStars(s.startStars) + " puandan " + Narrator.fmtStars(s.endStars) + " puana"});
+        if (s.priceComplaints > 0) r.add(new String[]{"Fiyatı pahalı bulan", String.valueOf(s.priceComplaints)});
+        if (s.priceCompliments > 0) r.add(new String[]{"Fiyatı uygun bulan", String.valueOf(s.priceCompliments)});
+        if (s.apprenticeDeliveries > 0) r.add(new String[]{"Çırağın teslim ettiği", String.valueOf(s.apprenticeDeliveries)});
         if (s.wrongTaps > 0) r.add(new String[]{"Yanlış istasyon dokunuşu", String.valueOf(s.wrongTaps)});
         if (s.perfect > 0) r.add(new String[]{"Kusursuz malzemeli sipariş", String.valueOf(s.perfect)});
         if (s.mistakes > 0) r.add(new String[]{"Hatalı malzemeli sipariş", String.valueOf(s.mistakes)});
@@ -715,16 +871,18 @@ public final class Texts {
         return r;
     }
 
+    private static final java.util.Locale TR = new java.util.Locale("tr");
+
     // ------------------------------------------------------------------ ayarlar
     public static String volumeText(double v) { return percentShort(v); }
 
-    public static String volumeSpoken(double v) { return Math.round(v * 100) + " yüzde"; }
+    public static String volumeSpoken(double v) { return "yüzde " + Math.round(v * 100); }
 
     // ------------------------------------------------------------------ yardım
     public static List<String[]> helpSections() {
         List<String[]> l = new ArrayList<>();
         l.add(new String[]{"Amaç",
-                "Döner dükkanı işletirsin. Müşterilerin siparişini sabırları bitmeden hazırlayıp teslim et. "
+                "Döner dükkânı işletirsin. Müşterilerin siparişini sabırları bitmeden hazırlayıp teslim et. "
                         + "Yıldızın 1,0'ın altına düşerse gün başarısız olur; aynı günü paran kaybolmadan tekrar denersin."});
         l.add(new String[]{"Gün öncesi hazırlık",
                 "Markete uğradıktan sonra hazırlık aşamasına girersin: müşteri gelmez, süre akmaz. "
@@ -735,7 +893,7 @@ public final class Texts {
                 "Üstte durum çubuğu var: para, yıldız, kalan süre ve bekleyen sipariş; altında elinin durumu: Elin boş ya da Elin dolu. "
                         + "Ortada Sıradaki sipariş: müşteri, ürünler, sabır ve şimdi yapılabilecek işler. Bir işe dokununca başlar ya da seçenekleri açılır. "
                         + "Altında diğer siparişlerin tek satırlık özeti; dokununca sipariş listesi açılır. Sonra bugünün istasyonları: "
-                        + "döner makinesi, ekmek ısıtıcı, sos ve salata tezgahı, Ocak, paketleme, içecek dolabı, tatlı tezgahı. Ekmek ısıtıcı ve Ocak doluluğu söyler, örneğin Ocak 1/2. "
+                        + "döner makinesi, ekmek ısıtıcı, sos ve salata tezgâhı, Ocak, paketleme, içecek dolabı, tatlı tezgâhı. Kesinti varsa düğme söyler, örneğin Ocak kapalı, doğalgaz kesik. Ekmek ısıtıcı ve Ocak doluluğu söyler, örneğin Ocak 1/2. "
                         + "En altta Teslim et, Sonraki sipariş, Duraklat ve Durumu oku düğmeleri bulunur."});
         l.add(new String[]{"Sipariş hazırlama",
                 "Sıradaki sipariş en acil olandır; Sonraki sipariş düğmesi ya da sipariş listesi başka siparişe geçer. Her ürün bir kalemdir; işleri istediğin sırayla yaparsın. "
@@ -761,7 +919,7 @@ public final class Texts {
                 "Müşterinin istediği boy sipariş kartında yazar: yarım ekmek, tam ekmek ya da duble. Yanlış boy hatalı sipariş sayılır: yıldız düşer, bahşiş yarıya iner. "
                         + "Yarım boy ikinci günden, duble dördüncü günden gelir. Gerçekçi akışta boyu sen seçersin; Rahat'ta otomatik, Dengeli'de tam ekmek otomatik."});
         l.add(new String[]{"Malzeme ekleme",
-                "Sos ve salata tezgahında her malzeme ayrı seçenektir, örneğin Domates ekle. Aynı malzemeyi iki kez eklersen bol olur. "
+                "Sos ve salata tezgâhında her malzeme ayrı seçenektir, örneğin Domates ekle. Aynı malzemeyi iki kez eklersen bol olur. "
                         + "Son ekleneni geri al malzemeyi iade eder; Eklenenleri oku ve Hedefi oku bilgi verir. İşin bitince Malzemeleri bitir. "
                         + "Malzemeler teslimde kontrol edilir: eksik ya da fazla malzeme yıldızı düşürür. Stok bittiyse Acil al çıkar. "
                         + "Dengeli akışta Varsayılan malzemeleri ekle tek dokunuştur; Rahat'ta Malzemeleri ekle her şeyi yapar."});
@@ -773,43 +931,83 @@ public final class Texts {
                         + "Kapalıyken süre yoktur: durum çubuğunda kalan müşteri yazar, kimse gitmez; kota kadar müşteri gelip hepsi teslim edilince gün biter. "
                         + "Kapalıyken hız bonusu yoktur ve bahşişler biraz azdır; hatalar yine yıldız düşürür."});
         l.add(new String[]{"Çırak",
-                "Markette çırak alırsın; kendi başına çalışır, kendi eli vardır. Seviye 1: paketler, ayran doldurur, dolaptan içecek alır. Seviye 2: ekmek ve lavaş ısıtır, tepsi hazırlar. "
-                        + "Seviye 3: döner dilimler, Ocak ve tatlı işlerini yapar. Önce diğer siparişlere, iş kalmazsa senin siparişine yardım eder. Senden yüzde yirmi yavaştır, hata yapmaz. "
-                        + "Boy ve malzemeyi her zaman sen seçersin. Ayarlardan çırak duyurularını kapatabilirsin."});
+                "Markette çırak alırsın; kendi başına çalışır, kendi eli vardır. Seviye 1: paketler, teslime hazır siparişi teslim eder, ayran doldurur, dolaptan içecek alır. Seviye 2: ekmek ve lavaş ısıtır, tepsi hazırlar. "
+                        + "Seviye 3: döner dilimler, Ocak ve tatlı işlerini yapar. Seviye 4 kalfadır, seviye 5 dördüncü çıraktır. Önce teslime hazır siparişleri, sonra diğer siparişleri, iş kalmazsa senin siparişini yapar. Senden yüzde yirmi yavaştır, hata yapmaz. "
+                        + "Çırak teslim ederken sıradaki işte Teslim ediliyor, çırak yazar. Boy ve malzemeyi her zaman sen seçersin. "
+                        + "Çırağın günlük maaşı gün sonunda kasadan ödenir; para yetmezse maaş borcu olur ve çırak ertesi gün gelmez, Faturalar ekranında Maaşı öde. "
+                        + "Ayarlardan çırak duyurularını ve çırak teslimini kapatabilirsin."});
         l.add(new String[]{"Hatalar ve eksik malzeme",
-                "Yanlış istasyona dokunursan hata sesi gelir, yıldız çok az düşer. Malzeme biterse Acil al düğmesi çıkar; yüzde elli pahalıdır. "
+                "Yanlış istasyona dokunursan hata sesi gelir, yıldız çok az düşer. Malzeme stokta yoksa Acil al düğmesi çıkar; yüzde elli pahalıdır. "
                         + "Elin dolu ya da istasyon dolu uyarısında hata sesi gelir; biraz bekle."});
         l.add(new String[]{"Sesler",
                 "Her olayın kendi sesi ve titreşimi vardır. Siparişler stereo çalar: birinci sipariş solda, üçüncü sağda. "
                         + "İşlem sesleri işlem süresince sürer; ekmek ısıtıcı ve ocak, içindeki iş bitene kadar ses verir. Ayran, kutu içecek ve dolap kendi sesleriyle çalar. Gün boyunca dükkân ambiyansı kısık çalar; Ayarlardan ambiyans, müzik ve efekt sesini ayrı ayarlarsın."});
         l.add(new String[]{"Market",
                 "Her günün başında markete uğra. Önerilen malzemeleri al, günün tahmini ihtiyacını alır. "
-                        + "Mutfak aletleri işleri hızlandırır, buzdolabı stoku büyütür, restoran öğeleri müşteri, sabır ve bahşişi artırır."});
+                        + "Mutfak aletleri işleri hızlandırır, buzdolabı stoku büyütür, restoran öğeleri müşteri, sabır ve bahşişi artırır. "
+                        + "On altı yükseltme vardır, çoğu beş seviyelidir; yeni seviyeler günler ilerledikçe açılır. Elektrikli aletler elektrik faturasını artırır. "
+                        + "Marketin üstünde Fiyatlar, Banka ve Faturalar düğmeleri vardır."});
+        l.add(new String[]{"Fiyatlar",
+                "Fiyatlar ekranında her ürünün satış fiyatını yüzde 50 ile yüzde 150 arasında, yüzde 5 adımla belirlersin. "
+                        + "Her satırda Azalt ve Artır düğmeleri vardır; TalkBack Eylemleri menüsünde Fiyatı artır ve Fiyatı azalt da bulunur. "
+                        + "Ucuz fiyat daha çok müşteri ve yıldız getirir ama kâr azalır. Pahalı fiyatta müşteri azalır, yıldız düşebilir. "
+                        + "Tahmini müşteri etkisi ekranda okunur. Referans fiyata dön her şeyi yüzde 100 yapar. Fiyat gün başında geçerli olur."});
+        l.add(new String[]{"Faturalar ve kesintiler",
+                "Elektrik, doğalgaz, su ve kira faturası haftada bir, vergi on günde bir gün sonunda kesilir. Son ödeme kesildiği günden iki gün sonradır. "
+                        + "Gün sonunda ve brifingte Faturalar ekranında her fatura için Öde, Ertele ya da Krediyle öde seçersin; oyun sırasında Duraklat menüsünde de Faturalar vardır. "
+                        + "Ödenmeyen fatura zorluk getirir: elektrik kesilince ekmek ısıtıcı ve içecek yavaşlar, doğalgaz kesilince Ocak kapanır, su kesilince tepsi hazırlanamaz. "
+                        + "Kira altı gün ödenmezse dükkân açılamaz; vergi geç kalırsa haciz gelir. Ödeyince hemen düzelir."});
+        l.add(new String[]{"Banka ve kredi",
+                "Banka ekranında limitini, kredi notunu ve kredilerini dinlersin. Tutarı 500 lira adımlarla, vadeyi 5, 10 ya da 20 gün seçip Kredi al dersin. "
+                        + "Taksit her gün sonunda kasadan alınır. Erken kapat krediyi bitirir ve kredi notunu yükseltir. "
+                        + "Faturayı zamanında ödemek kredi notunu yükseltir; geciken fatura ve kaçan taksit düşürür."});
         l.add(new String[]{"Gün sonu ve kolaylıklar",
-                "Gün bitince satış, bahşiş, kira, israf ve hatalar dinletilir; kayıt otomatiktir. Her ekranda Nasıl oynanır vardır. "
+                "Gün bitince satış, bahşiş, çırak maaşı, kredi taksiti, yeni faturalar, israf ve hatalar dinletilir; kayıt otomatiktir. Her ekranda Nasıl oynanır vardır. "
                         + "Durumu oku düğmesi para, yıldız, süre, seçili sipariş ve hazır stoğu söyler. Uygulama arka plana giderse oyun durur. Tüm eylemler tek dokunuşludur."});
         return l;
     }
 
     public static String quickHelp() {
         return "Hazırlıkta önceden döner dilimle, ayran doldur; sonra Dükkânı aç. Sıradaki siparişin altındaki işe ya da istasyona dokun; seçenekleri Eylemler menüsünden de seçebilirsin. "
-                + "Ekmeği ısıtıcıya, patatesi ocağa koy, başka işe geç. Döner makinesinde boyu sen seç. Sos tezgahında malzemeleri tek tek ekle, Hedefi oku ile kontrol et, bitince Malzemeleri bitir. "
+                + "Ekmeği ısıtıcıya, patatesi ocağa koy, başka işe geç. Döner makinesinde boyu sen seç. Sos ve salata tezgâhında malzemeleri tek tek ekle, Hedefi oku ile kontrol et, bitince Malzemeleri bitir. "
                 + "Kalemler bitince siparişi paketle, sonra Teslim et. Acele et, sabır tükenirse müşteri gider.";
     }
 
     // ------------------------------------------------------------------ çırak (market)
     public static String apprenticeLevelsText(int currentLevel) {
-        String t = "Seviye 1: paketler, ayran doldurur, dolaptan içecek alır. Seviye 2: ekmek ve lavaş ısıtır, tepsi hazırlar. Seviye 3: döner dilimler, Ocak ve tatlı işlerini yapar. "
-                + "Önce diğer siparişlere, iş kalmazsa senin siparişine yardım eder; kendi eli vardır. "
-                + "Senden yüzde yirmi yavaştır, hata yapmaz. Boy ve malzemeyi sen seçersin; Gerçekçi akışta seviye 2 ile Standart malzemelerle bitir kısayolu açılır.";
+        String t = "Seviye 1: paketler, teslime hazır siparişi teslim eder, ayran doldurur, dolaptan içecek alır. Seviye 2: ekmek ve lavaş ısıtır, tepsi hazırlar. "
+                + "Seviye 3: döner dilimler, Ocak ve tatlı işlerini yapar. Seviye 4: kalfa, neredeyse senin kadar hızlı. Seviye 5: dördüncü çırak. "
+                + "Önce teslime hazır siparişleri teslim eder, sonra diğer siparişlere, iş kalmazsa senin siparişine yardım eder; kendi eli vardır. "
+                + "Senden yüzde yirmi yavaştır, hata yapmaz. Boy ve malzemeyi sen seçersin; Gerçekçi akışta seviye 2 ile Standart malzemelerle bitir kısayolu açılır. "
+                + "Günlük maaşı gün sonunda kasadan ödenir; ödenemezse çırak ertesi gün gelmez.";
         if (currentLevel > 0) t += " Şu an seviye " + currentLevel + ".";
         return t;
     }
 
-    /** Yükseltmenin market açıklaması (çırak için seviye ayrıntılarıyla). */
+    /** Çırak açıklaması + bugünkü günlük maaş ve bir sonraki seviyenin maaşı (Market). */
+    public static String apprenticeDescription(SaveData save) {
+        int lv = save.level("cirak");
+        String t = apprenticeLevelsText(lv);
+        if (lv > 0) t += " Günlük maaş " + com.doner.oyunu.engine.Finance.dailyWage(lv, save.day) + " lira.";
+        Upgrade u = Catalog.upgrade("cirak");
+        if (u != null && lv < u.maxLevel()) t += " Seviye " + (lv + 1) + " maaşı " + com.doner.oyunu.engine.Finance.dailyWage(lv + 1, save.day) + " lira.";
+        return t;
+    }
+
+    /** Yükseltmenin market açıklaması (çırak için seviye ayrıntıları ve maaş; faturayı artırıyorsa not). */
     public static String upgradeDescription(Upgrade u, SaveData save) {
-        if (u.id.equals("cirak")) return apprenticeLevelsText(save.level(u.id));
-        return u.description;
+        String t = u.id.equals("cirak") ? apprenticeDescription(save) : u.description;
+        String bills = billNote(u);
+        return bills.isEmpty() ? t : t + " " + bills;
+    }
+
+    /** "Elektrik faturasını artırır." / "Elektrik ve doğalgaz faturasını artırır." (yoksa ""). */
+    public static String billNote(Upgrade u) {
+        List<String> n = new ArrayList<>();
+        for (com.doner.oyunu.engine.BillType t : com.doner.oyunu.engine.BillType.values()) if (u.raises(t)) n.add(t.shortName);
+        if (n.isEmpty()) return "";
+        String j = join(n);
+        return Character.toUpperCase(j.charAt(0)) + j.substring(1) + " faturasını artırır.";
     }
 
     // ------------------------------------------------------------------ öğretici
@@ -824,9 +1022,9 @@ public final class Texts {
     public static final String TUT_PASSIVE = "Makine kendi işler, elin boş. Başka işe geç.";
     public static final String TUT_STEP = "";
     public static final String TUT_SIZE = "Döner boyunu sen seçersin.";
-    public static final String TUT_TOPPING = "Sos tezgahına dokun, malzemeleri tek tek ekle, sonra Malzemeleri bitir.";
+    public static final String TUT_TOPPING = "Sos ve salata tezgâhına dokun, malzemeleri tek tek ekle, sonra Malzemeleri bitir.";
     public static final String TUT_PACK = "";
-    public static final String TUT_READY = "Sipariş hazır. Teslim et düğmesine dokun.";
+    public static final String TUT_READY = "Sipariş teslime hazır. Teslim et düğmesine dokun.";
     public static final String TUT_END = "Öğretici bitti. Durumu oku düğmesi her an bilgi verir.";
     /** Süre baskısı kapalıyken öğretici sonu (sabır uyarısı yok). */
     public static final String TUT_END_UNTIMED = "Öğretici bitti. Süre baskısı kapalı, acele yok.";

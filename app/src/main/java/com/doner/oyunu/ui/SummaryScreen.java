@@ -49,7 +49,9 @@ public final class SummaryScreen extends Screen {
 
         LinearLayout body = scrollBody(root);
         if (summary.failed) {
-            body.addView(paragraph("İtibarın çok düştü. Paran ve stokların gün başındaki haline döndü; aynı günü tekrar deneyebilirsin."));
+            body.addView(paragraph(evicted()
+                    ? "Dükkân açılamadı: kira " + com.doner.oyunu.engine.Finance.EVICTION_DAYS + " gündür ödenmedi, tahliye kararı var. Faturalar ekranında kirayı öde; paran yetmezse Krediyle öde."
+                    : "İtibarın çok düştü. Paran ve stokların gün başındaki haline döndü; aynı günü tekrar deneyebilirsin."));
         }
         List<String[]> rows = Texts.summaryRows(summary);
         for (String[] r : rows) {
@@ -86,7 +88,19 @@ public final class SummaryScreen extends Screen {
         }
 
         LinearLayout bar = column();
-        if (summary.failed) {
+        // v2.5: açık fatura ya da maaş borcu varsa Faturalar ekranı (Öde / Ertele / Krediyle öde) en üstte
+        if (evicted() || BillsBox.anythingDue(a.save)) {
+            String bl = evicted() ? "Faturalar: kirayı öde" : "Faturalar";
+            android.widget.Button bb = button(bl, Ui.GOLD, new Runnable() {
+                @Override public void run() { a.show(new BillsScreen(a, Nav.SUMMARY)); }
+            });
+            bb.setContentDescription(bl + ", " + com.doner.oyunu.engine.Finance.openBills(a.save).size() + " açık fatura"
+                    + (a.save.wageDebt > 0 ? ", maaş borcu" : ""));
+            bar.addView(bb, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 6));
+        }
+        if (summary.failed && evicted()) {
+            // tahliye: aynı günü denemek kira ödenmeden işe yaramaz; yol Faturalar
+        } else if (summary.failed) {
             bar.addView(button("Aynı günü tekrar dene", Ui.PRIMARY, new Runnable() {
                 @Override public void run() { a.show(new BriefingScreen(a)); }
             }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 6));
@@ -107,6 +121,8 @@ public final class SummaryScreen extends Screen {
         root.addView(bar);
         return root;
     }
+
+    private boolean evicted() { return "tahliye".equals(summary.failReason) && com.doner.oyunu.engine.UtilityStatus.of(a.save, a.save.day).evicted(); }
 
     @Override public boolean onBack() { a.show(new MenuScreen(a)); return true; }
 }

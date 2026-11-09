@@ -54,6 +54,28 @@ public final class ShopScreen extends Screen {
         root.addView(stat, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 0, 0, 6));
         statGroup = stat;
 
+        // v2.5: Fiyatlar, Banka, Faturalar (market içinden)
+        LinearLayout fin = new LinearLayout(ctx);
+        fin.setOrientation(LinearLayout.HORIZONTAL);
+        int open = com.doner.oyunu.engine.Finance.openBills(a.save).size();
+        Button prices = button("Fiyatlar", Ui.SECONDARY, new Runnable() {
+            @Override public void run() { a.saveNow(); a.show(new PriceScreen(a, Nav.SHOP)); }
+        });
+        Button bank = button("Banka", Ui.SECONDARY, new Runnable() {
+            @Override public void run() { a.saveNow(); a.show(new BankScreen(a, Nav.SHOP)); }
+        });
+        Button bills = button(open > 0 ? "Faturalar (" + open + ")" : "Faturalar", open > 0 || a.save.wageDebt > 0 ? Ui.GOLD : Ui.SECONDARY, new Runnable() {
+            @Override public void run() { a.saveNow(); a.show(new BillsScreen(a, Nav.SHOP)); }
+        });
+        bills.setContentDescription(open > 0 ? "Faturalar, " + open + " açık fatura" : "Faturalar, açık fatura yok");
+        Button[] fb = {prices, bank, bills};
+        for (int i = 0; i < fb.length; i++) {
+            fb[i].setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15);
+            fb[i].setPadding(dp(4), dp(8), dp(4), dp(8));
+            fin.addView(fb[i], Ui.lp(ctx, 0, Ui.WRAP, i == 2 ? 1.2f : 1f, i == 0 ? 0 : 3, 0, i == 2 ? 0 : 3, 0));
+        }
+        root.addView(fin, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 0, 0, 4));
+
         // sekmeler
         LinearLayout tabRow = new LinearLayout(ctx);
         tabRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -78,7 +100,17 @@ public final class ShopScreen extends Screen {
         LinearLayout bar = new LinearLayout(ctx);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.addView(button("Güne başla", Ui.PRIMARY, new Runnable() {
-            @Override public void run() { a.saveNow(); a.show(new GameScreen(a)); }
+            @Override public void run() {
+                a.saveNow();
+                if (com.doner.oyunu.engine.UtilityStatus.of(a.save, a.save.day).evicted()) {
+                    // v2.5 tahliye: dükkân açılamaz, faturalara yönlendir
+                    a.sound.play("sfx_error");
+                    a.speaker.force("Tahliye kararı var: kirayı ödemeden dükkân açılamaz. Faturalar açılıyor.");
+                    a.show(new BillsScreen(a, Nav.SHOP));
+                    return;
+                }
+                a.show(new GameScreen(a));
+            }
         }), Ui.lp(ctx, 0, Ui.WRAP, 2f, 0, 8, 6, 0));
         bar.addView(button("Geri", Ui.SECONDARY, new Runnable() {
             @Override public void run() { a.saveNow(); a.show(new BriefingScreen(a)); }
@@ -127,7 +159,7 @@ public final class ShopScreen extends Screen {
         refreshers.add(new Runnable() {
             @Override public void run() {
                 int cost = Shop.recommendedCost(a.save);
-                recommended.setText(cost > 0 ? "Önerilen malzemeleri al  (" + cost + " TL)" : "Önerilen malzemeleri al  (stok yeterli)");
+                recommended.setText(cost > 0 ? "Önerilen malzemeleri al  (" + cost + " lira)" : "Önerilen malzemeleri al  (stok yeterli)");
                 recommended.setContentDescription(Texts.recommendedDescription(a.save));
                 Ui.dim(recommended, cost <= 0);
             }
@@ -159,7 +191,7 @@ public final class ShopScreen extends Screen {
             @Override public void run() {
                 int cap = new Upgrades(a.save).stockCap();
                 int stock = a.save.inventory.get(ing.id);
-                info.setText(ing.name + "\nStok " + stock + " / " + cap + " " + ing.unit + "  ·  birim " + ing.price + " TL");
+                info.setText(ing.name + "\nStok " + stock + " / " + cap + " " + ing.unit + "  ·  birim " + ing.price + " lira");
                 info.setContentDescription(Texts.ingredientInfo(ing, stock, cap));
             }
         });

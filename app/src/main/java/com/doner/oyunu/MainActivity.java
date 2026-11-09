@@ -43,6 +43,12 @@ public class MainActivity extends Activity {
         super.onCreate(b);
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         save = SaveData.parse(prefs.getString(KEY_SAVE, null));
+        // v2.5 kayıt dönemi: eski sürüm kaydında ilerleme sıfırlandı -> bildirim BİR KEZ (menüde görsel + sesli)
+        if (save.progressResetNotice) {
+            resetNotice = RESET_NOTICE;
+            save.clearProgressResetNotice();
+            saveNow();
+        }
         sound = new SoundManager(this);
         speaker = new Speaker(this);
         haptics = new Haptics(this);
@@ -61,6 +67,18 @@ public class MainActivity extends Activity {
     }
 
     // ------------------------------------------------------------------ kayıt / ayarlar
+    /** Sıfırlama bildiriminin kısa metni (görsel + sesli). Ayrıntı {@link com.doner.oyunu.engine.Narrator#progressResetText()}. */
+    public static final String RESET_NOTICE = "Yeni sürüm: ilerlemen sıfırlandı, ayarların korundu.";
+    /** Gösterilmeyi bekleyen sıfırlama bildirimi (yoksa null); {@link #takeResetNotice()} bir kez verir. */
+    private String resetNotice;
+
+    /** Sıfırlama bildirimini bir kez verir (sonra null). */
+    public String takeResetNotice() {
+        String n = resetNotice;
+        resetNotice = null;
+        return n;
+    }
+
     public boolean hasGame() { return prefs.getBoolean(KEY_STARTED, false); }
 
     public void saveNow() {
@@ -76,6 +94,7 @@ public class MainActivity extends Activity {
 
     /** Yeni oyun: ayarlar korunur, ilerleme sıfırlanır (v2.5: motorun dönem sıfırlamasıyla aynı kural). */
     public void newGame() {
+        resetNotice = null; // yeni oyun zaten sıfırdan: dönem bildirimi gereksiz
         SaveData s = SaveData.newGameKeepingSettings(save);
         save = s;
         prefs.edit().putBoolean(KEY_STARTED, true).apply();

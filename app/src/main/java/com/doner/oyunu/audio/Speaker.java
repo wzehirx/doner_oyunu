@@ -112,6 +112,8 @@ public final class Speaker implements Narrator.Output {
     /** Oyun anlatımı (kategorili, bayatlık denetimli): "Sesli anlatım" ayarına bağlıdır. */
     @Override public void say(String text, boolean urgent, String category, Narrator.Fresh fresh) {
         if (!enabled || text == null || text.isEmpty()) return;
+        // "Hedefi oku" / "Eklenenleri oku" (panel okuma seçenekleri): oyuncunun açık isteği, her basışta okunur
+        if (Narrator.CAT_INFO.equals(category)) { force(text); return; }
         queue.say(text, urgent, category, fresh);
         kick();
     }
@@ -125,12 +127,60 @@ public final class Speaker implements Narrator.Output {
         if (isTalkBackOn() || enabled) { queue.say(text, urgent); kick(); }
     }
 
-    /** Kullanıcı açıkça istedi (Durumu oku vb.): ayardan bağımsız konuşur. */
+    /**
+     * Kullanıcı açıkça istedi ("Durumu oku", "Hazır stoğu oku", "Hedefi oku", fatura/banka/fiyat okumaları): ayardan
+     * bağımsız, HER basışta, konuşanı keserek okunur (v2.5 düzeltmesi). Kök neden: eskiden bu okumalar sıradan bir acil
+     * duyuru gibi sıraya giriyordu: konuşan bir uyarı varken bekliyor, 6 sn'de bayatlayıp atılıyor, art arda gelen
+     * uyarılarla sıradan çıkarılıyordu; TalkBack ise art arda gelen AYNI metinli duyuruyu yutuyordu (ikinci basış sessiz).
+     * Şimdi: konuşma sırası {@link SpeechQueue#sayExplicit} ile hemen keserek söyler; TalkBack açıkken aynı metin
+     * görünmez bir ayırt edici ekle ({@link #DISTINCT_MARK}) ve dokunma olayından sonra kısa gecikmeyle duyurulur;
+     * TTS'de QUEUE_FLUSH ile önceki konuşma kesilir.
+     */
     public void force(String text) {
         if (text == null || text.isEmpty()) return;
-        queue.say(text, true);
-        kick();
+        explicitText = text;
+        handler.removeCallbacks(explicitRunner);
+        if (isTalkBackOn()) handler.postDelayed(explicitRunner, EXPLICIT_DELAY_MS);
+        else explicitRunner.run();
     }
+
+    /** TalkBack açıkken açık okuma, dokunma (TYPE_VIEW_CLICKED) olayından sonra gelsin diye bu kadar ms bekler. */
+    public static final long EXPLICIT_DELAY_MS = 90;
+    /** Görünmez ayırt edici (sıfır genişlikli boşluk): TalkBack aynı metni art arda yutmasın. Seslendirilmez. */
+    public static final String DISTINCT_MARK = "\u200B";
+    private String explicitText;
+    private String lastExplicitSent;
+    private int explicitSerial;
+
+    private final Runnable explicitRunner = new Runnable() {
+        @Override public void run() {
+            String t = explicitText;
+            explicitText = null;
+            if (t == null) return;
+            if (isTalkBackOn()) {
+                // aynı metin art arda: görünmez ekle farklılaştır (TalkBack yinelenen duyuruyu atmasın)
+                String base = t;
+                if (lastExplicitSent != null && stripMark(lastExplicitSent).equals(base)) {
+                    explicitSerial++;
+                    StringBuilder sb = new StringBuilder(base);
+                    for (int i = 0; i < 1 + (explicitSerial % 2); i++) sb.append(DISTINCT_MARK);
+                    if (sb.toString().equals(lastExplicitSent)) sb.append(DISTINCT_MARK);
+                    t = sb.toString();
+                } else {
+                    explicitSerial = 0;
+                }
+            }
+            lastExplicitSent = t;
+            queue.sayExplicit(t);
+            kick();
+        }
+    };
+
+    /** Ayırt edici ekleri siler (testler ve karşılaştırma için). */
+    public static String stripMark(String s) { return s == null ? null : s.replace(DISTINCT_MARK, ""); }
+
+    /** Söylenen açık okuma sayısı (test). */
+    public int explicitCount() { return queue.explicitCount(); }
 
     /** Uzun metin (yardım): bayatlamaz, sıraya eklenir; flush ise öncekileri keser. */
     public void speakLong(String text, boolean flush) {
@@ -149,6 +199,8 @@ public final class Speaker implements Narrator.Output {
     }
 
     public void stop() {
+        handler.removeCallbacks(explicitRunner);
+        explicitText = null;
         queue.clear();
         handler.removeCallbacks(pumper);
         pendingBeforeReady.clear();

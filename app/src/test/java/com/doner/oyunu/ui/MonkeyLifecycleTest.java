@@ -25,8 +25,17 @@ import java.util.Random;
 @Config(sdk = 34, qualifiers = "w360dp-h740dp-xxhdpi")
 public class MonkeyLifecycleTest {
 
+    /**
+     * v2.5: motor tohumu sabit ({@link GameScreen#testSeed}); eskiden System.nanoTime() idi ve
+     * gameMonkeyTalkBackDay3Apprentice1 arada "istasyon düğmesi yok PAKET" veriyordu. Neden: rastgele dokunuş sipariş
+     * listesini açıyor, liste açıkken ana ekran (istasyonlar, Teslim et) TalkBack'ten gizli; UiBot bunu bilmiyordu.
+     * Bot artık önce listeyi kapatır (UiBot.step); tohum 8 eski hatayı üretiyordu (gerileme denetimi).
+     */
+    @org.junit.After public void resetSeed() { GameScreen.testSeed = null; }
+
     /** Rastgele dokunma/geri/arka plan/döndürme: hiçbir durumda istisna çıkmamalı, hep bir ekran görünmeli. */
     private void monkey(long seed, boolean talkBack, boolean animations) {
+        GameScreen.testSeed = 1000 + seed;
         if (talkBack) {
             AccessibilityManager am = (AccessibilityManager) RuntimeEnvironment.getApplication().getSystemService(Context.ACCESSIBILITY_SERVICE);
             shadowOf(am).setEnabled(true);
@@ -60,7 +69,10 @@ public class MonkeyLifecycleTest {
     }
 
     /** Hazırlık + oyun ekranında (çırak, istekli siparişler, paneller) rastgele dokunma/yaşam döngüsü. */
-    private void gameMonkey(long seed, boolean talkBack, int day, int apprentice) {
+    private void gameMonkey(long seed, boolean talkBack, int day, int apprentice) { gameMonkey(seed, talkBack, day, apprentice, seed); }
+
+    private void gameMonkey(long seed, boolean talkBack, int day, int apprentice, long engineSeed) {
+        GameScreen.testSeed = engineSeed;
         if (talkBack) {
             AccessibilityManager am = (AccessibilityManager) RuntimeEnvironment.getApplication().getSystemService(Context.ACCESSIBILITY_SERVICE);
             shadowOf(am).setEnabled(true);
@@ -111,7 +123,14 @@ public class MonkeyLifecycleTest {
 
     @Test public void gameMonkeyDay1() { gameMonkey(11, false, 1, 0); }
     @Test public void gameMonkeyDay6Apprentice3() { gameMonkey(12, false, 6, 3); }
-    @Test public void gameMonkeyTalkBackDay3Apprentice1() { gameMonkey(13, true, 3, 1); }
+    @Test public void gameMonkeyTalkBackDay3Apprentice1() { gameMonkey(13, true, 3, 1, 8); }
+    /** Eskiden hata veren diğer motor tohumları (sipariş listesi açıkken bot hamlesi). */
+    @Test public void gameMonkeyTalkBackDay3Apprentice1MoreSeeds() {
+        for (long es : new long[]{10, 22, 23}) {
+            org.robolectric.RuntimeEnvironment.getApplication().getSharedPreferences("doner_oyunu", 0).edit().clear().commit();
+            gameMonkey(13, true, 3, 1, es);
+        }
+    }
 
     private static boolean sosPanelOpen(UiHarness h) {
         return UiBot.panelOpen(h) && UiBot.panelOf(h).stationId == com.doner.oyunu.engine.Station.SOS.id;
@@ -187,6 +206,7 @@ public class MonkeyLifecycleTest {
 
     /** Rastgele TalkBack özel eylemleri (eski/yanlış kimlikler dahil) çökmeden çalışır. */
     @Test public void customActionMonkeyNoCrash() {
+        GameScreen.testSeed = 77L;
         AccessibilityManager am = (AccessibilityManager) RuntimeEnvironment.getApplication().getSystemService(Context.ACCESSIBILITY_SERVICE);
         shadowOf(am).setEnabled(true);
         shadowOf(am).setTouchExplorationEnabled(true);

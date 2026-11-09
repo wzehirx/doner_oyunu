@@ -258,7 +258,7 @@ public class TimePressureUiTest {
         assertEquals(com.doner.oyunu.engine.PrepResult.STARTED, e.startPrepDoner("et_doner", 4));
         h.run(8000);
         assertEquals(4, e.getReadyDoner());
-        assertTrue(UiHarness.label(h.stationTile(Station.DONER)).contains("hazır 4 porsiyon"));
+        assertTrue(UiHarness.label(h.stationTile(Station.DONER)).contains("hazır döner 4 porsiyon") /* v2.5 terim: "hazır döner 4 porsiyon" */);
         h.click("Durumu oku"); h.run(100);
         assertTrue(new Narrator(e).statusText().contains("Hazır: döner 4 porsiyon"));
     }

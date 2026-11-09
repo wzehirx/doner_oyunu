@@ -38,6 +38,26 @@ final class ActionMenu {
         host.setAccessibilityDelegate(new Delegate(src, h));
     }
 
+    /** Sabit etiketli basit eylemler (v2.5: fiyat satırı "Fiyatı artır" / "Fiyatı azalt"): seçilen eylemin dizini. */
+    interface SimpleHandler { void onAction(int index); }
+
+    /** Düğmeye sabit etiketli TalkBack eylemleri bağlar (aynı kimlik aralığı: {@link #ACTION_BASE} + dizin). */
+    static void attachSimple(View host, final String[] labels, final SimpleHandler h) {
+        host.setAccessibilityDelegate(new View.AccessibilityDelegate() {
+            @Override public void onInitializeAccessibilityNodeInfo(View v, AccessibilityNodeInfo info) {
+                super.onInitializeAccessibilityNodeInfo(v, info);
+                info.setClassName(Button.class.getName());
+                for (int i = 0; i < labels.length; i++) info.addAction(new AccessibilityAction(ACTION_BASE + i, labels[i]));
+            }
+
+            @Override public boolean performAccessibilityAction(View v, int action, android.os.Bundle args) {
+                int i = action - ACTION_BASE;
+                if (i >= 0 && i < labels.length) { h.onAction(i); return true; }
+                return super.performAccessibilityAction(v, action, args);
+            }
+        });
+    }
+
     /** Eylem listesi değişti: düğmenin erişilebilirlik düğümünü tazelemesi için olay gönderir. */
     static void invalidate(View host) {
         host.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);

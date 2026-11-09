@@ -22,6 +22,8 @@ import java.util.concurrent.TimeUnit;
 
 /** Robolectric testleri için ortak yardımcılar: etkinlik başlatma, zaman ilerletme, görünüm arama. */
 final class UiHarness {
+    /** Testin tohum vermediği durumda motor tohumu. */
+    static final long DEFAULT_SEED = 20251109L;
     final ActivityController<MainActivity> controller;
     final MainActivity act;
 
@@ -39,6 +41,8 @@ final class UiHarness {
 
     /** animations=false: geçiş animasyonları kapalı (animasyonlu mod: kare başına bir ilerleme). */
     UiHarness(boolean animations) {
+        // v2.5: tüm arayüz testleri deterministik (motor tohumu sabit); test kendi tohumunu önceden verdiyse o kullanılır
+        if (GameScreen.testSeed == null) GameScreen.testSeed = DEFAULT_SEED;
         org.robolectric.shadows.ShadowChoreographer.setPaused(true);
         if (!animations) {
             android.provider.Settings.Global.putFloat(org.robolectric.RuntimeEnvironment.getApplication().getContentResolver(),

@@ -19,6 +19,10 @@ import java.util.Map;
  * konuşan duyuru da gerçek acilse (hata/uyarı, sabır kritik) sırada ilk bekler (en çok {@link #MAX_URGENT_PENDING});
  * seçim, bilgi okuma, ayar değişimi gibi oyuncunun kendi eylemine yanıtlar ve bilgi duyuruları kesilebilir.</li>
  * <li>Uzun metin ({@link #sayLong}, yardım okuma) hiçbir zaman bayatlamaz ve oyun anlatımıyla atılmaz.</li>
+ * <li><b>Oyuncunun açıkça istediği okuma</b> ({@link #sayExplicit}: "Durumu oku", "Hazır stoğu oku", "Hedefi oku", fatura,
+ * banka, fiyat okumaları) HER basışta hemen ve konuşanı keserek söylenir; birleştirme, aralık, bayatlık ve sıra sınırı
+ * kuralları uygulanmaz; aynı metin art arda da söylenir. Oyun duyuruları onu kesmez (yalnızca yeni bir açık okuma ya da
+ * {@link #sayLong} flush keser); bekleyen acil duyurular bittikten sonra söylenir.</li>
  * </ul>
  */
 public final class SpeechQueue implements Narrator.Output {
@@ -124,6 +128,26 @@ public final class SpeechQueue implements Narrator.Output {
         pump(now);
     }
 
+    /**
+     * Oyuncunun açıkça istediği okuma (v2.5): her çağrıda hemen, konuşanı keserek (interrupt) söylenir. Bayatlık,
+     * kategori birleştirme, {@link #MIN_GAP_MS} ve sıra sınırı uygulanmaz; aynı metin art arda da okunur.
+     */
+    public void sayExplicit(String text) {
+        if (text == null || text.isEmpty()) return;
+        long now = clock.now();
+        purge(now);
+        Item it = new Item(text, true, CAT_EXPLICIT, null, now, false);
+        start(it, now, true);
+        explicitCount++;
+    }
+
+    /** Açık okumaların kategorisi (oyun anlatımı bu kategoriyi kullanmaz). */
+    public static final String CAT_EXPLICIT = "explicit";
+    private int explicitCount;
+
+    /** Söylenen açık okuma sayısı (ölçüm/test). */
+    public int explicitCount() { return explicitCount; }
+
     // ------------------------------------------------------------------ sıra
     private void addPending(Item it) { pending.add(it); }
 
@@ -189,7 +213,8 @@ public final class SpeechQueue implements Narrator.Output {
         // Yalnızca gerçek acil duyurular (hata/uyarı, sabır kritik) başka acil duyuruyla kesilmez; oyuncunun kendi eylemine
         // yanıt olan duyurular (seçim, bilgi okuma, ayar değişimi, arayüz geri bildirimi) ve bilgi niteliğindeki acil
         // duyurular (hazırlık aşaması, gün sonu özeti) yenisiyle kesilir.
-        currentInterruptible = !it.urgent || !(Narrator.CAT_ALERT.equals(it.category) || Narrator.CAT_PATIENCE.equals(it.category));
+        currentInterruptible = !it.urgent || !(Narrator.CAT_ALERT.equals(it.category) || Narrator.CAT_PATIENCE.equals(it.category)
+                || CAT_EXPLICIT.equals(it.category));
         spoken++;
         long ms = player.play(it.text, interrupt);
         busyUntil = now + Math.max(0L, ms);

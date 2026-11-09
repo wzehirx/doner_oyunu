@@ -16,10 +16,12 @@ public final class MenuScreen extends Screen {
     private IconView skewer;
     private Button newGameBtn;
     private boolean confirmNew;
+    /** Bu menüde gösterilen sıfırlama bildirimi (yoksa null). */
+    private String resetNotice;
 
     public MenuScreen(MainActivity a) { super(a); }
 
-    @Override public String title() { return "Döner Dükkanı, ana menü"; }
+    @Override public String title() { return "Döner Dükkânı, ana menü"; }
 
     @Override public View create() {
         LinearLayout root = rootColumn();
@@ -28,10 +30,10 @@ public final class MenuScreen extends Screen {
         skewer = new IconView(ctx, Icons.Kind.DONER, 120);
         root.addView(skewer, Ui.lp(ctx, Ui.dp(ctx, 120), Ui.dp(ctx, 120), 0, 12, 0, 0));
 
-        TextView t = makeTitle("Döner Dükkanı");
+        TextView t = makeTitle("Döner Dükkânı");
         t.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 38);
         t.setGravity(Gravity.CENTER);
-        t.setContentDescription("Döner Dükkanı, ana menü");
+        t.setContentDescription("Döner Dükkânı, ana menü");
         root.addView(t, new LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP));
 
         TextView sub = Ui.label(ctx, "Sıcak, hızlı, erişilebilir", 18, Theme.CREAM, false);
@@ -40,6 +42,21 @@ public final class MenuScreen extends Screen {
         root.addView(sub, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 0, 0, 14));
 
         LinearLayout body = scrollBody(root);
+
+        // v2.5: sürüm güncellemesi ilerlemeyi sıfırladıysa bir kez görsel + sesli bildirim
+        resetNotice = a.takeResetNotice();
+        if (resetNotice != null) {
+            LinearLayout c = card();
+            c.setBackground(Ui.round(ctx, Theme.CARD_HI, Theme.GOLD, 3, 16));
+            TextView tv = Ui.label(ctx, resetNotice, 19, Theme.GOLD, true);
+            tv.setFocusable(true);
+            c.addView(tv);
+            TextView more = Ui.label(ctx, com.doner.oyunu.engine.Narrator.progressResetText(), 15, Theme.CREAM, false);
+            more.setFocusable(true);
+            more.setPadding(0, dp(4), 0, 0);
+            c.addView(more);
+            body.addView(c, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 2, 0, 8));
+        }
 
         if (a.hasGame()) {
             Button cont = button("Devam et", Ui.PRIMARY, new Runnable() {
@@ -83,6 +100,13 @@ public final class MenuScreen extends Screen {
     }
 
     @Override public void onEnter() {
+        if (resetNotice != null) {
+            // ekran başlığından (odak/TTS) SONRA sıraya girsin: başlık bildirimi kesmesin
+            final String n = resetNotice;
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(new Runnable() {
+                @Override public void run() { if (a.currentScreen() == MenuScreen.this) a.speaker.announce(n, false); }
+            }, 120);
+        }
         if (Ui.animationsOn(ctx) && skewer != null) {
             spin = ValueAnimator.ofFloat(0f, (float) (Math.PI * 2));
             spin.setDuration(3600);

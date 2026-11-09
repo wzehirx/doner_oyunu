@@ -423,13 +423,15 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     }
 
     @Override public void onResume() {
-        if (paused && overlay != null && overlayTitle != null) a.focusOn(overlayTitle);
+        if (paused && billsOverlay != null && billsTitle != null) a.focusOn(billsTitle);
+        else if (paused && overlay != null && overlayTitle != null) a.focusOn(overlayTitle);
     }
 
     @Override public boolean onBack() {
         if (finishing) { showSummary(); return true; } // gün bitti: beklemeden özete geç
         if (ordersPanel != null && !paused) { closeOrdersPanel(true); a.speaker.announce("Sipariş listesi kapatıldı.", true); return true; }
         if (panel != null && !paused) { cancelPanel(panel); return true; }
+        if (paused && billsOverlay != null) { closeBillsPanel(true); return true; }
         if (paused) resumeGame(); else pauseGame();
         return true;
     }
@@ -483,6 +485,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
     private void resumeGame() {
         if (!paused) return;
+        closeBillsPanel(false);
         paused = false;
         if (overlay != null) { host.removeView(overlay); overlay = null; }
         if (panel != null) panel.overlay.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
@@ -525,6 +528,14 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         pnl.addView(button("Durumu oku", Ui.SECONDARY, new Runnable() {
             @Override public void run() { a.speaker.force(narrator.statusText()); }
         }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 6));
+
+        // v2.5: gün içinde fatura ve maaş ödeme (kesinti o an kalkar)
+        int openBills = engine.getSave().bills.size();
+        billsBtn = button(openBills > 0 ? "Faturalar (" + openBills + ")" : "Faturalar", openBills > 0 || engine.getSave().wageDebt > 0 ? Ui.GOLD : Ui.SECONDARY, new Runnable() {
+            @Override public void run() { openBillsPanel(); }
+        });
+        billsBtn.setContentDescription(openBills > 0 ? "Faturalar, " + openBills + " açık fatura" : "Faturalar, açık fatura yok");
+        pnl.addView(billsBtn, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 6));
 
         // v0.7: oyun akışı oyun ortasında da değişir (tek düğme, sıradakine geçer)
         final Button flowBtn = Ui.button(ctx, Texts.flowButtonLabel(engine.getFlowMode()), Ui.SECONDARY);
@@ -591,6 +602,86 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             a.focusOn(overlayTitle);
             a.speaker.screenChanged("Duraklatıldı");
         }
+    }
+
+    // ================================================================== gün içi faturalar (Duraklat > Faturalar)
+    private Button billsBtn;
+    /** Açık gün içi fatura paneli (duraklatma panelinin üstünde; yoksa null). */
+    private FrameLayout billsOverlay;
+    private TextView billsTitle;
+
+    private void openBillsPanel() {
+        if (!paused || billsOverlay != null) return;
+        billsOverlay = new FrameLayout(ctx);
+        billsOverlay.setBackgroundColor(0xF01A0E08);
+        billsOverlay.setClickable(true);
+        billsOverlay.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout pnl = column();
+        pnl.setBackground(Ui.round(ctx, Theme.CARD, Theme.GOLD, 3, 20));
+        pnl.setPadding(dp(16), dp(16), dp(16), dp(16));
+        billsTitle = Ui.label(ctx, "Faturalar", 26, Theme.GOLD, true);
+        Ui.heading(billsTitle);
+        pnl.addView(billsTitle);
+        TextView info = Ui.label(ctx, "Ödenen faturanın kesintisi hemen kalkar.", 16, Theme.CREAM, false);
+        info.setFocusable(true);
+        info.setPadding(0, dp(4), 0, dp(6));
+        pnl.addView(info);
+        BillsBox box = new BillsBox(ctx, new BillsBox.Host() {
+            @Override public SaveData save() { return engine.getSave(); }
+            @Override public int day() { return engine.getDay(); }
+            @Override public com.doner.oyunu.engine.Finance.PayResult pay(int billId) { return engine.payBill(billId); }
+            @Override public com.doner.oyunu.engine.Finance.PayResult payWages() { return engine.payWages(); }
+            @Override public boolean fullOptions() { return false; }
+            @Override public void tap(View v, Runnable r) { GameScreen.this.tap(v, r); }
+            @Override public void say(String text) { a.speaker.force(text); }
+            @Override public void focus(View v) { a.focusOn(v); }
+            @Override public void sound(String sfx, boolean ok) {
+                if (!ok) { a.sound.play(sfx); a.haptics.error(); return; }
+                if ("sfx_coin".equals(sfx)) return; // fatura: para sesi + titreşim motor olayından (Feedback.onBillPaid)
+                a.sound.play(sfx);
+                a.haptics.buy();
+            }
+            @Override public void changed() { actionSig.clear(); dirty = true; refreshBillsButton(); }
+        });
+        pnl.addView(box);
+        pnl.addView(button("Faturaları oku", Ui.SECONDARY, new Runnable() {
+            @Override public void run() { a.speaker.force(BillsBox.readText(engine.getSave(), engine.getDay())); }
+        }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 8, 0, 4));
+        Button close = Ui.button(ctx, "Kapat", Ui.SECONDARY);
+        close.setContentDescription("Kapat");
+        tap(close, new Runnable() { @Override public void run() { closeBillsPanel(true); } });
+        pnl.addView(close, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 6, 0, 0));
+        ScrollView sv = new ScrollView(ctx);
+        sv.setFillViewport(true);
+        FrameLayout wrap = new FrameLayout(ctx);
+        FrameLayout.LayoutParams plp = new FrameLayout.LayoutParams(Ui.MATCH, Ui.WRAP, Gravity.CENTER);
+        plp.setMargins(dp(14), dp(14), dp(14), dp(14));
+        wrap.addView(pnl, plp);
+        sv.addView(wrap, new ViewGroup.LayoutParams(Ui.MATCH, Ui.MATCH));
+        billsOverlay.addView(sv, new FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH));
+        host.addView(billsOverlay, new FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH));
+        if (overlay != null) overlay.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+        a.focusOn(billsTitle);
+        a.speaker.screenChanged("Faturalar");
+    }
+
+    private void closeBillsPanel(boolean focusBack) {
+        if (billsOverlay == null) return;
+        host.removeView(billsOverlay);
+        billsOverlay = null;
+        if (overlay != null) overlay.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        refreshBillsButton();
+        if (focusBack && billsBtn != null) {
+            a.speaker.announce("Faturalar kapatıldı.", true);
+            a.focusOn(billsBtn);
+        }
+    }
+
+    private void refreshBillsButton() {
+        if (billsBtn == null) return;
+        int n = engine.getSave().bills.size();
+        billsBtn.setText(n > 0 ? "Faturalar (" + n + ")" : "Faturalar");
+        billsBtn.setContentDescription(n > 0 ? "Faturalar, " + n + " açık fatura" : "Faturalar, açık fatura yok");
     }
 
     private void onQuit() {
@@ -910,6 +1001,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         if (act == null || o == null || engine.getState() != GameEngine.State.RUNNING) { dirty = true; return; }
         switch (act.kind) {
             case DELIVER:
+                if (act.status == ReadyAction.Status.RUNNING) { a.speaker.force(act.text + "."); return; } // çırak teslim ediyor
                 ensureSelected(o);
                 engine.deliver(o.id);
                 wantEmergency.clear();
@@ -945,11 +1037,17 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     private void onDeliver() {
         if (blocked()) return;
         Order target = engine.getFocusOrder();
-        if (target == null || !target.isReady()) {
+        if (target == null || !target.isReady() || target.isDelivering()) {
             target = null;
-            for (Order o : engine.getOrders()) if (o.isReady()) { target = o; break; }
+            for (Order o : engine.getOrders()) if (o.isReady() && !o.isDelivering()) { target = o; break; }
         }
-        if (target == null) { error("Teslime hazır sipariş yok."); return; }
+        if (target == null) {
+            boolean appr = false;
+            for (Order o : engine.getOrders()) if (o.isDelivering()) appr = true;
+            if (appr) { a.sound.play("sfx_warning", 0f, 0.6f); a.speaker.force("Çırak teslim ediyor."); return; }
+            error("Teslime hazır sipariş yok.");
+            return;
+        }
         engine.deliver(target.id);
         wantEmergency.clear();
         dirty = true;
@@ -1206,9 +1304,9 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
         // teslim
         boolean anyReady = false;
-        for (Order o : orders) if (o.isReady()) anyReady = true;
+        for (Order o : orders) if (o.isReady() && !o.isDelivering()) anyReady = true;
         Ui.setDesc(deliverBtn, Texts.deliverDescription(engine));
-        String dt = anyReady ? "Teslim et  (hazır)" : "Teslim et";
+        String dt = anyReady ? "Teslim et  (teslime hazır)" : "Teslim et";
         if (!dt.contentEquals(deliverBtn.getText())) deliverBtn.setText(dt);
         Ui.dim(deliverBtn, !anyReady);
 
@@ -1511,8 +1609,24 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         }
     }
 
-    /** Kutu içecek adımı ("Dolaptan al"): dolap sesiyle başlar, kutu açma sesiyle biter. */
-    static boolean isCanStep(Step s) { return s != null && s.station == Station.ICECEK && s.needs.containsKey("kutu_icecek"); }
+    /** Kutu içecek ve şişe su adımı ("Dolaptan al"): dolap sesiyle başlar, kutu/şişe açma sesiyle biter. */
+    static boolean isCanStep(Step s) {
+        return s != null && s.station == Station.ICECEK && (s.needs.containsKey("kutu_icecek") || s.needs.containsKey("su"));
+    }
+
+    /**
+     * v2.5 yeni ürünler (yeni ses üretilmedi, var olanlar eşlendi): çay, şalgam ve çorba dökme sesi (sfx_pour); sütlaç
+     * dolaptan (sfx_drink_fridge); baklava tabağa dizme (sfx_wrap); çorbanın limonu (sfx_veg_tomato). Diğerleri istasyon
+     * sesi (köfte, tantuni, kaşar: Ocak cızırtısı). Eşleşme yoksa null.
+     */
+    static String sfxForNewProductStep(Step s) {
+        if (s == null || s.isTopping()) return null;
+        if (s.needs.containsKey("cay") || s.needs.containsKey("salgam") || s.needs.containsKey("corba")) return "sfx_pour";
+        if (s.needs.containsKey("sutlac")) return "sfx_drink_fridge";
+        if (s.needs.containsKey("baklava")) return "sfx_wrap";
+        if (s.station == Station.SOS && s.needs.containsKey("limon") && s.needs.size() == 1) return "sfx_veg_tomato";
+        return null;
+    }
 
     /**
      * Adımın istasyon sesi: kızartma adımı sfx_fry (döngü), içecekler v2.0 varyant havuzu (ayran doldurma: ayran dökme
@@ -1521,6 +1635,8 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     static String sfxForStep(Step s) {
         if (s != null && s.isFry()) return "sfx_fry";
         if (isCanStep(s)) return "sfx_drink_fridge";
+        String v25 = sfxForNewProductStep(s);
+        if (v25 != null) return v25;
         return sfxForStation(s == null ? Station.IZGARA : s.station);
     }
 
@@ -1788,7 +1904,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             a.sound.play("sfx_tap", 0f, 0.6f);
             notice(t);
             // Narrator "Sesli anlatım" kapalıyken susar; okuma istendiği için TalkBack/TTS yine de duyurulur.
-            if (!a.save.speechOn) a.speaker.announce(t, true);
+            if (!a.save.speechOn) a.speaker.force(t); // açık okuma: her basışta (v2.5)
             dirty = true;
         }
 
@@ -1840,6 +1956,12 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         }
 
         @Override public void onApprenticeAction(ApprenticeAction act) {
+            if (act.deliver) {
+                // v2.5 çırak teslimi: başlangıçta hafif tık (konuşma yok); bitişte para sesi onOrderDelivered'dan
+                if (act.started) a.sound.play("sfx_tick", 0.3f, 0.5f);
+                dirty = true;
+                return;
+            }
             String key = apprenticeKey(act.worker);
             boolean passive = act.prep == PrepKind.FRIES || (act.prep == null && passiveStep(act.step));
             if (act.started) {
@@ -1915,6 +2037,37 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             dirty = true;
         }
 
+        // ---- v2.5: faturalar ve kesintiler (anlatım Narrator'da; burada ses, titreşim, ekran notu)
+        @Override public void onFinanceNotices(List<String> notices) {
+            if (notices == null || notices.isEmpty()) return;
+            a.sound.playLater("sfx_warning", 0f, 400);
+            a.haptics.warning();
+            notice(notices.get(0));
+            dirty = true;
+        }
+
+        @Override public void onUtilityBlocked(Order o, Station station, com.doner.oyunu.engine.BillType cause) {
+            a.sound.play("sfx_error", station == null ? 0f : panForStation(station));
+            a.haptics.error();
+            notice(narrator.utilityBlocked(station == null ? Station.IZGARA : station, cause));
+            dirty = true;
+        }
+
+        @Override public void onStockSpoiled(Ingredient ing, int amount, com.doner.oyunu.engine.BillType cause) {
+            a.sound.play("sfx_warning", panForStation(Station.ICECEK), 0.8f);
+            a.haptics.warning();
+            notice(narrator.stockSpoiled(ing, amount));
+            dirty = true;
+        }
+
+        @Override public void onBillPaid(com.doner.oyunu.engine.Bill bill, int paid) {
+            a.sound.play("sfx_coin");
+            a.haptics.buy();
+            actionSig.clear(); // kesinti kalktı: TalkBack eylem listeleri (Ocak açıldı) yeniden kurulsun
+            notice(Narrator.billPaid(bill, paid));
+            dirty = true;
+        }
+
         @Override public void onDayFinished(DaySummary s) {
             a.sound.stopAllLoops();
             stationLoops.clear();
@@ -1965,14 +2118,17 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
                 for (ActiveStep s : engine.getActiveSteps()) if (s.isPrep() || s.isApprentice()) { rows.add(Texts.jobLabel(engine, s)); jobs.add(s); }
                 if (rows.isEmpty() && level > 0) { rows.add("Çırak: boşta"); jobs.add(null); }
             } else {
-                for (int w = 1; w <= level; w++) {
+                // v2.5: çalışan sayısı seviyeden ayrı (4 = kalfa, 5 = dördüncü çırak)
+                int workers = engine.getApprenticeWorkers();
+                for (int w = 1; w <= workers; w++) {
                     ActiveStep hands = null;
                     for (ActiveStep s : engine.getActiveSteps()) if (s.worker == w && s.holdsHands()) hands = s;
-                    String who = level > 1 ? "Çırak " + w : "Çırak";
+                    String who = workers > 1 ? "Çırak " + w : (level >= 4 ? "Kalfa" : "Çırak");
                     rows.add(hands == null ? who + ": boşta" : Texts.jobLabel(engine, hands));
                     jobs.add(hands);
                 }
             }
+            if (engine.isApprenticeAbsent()) { rows.add("Çırak bugün yok: maaş borcu var"); jobs.add(null); }
             int n = Math.min(rows.size(), MAX_WORKER_ROWS);
             StringBuilder desc = new StringBuilder();
             for (int i = 0; i < MAX_WORKER_ROWS; i++) {
@@ -2206,7 +2362,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         void update(ReadyAction act, int more) {
             action = act;
             String label = Texts.actionLabel(engine, act);
-            String vis = act.kind == ReadyAction.Kind.DELIVER ? "✓ Teslim et"
+            String vis = act.kind == ReadyAction.Kind.DELIVER ? (act.status == ReadyAction.Status.RUNNING ? "▶ Teslim ediliyor, çırak" : "✓ Teslim et")
                     : (act.isDoable() ? "▶ " : "") + act.text + (more > 0 ? "  (+" + more + " iş daha)" : "");
             setText(text, vis);
             Ui.setDesc(this, label);
@@ -2219,7 +2375,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
                 }
                 bar.set(job == null ? 0f : job.progress(), act.byApprentice ? Theme.GREEN : Theme.ORANGE);
             }
-            int key = act.kind == ReadyAction.Kind.DELIVER ? 3 : act.isDoable() ? 1 : running ? 2 : 0;
+            int key = act.kind == ReadyAction.Kind.DELIVER && !running ? 3 : act.isDoable() ? 1 : running ? 2 : 0;
             text.setTextColor(key == 0 || key == 2 ? Theme.MUTED : Theme.CREAM);
             if (key != bgKey) {
                 bgKey = key;

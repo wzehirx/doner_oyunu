@@ -22,10 +22,10 @@ public class TextsTest {
     @Test public void formatting() {
         assertEquals("1:05", Texts.clock(65f));
         assertEquals("0:00", Texts.clock(-3f));
-        assertEquals("120 TL", Texts.money(120));
+        assertEquals("120 lira", Texts.money(120)); // v2.5 terim: "TL" yerine "lira"
         assertEquals("1,3 kat", Texts.times(1.25));
         assertEquals("%70", Texts.percentShort(0.7));
-        assertEquals("70 yüzde", Texts.volumeSpoken(0.7));
+        assertEquals("yüzde 70", Texts.volumeSpoken(0.7)); // v2.5 terim: "yüzde N"
     }
 
     @Test public void secondsAreBucketed() {
@@ -121,10 +121,14 @@ public class TextsTest {
         List<String> l = Texts.briefingLines(s);
         String all = String.join(" ", l);
         assertTrue(all, all.contains("Yeni ürün"));
-        assertTrue(all, all.contains("kira"));
+        // v2.5: günlük kira kalktı; brifing yaklaşan haftalık kira faturasını söyler (7. gün sonunda kesilir)
+        assertFalse(all, all.contains("lira kira ödenecek"));
         assertTrue(all, all.contains("Öğretici"));
         s.day = 3;
         assertTrue(String.join(" ", Texts.briefingLines(s)).contains("Pilav üstü döner"));
+        s.day = 6;
+        String six = String.join(" ", Texts.briefingLines(s));
+        assertTrue(six, six.contains("Kira yaklaşık") && six.contains("7. gün sonunda kesilir"));
     }
 
     @Test public void summaryRowsCoverMoney() {
@@ -190,7 +194,10 @@ public class TextsTest {
         assertFalse(d.contains("Şu an seviye"));
         s.upgradeLevels.put("cirak", 2);
         assertTrue(Texts.upgradeDescription(cirak, s).contains("Şu an seviye 2"));
-        assertEquals(Catalog.upgrade("doner_makinesi").description, Texts.upgradeDescription(Catalog.upgrade("doner_makinesi"), s));
+        // v2.5: faturayı artıran yükseltmede not ("Elektrik ve doğalgaz faturasını artırır.")
+        assertEquals(Catalog.upgrade("doner_makinesi").description + " Elektrik ve doğalgaz faturasını artırır.",
+                Texts.upgradeDescription(Catalog.upgrade("doner_makinesi"), s));
+        assertEquals(Catalog.upgrade("dekor").description, Texts.upgradeDescription(Catalog.upgrade("dekor"), s));
     }
 
     @Test public void lineDescriptionsExplainStatesAndLocks() {

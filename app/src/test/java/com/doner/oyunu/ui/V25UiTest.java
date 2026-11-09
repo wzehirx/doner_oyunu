@@ -193,7 +193,7 @@ public class V25UiTest {
         row.performAccessibilityAction(ActionMenu.ACTION_BASE + acts.indexOf("Fiyatı azalt"), null); h.idle(150);
         row.performAccessibilityAction(ActionMenu.ACTION_BASE + acts.indexOf("Fiyatı azalt"), null); h.idle(150);
         assertEquals(95, Pricing.percent(s, "ayran"));
-        assertTrue(h.findText("Tahmini müşteri: yüzde") != null);
+        assertNotNull(h.findText(com.doner.oyunu.engine.Narrator.demandText(s)));
         // tahmini müşteri etkisi okuma
         evBase = sam.getSentAccessibilityEvents().size();
         h.click("Tahmini müşteri etkisi"); h.idle(200);
@@ -528,7 +528,8 @@ public class V25UiTest {
         assertEquals("16 yükseltme seviyeleriyle listelenir", 16, found);
         h.click("Mutfak aletleri"); h.settle();
         assertNotNull(h.findText("Elektrik ve doğalgaz faturasını artırır"));
-        assertNotNull(h.findText("Tabela, seviye 0 / 6") == null ? h.findText("Tabela") : h.findText("Tabela, seviye 0 / 6"));
+        h.click("Restoran"); h.settle();
+        assertNotNull("tabela 6 seviye", h.findText("Tabela, seviye 0 / 6"));
     }
 
     @Test public void newProductSoundsMapToExistingSounds() {

@@ -169,6 +169,9 @@ final class A11yAudit {
         for (View v : shown) {
             String low = UiHarness.label(v).toLowerCase(new java.util.Locale("tr"));
             if (low.contains("yuva")) a.errors.add(where + ": eski 'yuva' kelimesi: '" + shorten(UiHarness.label(v)) + "'");
+            // v2.5 terim birliği (docs/terminoloji.md): eski/yasak terimler etikette ve görünür metinde yok
+            String bad = forbiddenTerm(UiHarness.label(v));
+            if (bad != null) a.errors.add(where + ": eski terim '" + bad + "': '" + shorten(UiHarness.label(v)) + "'");
         }
         if (!(h.screen() instanceof GameScreen)) return;
         com.doner.oyunu.engine.GameEngine e = h.engine();
@@ -240,6 +243,25 @@ final class A11yAudit {
     private static boolean isDecorative(View v) {
         String n = v.getClass().getSimpleName();
         return n.equals("IconView") || n.equals("BarView") || n.equals("StarsView");
+    }
+
+    /** v2.5 terimler sözlüğüne aykırı eski terimler (küçük harfle aranır); "Geri alınacak malzeme yok" geri alma iletisidir. */
+    static final String[][] FORBIDDEN = {
+            {"yuva", "yuva"}, {"numaralı", "numaralı"}, {"(?<!alınacak )malzeme yok", "malzeme yok"}, {"malzeme bitti", "malzeme bitti"},
+            {"\\bTL\\b", "TL"}, {"tezgah(?!\u00e2)", "tezgah"}, {"dükkan(?!\u00e2)", "dükkan"}, {"şikayet", "şikayet"},
+            {"sipariş hazır(?!l)", "sipariş hazır"}, {"hazır içecek", "hazır içecek"}, {"içecek doldurma", "içecek doldurma"},
+            {"marketten acil al", "marketten acil al"}, {"kira ödenecek", "günlük kira"},
+    };
+
+    /** Metinde yasak terim varsa adını, yoksa null. */
+    static String forbiddenTerm(String text) {
+        if (text == null) return null;
+        String low = text.toLowerCase(new java.util.Locale("tr"));
+        for (String[] f : FORBIDDEN) {
+            boolean caseSensitive = f[0].contains("TL");
+            if (Pattern.compile(f[0]).matcher(caseSensitive ? text : low).find()) return f[1];
+        }
+        return null;
     }
 
     static String shorten(String s) { return s.length() > 50 ? s.substring(0, 50) + "…" : s; }

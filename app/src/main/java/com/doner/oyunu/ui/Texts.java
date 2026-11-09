@@ -31,7 +31,7 @@ public final class Texts {
     private Texts() {}
 
     // ------------------------------------------------------------------ biçim
-    /** Para (görsel ve konuşma aynı): "2500 lira" (terimler: "TL" kullanılmaz). */
+    /** Para (görsel ve konuşma aynı): "2500 lira" (terimler: TL kısaltması kullanılmaz). */
     public static String money(int m) { return m + " lira"; }
 
     public static String moneySpoken(int m) { return Narrator.fmtMoney(m); }
@@ -1012,7 +1012,7 @@ public final class Texts {
 
     // ------------------------------------------------------------------ öğretici
     // v0.9: en az adım, her adım tek kısa cümle. Sessiz aşamalar (hazırlık bitti, dükkân açıldı, işlem sürüyor, paketle)
-    // yalnızca aşamayı ilerletir; ilgili duyuru ("Önerilen: …", "Sipariş hazır") zaten Narrator'dan gelir.
+    // yalnızca aşamayı ilerletir; ilgili duyuru ("Önerilen: …", "Sipariş 2 teslime hazır") zaten Narrator'dan gelir.
     public static final String TUT_PREP = "Hazırlık aşaması. Hazır olunca Dükkânı aç düğmesine dokun.";
     public static final String TUT_PREP_DONE = "";
     public static final String TUT_OPEN = "";

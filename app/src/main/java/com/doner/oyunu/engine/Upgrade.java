@@ -29,7 +29,13 @@ public final class Upgrade {
         /** Turist müşteri ağırlığına eklenen oran. */
         TOURIST,
         /** v2.0: hedef PASİF istasyonun aynı anda alabileceği iş sayısına ek (ekmek ısıtıcı yeri, ocak gözü). */
-        STATION_CAPACITY
+        STATION_CAPACITY,
+        /** v2.5: hazır stok kapasitesine ek (döner porsiyon, ayran bardak, patates porsiyon; tepside ×1,5). */
+        READY_CAP,
+        /** v2.5: jeneratör: elektrik kesintisini bu kadar kademe karşılar. */
+        POWER_BACKUP,
+        /** v2.5: su deposu: su kesintisini bu kadar kademe karşılar. */
+        WATER_BACKUP
     }
 
     /** values[k-1] = k. seviyedeki toplam (kümülatif) değer. */
@@ -54,6 +60,8 @@ public final class Upgrade {
     /** unlockDays[k] = k+1. seviyenin açıldığı gün. */
     public final int[] unlockDays;
     public final Effect[] effects;
+    /** v2.5: bu yükseltmenin artırdığı faturalar (elektrik/doğalgaz/su; boş olabilir). Bkz. {@link Finance#billAmount}. */
+    public BillType[] utilities = new BillType[0];
 
     public Upgrade(String id, String name, Category category, String description,
                    int[] prices, int[] unlockDays, Effect... effects) {
@@ -64,6 +72,15 @@ public final class Upgrade {
         this.prices = prices;
         this.unlockDays = unlockDays;
         this.effects = effects;
+    }
+
+    /** Katalog kurulumu: faturaya etkisi. */
+    Upgrade uses(BillType... t) { this.utilities = t; return this; }
+
+    /** Bu yükseltme verilen faturayı artırır mı. */
+    public boolean raises(BillType t) {
+        for (BillType u : utilities) if (u == t) return true;
+        return false;
     }
 
     public int maxLevel() { return prices.length; }

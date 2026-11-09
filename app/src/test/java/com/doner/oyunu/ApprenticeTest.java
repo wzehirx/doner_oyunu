@@ -86,18 +86,21 @@ public class ApprenticeTest {
             if (!b.isReady()) assertFalse("B bitmeden seçili A'ya dokunulmaz", a.isPacking() || a.isReady());
         }
         assertTrue("seçili olmayan sipariş çırakla hazır", b.isReady());
-        // başka iş yok ve oyuncu 1,5 sn'den uzun süredir boşta: çırak seçili siparişi de paketler
-        run(e, 0.2f);
+        // v2.5: çırak önce hazır B'yi teslim eder (1,2 sn), sonra başka iş yokken ve oyuncu 1,5 sn'den uzun süredir boştayken
+        // seçili A'yı da paketler (v2.0'da B paketlenince hemen A'ya geçiyordu; araya teslim girdi)
+        for (int i = 0; i < 30 && !(a.isPacking() || a.isReady()); i++) e.tick(0.1f);
         assertTrue(a.isPacking() || a.isReady());
         run(e, 3f);
         assertTrue(a.isReady());
-        int packB = -1, packA = -1;
+        int packB = -1, packA = -1, deliverB = -1;
         for (int i = 0; i < r.actions.size(); i++) {
             ApprenticeAction x = r.actions.get(i);
             if (x.pack && x.started && x.order == b && packB < 0) packB = i;
             if (x.pack && x.started && x.order == a && packA < 0) packA = i;
+            if (x.deliver && x.started && x.order == b && deliverB < 0) deliverB = i;
         }
         assertTrue("önce seçili olmayan: " + packB + " < " + packA, packB >= 0 && packA > packB);
+        assertTrue("v2.5: B paketlendikten sonra teslim, sonra A: " + deliverB, deliverB > packB && deliverB < packA);
     }
 
     @Test public void apprenticeWaitsShortGraceBeforeTakingTheSelectedOrdersWork() {
@@ -380,8 +383,10 @@ public class ApprenticeTest {
         StringBuilder all = new StringBuilder();
         for (String t : said) all.append(t).append('\n');
         String text = all.toString();
-        assertTrue(text, text.contains("Çırak " + b.getPosition() + " numaralı siparişte: Ayranı doldur."));
-        assertTrue(text, text.contains("Çırak " + b.getPosition() + " numaralı siparişi paketledi."));
+        // v2.5 terim birliği: "sipariş N" (eskiden "N numaralı sipariş"); çırak teslimi de duyurulur
+        assertTrue(text, text.contains("Çırak, sipariş " + b.getPosition() + ": Ayranı doldur."));
+        assertTrue(text, text.contains("Çırak paketledi: sipariş " + b.getPosition() + "."));
+        assertTrue(text, text.contains("Çırak teslim etti: sipariş " + b.getPosition() + ", " + b.customer.name + "."));
         // kapatılınca sessiz
         s.apprenticeAnnounce = false;
         said.clear();
@@ -406,7 +411,7 @@ public class ApprenticeTest {
                 // v2.0: B'den sonra (başka iş kalmayınca) seçili A da paketlenebilir; ilk paketleme B'nindir
                 if (!sawPackStart) assertSame(b, x.order);
                 sawPackStart = true;
-                assertEquals("Çırak " + x.order.getPosition() + " numaralı siparişi paketliyor.", t);
+                assertEquals("Çırak paketliyor: sipariş " + x.order.getPosition() + ".", t);
             }
             if (!x.pack && x.started && !x.isPrep()) sawFillStart = true;
         }
@@ -420,10 +425,14 @@ public class ApprenticeTest {
         e.startDay();
         Order a = spawn(e, "ayran"), b = spawn(e, "ayran");
         e.selectOrder(a.id);
-        run(e, 10f);
-        // v2.0: B'nin doldur + paketle, sonra başka iş kalmayınca (oyuncu 1,5 sn'dir boşta) seçili A'nın doldur + paketle
-        assertEquals(4, e.getSummary().apprenticeTasks);
+        run(e, 14f); // v2.5: iki teslim de (1,2 sn'lik işler) bitsin
+        // v2.0: B'nin doldur + paketle, sonra başka iş kalmayınca (oyuncu 1,5 sn'dir boşta) seçili A'nın doldur + paketle;
+        // v2.5: çırak ikisini de teslim eder (+2 iş), siparişler kalkar
+        assertEquals(6, e.getSummary().apprenticeTasks);
+        assertEquals(2, e.getSummary().apprenticeDeliveries);
+        assertEquals(2, e.getSummary().delivered);
         assertTrue(a.isReady() && b.isReady());
+        assertTrue(e.getOrders().isEmpty());
         assertTrue(e.getSummary().prepBatches >= 0);
     }
 }

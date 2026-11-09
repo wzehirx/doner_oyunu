@@ -49,8 +49,10 @@ public class TimePressureTest {
         SaveData t = SaveData.parse(s.serialize());
         assertFalse(t.timePressure);
         assertEquals(s.serialize(), t.serialize());
-        assertTrue(s.serialize().startsWith("v=4\n"));
+        assertTrue(s.serialize().startsWith("v=5\n")); // v2.5 biçimi
         assertTrue("copy ayarı korur", !s.copy().timePressure);
+        // v2.5: süre baskısı bir AYARDIR: dönem sıfırlamasında korunur
+        assertFalse(SaveData.parse("v=4\nday=7\ntimer=0\n").timePressure);
         s.timePressure = true;
         assertTrue(SaveData.parse(s.serialize()).timePressure);
     }
@@ -400,8 +402,8 @@ public class TimePressureTest {
             assertTrue(e.getTrayTotal() > 0);
             // hazır stok istasyon etiketinde ve durum okumada
             Narrator n = new Narrator(e);
-            assertTrue(n.stationLabel(Station.DONER), n.stationLabel(Station.DONER).contains("hazır 4 porsiyon"));
-            assertTrue(n.stationLabel(Station.ICECEK), n.stationLabel(Station.ICECEK).contains("bardak ayran"));
+            assertTrue(n.stationLabel(Station.DONER), n.stationLabel(Station.DONER).contains("hazır döner 4 porsiyon") /* v2.5 terim birliği */);
+            assertTrue(n.stationLabel(Station.ICECEK), n.stationLabel(Station.ICECEK).contains("hazır ayran") /* v2.5 terim birliği */);
             assertTrue(n.stationLabel(Station.SOS), n.stationLabel(Station.SOS).contains("hazır tepsi"));
             assertTrue(n.statusText().contains("Hazır: döner 4 porsiyon"));
         }

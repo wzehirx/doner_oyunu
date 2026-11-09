@@ -46,7 +46,15 @@ public class UnlockDayTest {
         assertEquals(Arrays.asList("sarimsakli_yogurt"), ids(Catalog.newIngredientsOnDay(13)));
         assertEquals(Arrays.asList("limon"), ids(Catalog.newIngredientsOnDay(14))); // lahmacun ile
         assertEquals(Arrays.asList("kozlenmis"), ids(Catalog.newIngredientsOnDay(15)));
-        for (int d = 16; d <= 40; d++) assertTrue(Catalog.newIngredientsOnDay(d).isEmpty());
+        // v2.5 (60 günlük kampanya): geç açılan sos/salata malzemeleri
+        assertEquals(Arrays.asList("maydanoz"), ids(Catalog.newIngredientsOnDay(20)));
+        assertEquals(Arrays.asList("pul_biber"), ids(Catalog.newIngredientsOnDay(26)));
+        assertEquals(Arrays.asList("acili_ezme"), ids(Catalog.newIngredientsOnDay(32)));
+        assertEquals(Arrays.asList("kirmizi_lahana"), ids(Catalog.newIngredientsOnDay(38)));
+        for (int d = 16; d <= 60; d++) {
+            if (d == 20 || d == 26 || d == 32 || d == 38) continue;
+            assertTrue("gün " + d, Catalog.newIngredientsOnDay(d).isEmpty());
+        }
     }
 
     @Test public void everyToppingIngredientHasAnUnlockDayAndBasicsAreOpenFromDayOne() {
@@ -54,15 +62,21 @@ public class UnlockDayTest {
         for (Ingredient i : Catalog.ingredients()) {
             if (i.isTopping()) {
                 toppings++;
-                assertTrue(i.id, i.unlockDay >= 1 && i.unlockDay <= 15);
+                assertTrue(i.id, i.unlockDay >= 1 && i.unlockDay <= 38); // v2.5: son sos/salata 38. gün
+            } else if (i.unlockDay > 1 && !i.id.equals(Catalog.PATATES)) {
+                // v2.5: yeni ürünlerin temel malzemesi ürünle aynı gün açılır (market önce satmaz)
+                boolean usedByProductOpeningThatDay = false;
+                for (Product p : Catalog.productsForDay(i.unlockDay))
+                    if (p.openDay == i.unlockDay && p.totalNeeds().containsKey(i.id)) usedByProductOpeningThatDay = true;
+                assertTrue(i.id + " ürünüyle açılır", usedByProductOpeningThatDay);
             } else {
                 assertEquals(i.id + " temel malzeme", i.id.equals(Catalog.PATATES) ? Catalog.FRIES_OPEN_DAY : 1, i.unlockDay);
             }
             assertEquals(i.unlockDay <= 5, i.isOpen(5));
         }
-        assertEquals(14, toppings);
+        assertEquals("v2.0'ın 14'ü + maydanoz, pul biber, acılı ezme, kırmızı lahana", 18, toppings);
         assertEquals("1. gün: 11 temel malzeme + domates, soğan, marul", 14, Catalog.ingredientsForDay(1).size());
-        assertEquals(Catalog.ingredients().size(), Catalog.ingredientsForDay(15).size());
+        assertEquals(Catalog.ingredients().size(), Catalog.ingredientsForDay(DayConfig.CAMPAIGN_DAYS).size());
         assertTrue(Catalog.ingredientsForDay(1).size() < Catalog.ingredientsForDay(5).size());
     }
 
@@ -79,7 +93,11 @@ public class UnlockDayTest {
                 for (String id : p.toppingPool(d)) assertTrue(p.id + " " + id + " gün " + d, Catalog.ingredient(id).isOpen(d));
                 for (String id : p.defaultToppings(d)) assertTrue(p.id + " " + id, p.toppingPool(d).contains(id));
             }
-            assertEquals("15. günden sonra her şey açık", new java.util.ArrayList<>(p.toppingPool), p.toppingPool(15));
+            assertEquals("60. günde her şey açık", new java.util.ArrayList<>(p.toppingPool), p.toppingPool(DayConfig.CAMPAIGN_DAYS));
+            // v2.0 malzemeleri 15. günde açıktı; v2.5'in geç malzemeleri (maydanoz 20 …) hariç aynı kalır
+            java.util.List<String> early = new java.util.ArrayList<>();
+            for (String id : p.toppingPool) if (Catalog.ingredient(id).unlockDay <= 15) early.add(id);
+            if (p.openDay <= 15) assertEquals(p.id + " 15. gün", early, p.toppingPool(15));
         }
     }
 

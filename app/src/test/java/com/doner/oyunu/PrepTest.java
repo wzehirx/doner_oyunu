@@ -416,7 +416,7 @@ public class PrepTest {
         e.beginPrep();
         assertTrue(said.get(0), said.get(0).contains("Hazırlık aşaması") && said.get(0).contains("süre akmıyor"));
         e.startPrepDrink();
-        assertTrue(said.toString(), said.get(said.size() - 1).startsWith("İçecek doldurma başladı"));
+        assertTrue(said.toString(), said.get(said.size() - 1).startsWith("Ayran doldurma başladı") /* v2.5 terim birliği: hazırlanan tek içecek ayran */);
         run(e, 4.2f);
         assertTrue(said.toString(), said.get(said.size() - 1).contains("4 bardak ayran dolduruldu"));
         assertTrue(n.readyStockText().contains("ayran 4 bardak"));

@@ -98,7 +98,8 @@ public class CatalogTest {
         s.upgradeLevels.put("cirak", 2);
         assertEquals("çırak yuva eklemez", 1, new Upgrades(s).slots());
         assertEquals(2, new Upgrades(s).apprenticeLevel());
-        assertEquals(3, Catalog.upgrade("cirak").maxLevel());
+        // v2.5: çırak 5 seviye (4 kalfa, 5 dördüncü çırak)
+        assertEquals(5, Catalog.upgrade("cirak").maxLevel());
     }
 
     @Test public void customerTypesValid() {

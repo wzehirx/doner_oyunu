@@ -256,9 +256,11 @@ public class FriesTest {
         s.inventory.set("patates", 7);
         SaveData r = SaveData.parse(s.serialize());
         assertEquals(7, r.inventory.get("patates"));
-        SaveData old = SaveData.parse("v=4\nday=9\nmoney=900\nstock.et_doner=5\n");
+        SaveData old = SaveData.parse(SaveCompatTest.current("v=4\nday=9\nmoney=900\nstock.et_doner=5\n"));
         assertEquals(0, old.inventory.get("patates"));
         assertEquals(9, old.day);
+        // v2.5: dönemsiz eski kayıt 1. günden başlar
+        assertEquals(1, SaveData.parse("v=4\nday=9\nmoney=900\nstock.et_doner=5\n").day);
     }
 
     @Test public void apprenticeLevel3CanFryAndBotsStillFinishDaysWithFries() {

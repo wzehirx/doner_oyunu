@@ -281,7 +281,7 @@ public class ResourceModelTest {
         assertEquals("çırak oyuncunun elini artırmaz (kendi eli var)", 1, u.hands());
         Upgrade oc = Catalog.upgrade("ocak");
         assertNotNull(oc);
-        assertEquals(3, oc.maxLevel());
+        assertEquals("v2.5: 5 seviye", 5, oc.maxLevel());
         assertEquals(2500, oc.priceForNext(0));
         assertEquals(3, oc.unlockDayForNext(0));
         assertEquals(0.65, u.speedMult(Station.IZGARA), 1e-9);
@@ -298,7 +298,15 @@ public class ResourceModelTest {
         String v09 = "v=4\nday=9\nbestDay=9\nmoney=4321\nstars=3.7\nstock.ekmek=12\nstock.patates=6\nup.cirak=1\nup.ekmek_isitici=2\n"
                 + "tempo=1.0\nspeech=1\nspeechRate=1.0\nvibration=1\nmusic=0.7\nsfx=1.0\nambience=0.35\ntutorial=1\n"
                 + "apprenticeAnnounce=1\nreadyDrinks=3\nflow=dengeli\nflowChosen=1\ntimer=1\n";
-        SaveData s = SaveData.parse(v09);
+        // v2.5: v0.9/v2.0 kaydı dönemsiz: ilerleme sıfırlanır, ayarlar (akış, süre, sesler) korunur
+        SaveData reset = SaveData.parse(v09);
+        assertEquals(1, reset.day);
+        assertEquals(0, reset.level("ekmek_isitici"));
+        assertTrue(reset.progressResetNotice);
+        assertEquals(FlowMode.DENGELI, reset.flowMode);
+        assertTrue(reset.flowChosen);
+        assertTrue(reset.tutorialDone);
+        SaveData s = SaveData.parse(SaveCompatTest.current(v09));
         assertEquals(9, s.day);
         assertEquals(4321, s.money);
         assertEquals(1, s.level("cirak"));
@@ -306,7 +314,7 @@ public class ResourceModelTest {
         assertEquals("yeni yükseltme eski kayıtta 0", 0, s.level("ocak"));
         assertEquals(4, new Upgrades(s).stationCapacity(Station.EKMEK));
         assertEquals(2, new Upgrades(s).stationCapacity(Station.IZGARA));
-        assertTrue("kayıt biçimi aynı (v=4)", s.serialize().startsWith("v=4\n"));
+        assertTrue("v2.5 kayıt biçimi v=5", s.serialize().startsWith("v=5\n"));
         assertEquals(s.serialize(), SaveData.parse(s.serialize()).serialize());
         // eski kayıtla gün oynanır
         GameEngine e = new GameEngine(3, s);
@@ -436,7 +444,7 @@ public class ResourceModelTest {
         assertNotNull(bread);
         assertTrue("yapılabilir olanlar önce, bekleyenler sonra", e.getReadyActions(a.id).get(0).isDoable());
         assertEquals(ReadyAction.Status.OUT_OF_STOCK, bread.status);
-        assertTrue(bread.text.endsWith(", malzeme yok"));
+        assertTrue(bread.text.endsWith(", stokta yok") /* v2.5 terim birliği */);
         e.getSave().inventory.set("ekmek", 30);
         Flow.makeReady(e, a);
         List<ReadyAction> l = e.getReadyActions(a.id);

@@ -58,6 +58,16 @@ public class ShopSaveTest {
         assertEquals(Shop.BuyResult.OK, Shop.buyUpgrade(s, "cirak"));
         assertEquals(3, new Upgrades(s).apprenticeLevel());
         assertEquals(1, new Upgrades(s).slots());
+        // v2.5: 4. seviye (kalfa) 30. gün, 5. seviye (dördüncü çırak) 44. gün; sonra en üst seviye
+        assertEquals(Shop.BuyResult.LOCKED, Shop.buyUpgrade(s, "cirak"));
+        s.money += 100000;
+        s.day = 30;
+        assertEquals(Shop.BuyResult.OK, Shop.buyUpgrade(s, "cirak"));
+        assertEquals(4, new Upgrades(s).apprenticeLevel());
+        assertEquals(Shop.BuyResult.LOCKED, Shop.buyUpgrade(s, "cirak"));
+        s.day = 44;
+        assertEquals(Shop.BuyResult.OK, Shop.buyUpgrade(s, "cirak"));
+        assertEquals(5, new Upgrades(s).apprenticeLevel());
         assertEquals(Shop.BuyResult.MAX_LEVEL, Shop.buyUpgrade(s, "cirak"));
         assertEquals(Shop.BuyResult.UNKNOWN, Shop.buyUpgrade(s, "yok"));
         s.money = 10;
@@ -150,10 +160,10 @@ public class ShopSaveTest {
         assertEquals(1, n.day);
         assertTrue(n.inventory.total() > 0);
         assertEquals(1, SaveData.parse("").day);
-        SaveData t = SaveData.parse("day=abc\nmoney=77\ngarbage\nstock.yok=5\nup.cirak=99\ntempo=9\nstars=0.2\n=x\n");
+        SaveData t = SaveData.parse(SaveCompatTest.current("day=abc\nmoney=77\ngarbage\nstock.yok=5\nup.cirak=99\ntempo=9\nstars=0.2\n=x\n"));
         assertEquals(1, t.day);
         assertEquals(77, t.money);
-        assertEquals(3, t.level("cirak"));
+        assertEquals("v2.5: çırak en çok 5", 5, t.level("cirak"));
         assertEquals(1.6, t.tempo, 1e-9);
         assertEquals(1.0, t.stars, 1e-9);
         assertEquals(0, t.inventory.total());

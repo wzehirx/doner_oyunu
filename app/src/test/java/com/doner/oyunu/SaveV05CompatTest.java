@@ -13,8 +13,25 @@ public class SaveV05CompatTest {
             + "stock.pirinc=6\nstock.tereyagi=9\nup.cirak=1\nup.buzdolabi=1\ntempo=1.1\nspeech=1\nspeechRate=1.2\nvibration=1\nmusic=0.5\nsfx=0.8\n"
             + "tutorial=1\napprenticeAnnounce=0\nreadyDrinks=5\n";
 
-    @Test public void v05SaveLoadsEveryField() {
+    /** v2.5: dönemsiz v0.5 kaydı = ilerleme sıfır, ayarlar (tempo, konuşma, titreşim, sesler, öğretici, çırak duyurusu) korunur. */
+    @Test public void v05SaveResetsProgressKeepsSettings() {
         SaveData s = SaveData.parse(V05);
+        assertEquals(1, s.day);
+        assertEquals(SaveData.START_MONEY, s.money);
+        assertEquals(0, s.level("cirak"));
+        assertEquals(0, s.level("buzdolabi"));
+        assertEquals("hazır içecek de ilerlemedir", 0, s.readyDrinks);
+        assertEquals(1.1, s.tempo, 1e-9);
+        assertEquals(1.2, s.speechRate, 1e-9);
+        assertEquals(0.5, s.musicVolume, 1e-9);
+        assertEquals(0.8, s.sfxVolume, 1e-9);
+        assertTrue(s.tutorialDone);
+        assertFalse(s.apprenticeAnnounce);
+        assertTrue(s.progressResetNotice);
+    }
+
+    @Test public void v05SaveLoadsEveryField() {
+        SaveData s = SaveData.parse(SaveCompatTest.current(V05));
         assertEquals(6, s.day);
         assertEquals(9, s.bestDay);
         assertEquals(7421, s.money);
@@ -34,7 +51,7 @@ public class SaveV05CompatTest {
     }
 
     @Test public void v05SavePlaysADayWithSizesAndPerItemToppings() {
-        SaveData s = SaveData.parse(V05);
+        SaveData s = SaveData.parse(SaveCompatTest.current(V05));
         Shop.buyRecommended(s);
         GameEngine e = new GameEngine(5, s);
         new TestBot(1.0f, true, true).playDay(e);
@@ -45,7 +62,7 @@ public class SaveV05CompatTest {
     }
 
     @Test public void v05DaySixOrdersUseOnlyOpenIngredientsEvenForOldStock() {
-        SaveData s = SaveData.parse(V05);
+        SaveData s = SaveData.parse(SaveCompatTest.current(V05));
         s.inventory.set("lahmacun_harci", 5);
         s.inventory.set("tursu", 10); // 7. gün açılır; eski kayıtta stok olsa da gün 6'da kullanılmaz
         GameEngine e = new GameEngine(1, s);
@@ -60,16 +77,16 @@ public class SaveV05CompatTest {
     }
 
     @Test public void v06SaveWritesV3AndRoundTrips() {
-        SaveData s = SaveData.parse(V05);
+        SaveData s = SaveData.parse(SaveCompatTest.current(V05));
         String text = s.serialize();
-        assertTrue("v0.7 kaydı v=4 yazar", text.startsWith("v=4\n"));
+        assertTrue("v2.5 kaydı v=5 yazar", text.startsWith("v=5\n"));
         SaveData t = SaveData.parse(text);
         assertEquals(text, t.serialize());
         assertEquals(s.copy().serialize(), text);
     }
 
     @Test public void futureOrUnknownVersionAndKeysAreTolerated() {
-        SaveData s = SaveData.parse("v=9\nday=4\nmoney=100\nbilinmeyen=1\nstock.yok_malzeme=5\nup.yok=2\n");
+        SaveData s = SaveData.parse(SaveCompatTest.current("v=9\nday=4\nmoney=100\nbilinmeyen=1\nstock.yok_malzeme=5\nup.yok=2\n"));
         assertEquals(4, s.day);
         assertEquals(100, s.money);
         assertEquals(0, s.inventory.get("yok_malzeme"));

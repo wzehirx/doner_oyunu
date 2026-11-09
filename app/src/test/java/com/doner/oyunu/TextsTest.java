@@ -98,7 +98,10 @@ public class TextsTest {
         s.money = 99999;
         assertTrue(Texts.upgradeStatus(cirak, s).startsWith("Satın alınabilir"));
         assertTrue(Texts.upgradeBuyable(cirak, s));
+        // v2.5: çırak 5 seviye; 3. seviyeden sonra 4. seviye 30. günde açılır
         s.upgradeLevels.put("cirak", 3);
+        assertTrue(Texts.upgradeStatus(cirak, s).startsWith("Kilitli: 30. günde açılır"));
+        s.upgradeLevels.put("cirak", 5);
         assertEquals("En üst seviyede", Texts.upgradeStatus(cirak, s));
     }
 

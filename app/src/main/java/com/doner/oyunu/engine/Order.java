@@ -23,11 +23,22 @@ public final class Order {
     boolean ready;
     boolean readyToPackAnnounced;
     int position;
+    /** v2.5: çırak teslim ediyor. */
+    boolean delivering;
+    /** v2.5: teslim eden (0 oyuncu, 1.. çırak; teslim edilmediyse -1). */
+    int deliveredBy = -1;
+    /** v2.5: teslimde fiyat tepkisi (−1 uygun buldu, 0, +1 pahalı buldu). */
+    int priceReaction;
 
     /** Siparişin verildiği gün (açık malzemeler için). */
     public final int day;
 
     Order(int id, Customer customer, List<Product> items, List<Request> requests, int day, List<PortionSize> sizes) {
+        this(id, customer, items, requests, day, sizes, null);
+    }
+
+    /** ratios: kalem başına fiyat oranı (v2.5; null = hepsi 1,0). */
+    Order(int id, Customer customer, List<Product> items, List<Request> requests, int day, List<PortionSize> sizes, List<Double> ratios) {
         this.id = id;
         this.day = day;
         this.customer = customer;
@@ -49,7 +60,8 @@ public final class Order {
                 target = ordered;
             }
             PortionSize sz = sizes != null && i < sizes.size() ? sizes.get(i) : PortionSize.FULL;
-            ls.add(new OrderLine(p, i, target, pool, defaults, sz));
+            double ratio = ratios != null && i < ratios.size() ? ratios.get(i) : 1.0;
+            ls.add(new OrderLine(p, i, target, pool, defaults, sz, ratio));
             all.addAll(p.steps);
         }
         this.lines = Collections.unmodifiableList(ls);
@@ -199,12 +211,33 @@ public final class Order {
     /** Kalemin hedef malzeme kümesi (varsayılan ± istekler). */
     public Set<String> targetToppings(int lineIndex) { return lines.get(lineIndex).getTarget(); }
 
-    /** Toplam fiyat (boya göre kalem fiyatlarının toplamı). */
+    /** Toplam satış fiyatı (boya ve oyuncunun fiyat oranına göre kalem fiyatlarının toplamı). */
     public int price() {
         int t = 0;
         for (OrderLine l : lines) t += l.price();
         return t;
     }
+
+    /** Toplam referans fiyat (oran uygulanmadan). */
+    public int referencePrice() {
+        int t = 0;
+        for (OrderLine l : lines) t += l.referencePrice();
+        return t;
+    }
+
+    /** Siparişin fiyat oranı (satış / referans; 1,0 = referans). */
+    public double priceRatio() {
+        int ref = referencePrice();
+        int p = price();
+        return ref <= 0 || p == ref ? 1.0 : p / (double) ref;
+    }
+
+    /** v2.5: çırak şu an teslim ediyor mu. */
+    public boolean isDelivering() { return delivering; }
+    /** v2.5: teslim eden: 0 oyuncu, 1.. çırak numarası; teslim edilmediyse -1. */
+    public int getDeliveredBy() { return deliveredBy; }
+    /** v2.5: teslimde fiyat tepkisi: −1 "uygun buldu", 0 yok, +1 "pahalı buldu". */
+    public int getPriceReaction() { return priceReaction; }
 
     public float workSeconds() {
         List<PortionSize> sz = new ArrayList<>();

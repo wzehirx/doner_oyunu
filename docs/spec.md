@@ -7,6 +7,7 @@ Paket: `com.doner.oyunu`. Alt paketler: `engine` (SAF Java, android import YASAK
 Menü → Gün Özeti/Brifing (menü, hedef) → Market (malzeme/yükseltme alışverişi) → GÜN (kasada servis) → Gün Sonu (kazanç, yıldız, ödemeler) → Market → sonraki gün. Kayıt: SharedPreferences (engine `SaveData` düz "key=value" metne serileştirir).
 
 ## Gün (GameEngine)
+- (v2.5) 60 günlük kampanya, oyuncunun belirlediği fiyat ve talep, çırak maaşı, faturalar (elektrik, doğalgaz, su, kira, vergi) ve ödenmeyen faturanın türüne özel zorluğu, banka/kredi, çırak teslimi, 5 seviyeli yükseltmeler, kayıt dönemi sıfırlaması: docs/design_v25.md, terimler docs/terminoloji.md.
 - (v2.0) Kaynak modeli (eller + makineler), güvenilir çırak, sıradaki sipariş API'si: docs/design_v20.md.
 - (v0.9) IZGARA istasyonu "Ocak"; patates (3. gün, müşteri isteği "patatesli"); ambiyans; kısa etiketler: docs/design_v09.md.
 - (v0.8) Süre baskısı ayarı: kapalıyken gün süresiz geçer (sayaç yok, sabır sabit, müşteri gitmez; kota kadar müşteri gelip hepsi teslim edilince gün biter; hız bonusu yok, bahşiş x0,8). Ayrıntı: docs/design_v08.md.

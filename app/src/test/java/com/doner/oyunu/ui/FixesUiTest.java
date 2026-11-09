@@ -99,7 +99,9 @@ public class FixesUiTest {
         List<AccessibilityEvent> all = new ArrayList<>(sam.getSentAccessibilityEvents());
         for (AccessibilityEvent ev : all.subList(Math.min(evBase, all.size()), all.size())) {
             if (ev.getEventType() == AccessibilityEvent.TYPE_ANNOUNCEMENT && !ev.getText().isEmpty()
-                    && ev.getText().get(0).toString().contains(miss.name)) announced = true;
+                    // v2.5 terim birliği: malzeme adı cümle içinde küçük harf ("Stokta yok: döner ekmeği.")
+                    && ev.getText().get(0).toString().toLowerCase(new java.util.Locale("tr"))
+                            .contains(miss.name.toLowerCase(new java.util.Locale("tr")))) announced = true;
         }
         assertTrue("eksik malzeme duyurulmalı", announced);
     }

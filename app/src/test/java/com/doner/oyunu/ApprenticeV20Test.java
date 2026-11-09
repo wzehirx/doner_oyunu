@@ -61,16 +61,18 @@ public class ApprenticeV20Test {
             assertEquals(StartResult.STARTED, e.applyStationOption(o.id, dn, Station.SOS.id, "auto"));
             for (int i = 0; i < 200 && !o.isReady(); i++) e.tick(0.1f);
             assertTrue("seed " + seed + ": sipariş çırakla paketlendi", o.isReady());
-            assertEquals("seed " + seed, Arrays.asList("Ayranı doldur", "Siparişi paketle"), r.orderSteps());
+            // v2.5: paketledikten sonra (oyuncu 1,5 sn'dir boşta) teslimi de çırak üstlenir
+            assertEquals("seed " + seed, Arrays.asList("Ayranı doldur", "Siparişi paketle", "Teslim et"), r.orderSteps());
         }
     }
 
     @Test public void levelRulesAreExact() {
         // her seviyenin yaptığı işler (sipariş adımları); topping hiçbir seviyede çırağa verilmez
+        // v2.5: her seviye paketlenen siparişi teslim de eder ("Teslim et")
         String[][] expect = {
-                {"Ayranı doldur", "Siparişi paketle"},
-                {"Ayranı doldur", "Ekmeği ısıt", "Siparişi paketle"},
-                {"Ayranı doldur", "Döneri dilimle", "Ekmeği ısıt", "Patates kızart", "Siparişi paketle"}};
+                {"Ayranı doldur", "Siparişi paketle", "Teslim et"},
+                {"Ayranı doldur", "Ekmeği ısıt", "Siparişi paketle", "Teslim et"},
+                {"Ayranı doldur", "Döneri dilimle", "Ekmeği ısıt", "Patates kızart", "Siparişi paketle", "Teslim et"}};
         for (int lvl = 1; lvl <= 3; lvl++) {
             GameEngine e = engine(3, lvl);
             Rec r = rec(e);
@@ -176,11 +178,11 @@ public class ApprenticeV20Test {
         run(e, 0.2f);
         // üç çırak aynı anda üç sipariş işine başladı: üçü de duyurulur (eski 4 sn kısıtı yalnızca hazırlıkta)
         int starts = 0;
-        for (String t : said) if (t.contains("numaralı siparişte: Ayranı doldur")) starts++;
+        for (String t : said) if (t.startsWith("Çırak, sipariş ") && t.endsWith(": Ayranı doldur.")) starts++;
         assertEquals(said.toString(), 3, starts);
         for (Order o : Arrays.asList(a, b, c)) {
             boolean heard = false;
-            for (String t : said) if (t.equals("Çırak " + o.getPosition() + " numaralı siparişte: Ayranı doldur.")) heard = true;
+            for (String t : said) if (t.equals("Çırak, sipariş " + o.getPosition() + ": Ayranı doldur.")) heard = true; // v2.5 terim birliği
             assertTrue(heard);
         }
     }

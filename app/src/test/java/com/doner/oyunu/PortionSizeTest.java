@@ -83,7 +83,10 @@ public class PortionSizeTest {
 
     @Test public void onlyMeatProductsCarrySizes() {
         for (Product p : Catalog.products()) {
-            boolean meat = !p.id.equals("ayran") && !p.id.equals("kutu_icecek") && !p.id.equals("lahmacun") && !p.id.equals("kunefe");
+            // v2.5: yeni ürünlerden su, çorba, şalgam, sütlaç, çay, köfte ekmek, baklava ve tantuni döner içermez (boysuz)
+            java.util.Set<String> noMeat = new java.util.HashSet<>(Arrays.asList("ayran", "kutu_icecek", "lahmacun", "kunefe",
+                    "su", "corba", "salgam", "sutlac", "cay", "kofte_ekmek", "baklava", "tantuni"));
+            boolean meat = !noMeat.contains(p.id);
             assertEquals(p.id, meat, p.hasMeat());
         }
         GameEngine e = new GameEngine(1, day(4));
@@ -399,7 +402,7 @@ public class PortionSizeTest {
         StationOption full = find(e.getStationOptions(o.id, 0, Station.DONER.id), "size:tam");
         assertTrue(full.enabled);
         assertTrue(full.outOfStock);
-        assertTrue(full.description.endsWith("malzeme yok"));
+        assertTrue(full.description.endsWith("stokta yok")); // v2.5 terim birliği: "stokta yok"
         assertEquals(StartResult.OUT_OF_STOCK, e.applyStationOption(o.id, 0, Station.DONER.id, "size:tam"));
         assertEquals("et_doner", e.missingIngredient(o.id).id);
         assertTrue(e.emergencyBuyMissing(o.id));

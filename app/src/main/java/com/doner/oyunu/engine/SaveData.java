@@ -1,10 +1,20 @@
 package com.doner.oyunu.engine;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
-/** Kalıcı oyun durumu + ayarlar. "anahtar=değer" düz metin olarak serileştirilir. */
+/**
+ * Kalıcı oyun durumu + ayarlar. "anahtar=değer" düz metin olarak serileştirilir.
+ * v2.5: kayıt DÖNEMİ ({@link #EPOCH}): dönemi eski (ya da dönemsiz) kayıt yüklenince İLERLEME sıfırlanır, AYARLAR
+ * korunur ve {@link #progressResetNotice} bir kez bildirilir. İleride dönem artırılarak aynı mekanizma yeniden kullanılır.
+ */
 public final class SaveData {
+    /** Bu sürümün içerik dönemi (v2.5 = 25). Kayıttaki {@code epoch} bundan küçükse ilerleme sıfırlanır. */
+    public static final int EPOCH = 25;
+    /** Yazılan kayıt biçimi sürümü (v2.5: 5). */
+    public static final int FORMAT = 5;
     public static final int START_MONEY = 5000;
     public static final double START_STARS = 3.0;
 
@@ -43,6 +53,31 @@ public final class SaveData {
     /** Hazır (doldurulmuş) içecek stoğu; gün sonunda atılmaz, ertesi güne kalır. */
     public int readyDrinks = 0;
 
+    // ---- v2.5
+    /** Kaydın içerik dönemi (yeni nesne = bu sürüm). */
+    public int epoch = EPOCH;
+    /** Güncelleme nedeniyle ilerleme sıfırlandı: UI bir kez duyurup {@link #clearProgressResetNotice()} çağırır. */
+    public boolean progressResetNotice = false;
+    /** Ayar: çırak teslime hazır siparişi teslim etsin (varsayılan açık). */
+    public boolean apprenticeDelivery = true;
+    /** Ürün fiyat yüzdeleri (ürün id -> 50..150; yoksa 100). {@link Pricing}. */
+    public final Map<String, Integer> prices = new LinkedHashMap<>();
+    /** Açık faturalar. {@link Finance}. */
+    public final List<Bill> bills = new ArrayList<>();
+    /** Banka kredileri. {@link Bank}. */
+    public final List<Loan> loans = new ArrayList<>();
+    /** Kredi notu 0..100. */
+    public int creditScore = Finance.CREDIT_START;
+    /** Ödenemeyen çırak maaşı (varken çırak gelmez). */
+    public int wageDebt = 0;
+    /** Son vergi kesiminden beri satış + bahşiş. */
+    public int salesSinceTax = 0;
+    /** Fatura/kredi kimlik sayacı. */
+    public int nextFinanceId = 1;
+
+    /** Sıfırlama bildirimi gösterildi. */
+    public void clearProgressResetNotice() { progressResetNotice = false; }
+
     /** Yeni oyun: 1. gün için önerilen stok hazır gelir. */
     public static SaveData newGame() {
         SaveData s = new SaveData();
@@ -62,9 +97,49 @@ public final class SaveData {
         return c;
     }
 
+    /**
+     * Yeni oyun (ilerleme sıfır), AYARLAR {@code old}'dan korunur: tempo, konuşma ve hızı, titreşim, müzik/efekt/ambiyans
+     * sesi, öğretici, çırak duyuruları, çırak teslimi, oyun akışı, süre baskısı. Dönem sıfırlaması ve "Yeni oyun" bunu kullanır.
+     */
+    public static SaveData newGameKeepingSettings(SaveData old) {
+        SaveData s = newGame();
+        if (old != null) old.copySettingsTo(s);
+        return s;
+    }
+
+    /** Yalnızca ayarları kopyalar (ilerleme alanlarına dokunmaz). */
+    public void copySettingsTo(SaveData s) {
+        s.tempo = tempo;
+        s.speechOn = speechOn;
+        s.speechRate = speechRate;
+        s.vibration = vibration;
+        s.musicVolume = musicVolume;
+        s.sfxVolume = sfxVolume;
+        s.ambienceVolume = ambienceVolume;
+        s.tutorialDone = tutorialDone;
+        s.apprenticeAnnounce = apprenticeAnnounce;
+        s.apprenticeDelivery = apprenticeDelivery;
+        s.flowMode = flowMode;
+        s.flowChosen = flowChosen;
+        s.timePressure = timePressure;
+    }
+
+    /** Başarısız günde para/stokla birlikte geri alınan finans durumu (gün içi fatura ödemesi dahil). */
+    void restoreFinanceFrom(SaveData snap) {
+        bills.clear();
+        for (Bill b : snap.bills) bills.add(new Bill(b.id, b.type, b.amount, b.issuedDay, b.dueDay, b.paid));
+        loans.clear();
+        for (Loan l : snap.loans) loans.add(Loan.parse(l.id, l.serialize()));
+        creditScore = snap.creditScore;
+        wageDebt = snap.wageDebt;
+        salesSinceTax = snap.salesSinceTax;
+        nextFinanceId = snap.nextFinanceId;
+    }
+
     public String serialize() {
         StringBuilder sb = new StringBuilder();
-        sb.append("v=4\n"); // v=1 (v0.4), v=2 (v0.5) ve v=3 (v0.6) kayıtları da yüklenir
+        sb.append("v=").append(FORMAT).append('\n'); // v2.5: v=5; eski biçimler okunur (dönemi eskiyse ilerleme sıfırlanır)
+        sb.append("epoch=").append(epoch).append('\n');
         sb.append("day=").append(day).append('\n');
         sb.append("bestDay=").append(bestDay).append('\n');
         sb.append("money=").append(money).append('\n');
@@ -88,6 +163,15 @@ public final class SaveData {
         sb.append("flow=").append(flowMode.id).append('\n');
         sb.append("flowChosen=").append(flowChosen ? 1 : 0).append('\n');
         sb.append("timer=").append(timePressure ? 1 : 0).append('\n');
+        sb.append("apprenticeDelivery=").append(apprenticeDelivery ? 1 : 0).append('\n');
+        if (progressResetNotice) sb.append("resetNotice=1\n");
+        for (Map.Entry<String, Integer> e : prices.entrySet()) sb.append("price.").append(e.getKey()).append('=').append(e.getValue()).append('\n');
+        for (Bill b : bills) sb.append("bill.").append(b.id).append('=').append(b.serialize()).append('\n');
+        for (Loan l : loans) sb.append("loan.").append(l.id).append('=').append(l.serialize()).append('\n');
+        sb.append("credit=").append(creditScore).append('\n');
+        sb.append("wageDebt=").append(wageDebt).append('\n');
+        sb.append("salesTax=").append(salesSinceTax).append('\n');
+        sb.append("finId=").append(nextFinanceId).append('\n');
         return sb.toString();
     }
 
@@ -98,18 +182,26 @@ public final class SaveData {
         return d;
     }
 
-    /** Hataya toleranslı yükleme: bozuk/eksik satırlar atlanır, null/boş = yeni oyun. */
+    /**
+     * Hataya toleranslı yükleme: bozuk/eksik satırlar atlanır, null/boş = yeni oyun. v2.5: {@code epoch} anahtarı yoksa ya
+     * da {@link #EPOCH}'tan küçükse ilerleme sıfırlanır, ayarlar korunur ({@link #newGameKeepingSettings}); kayıtta ilerleme
+     * varsa {@link #progressResetNotice} true olur.
+     */
     public static SaveData parse(String text) {
         if (text == null || text.trim().isEmpty()) return newGame();
         SaveData s = new SaveData();
+        s.epoch = 0; // anahtar yoksa eski dönem
+        boolean progress = false;
         for (String raw : text.split("\n")) {
             String line = raw.trim();
             int eq = line.indexOf('=');
             if (eq <= 0) continue;
             String k = line.substring(0, eq).trim();
             String v = line.substring(eq + 1).trim();
+            if (k.equals("day") || k.equals("money") || k.equals("stars") || k.startsWith("stock.") || k.startsWith("up.")) progress = true;
             try {
-                if (k.equals("day")) s.day = Math.max(1, Integer.parseInt(v));
+                if (k.equals("epoch")) s.epoch = Integer.parseInt(v);
+                else if (k.equals("day")) s.day = Math.max(1, Integer.parseInt(v));
                 else if (k.equals("bestDay")) s.bestDay = Math.max(1, Integer.parseInt(v));
                 else if (k.equals("money")) s.money = Math.max(0, Integer.parseInt(v));
                 else if (k.equals("stars")) s.stars = Math.max(1.0, Math.min(5.0, num(v)));
@@ -133,11 +225,34 @@ public final class SaveData {
                 else if (k.equals("flowChosen")) s.flowChosen = v.equals("1");
                 else if (k.equals("timer")) s.timePressure = !v.equals("0");
                 else if (k.equals("readyDrinks")) s.readyDrinks = Math.max(0, Math.min(40, Integer.parseInt(v)));
-            } catch (NumberFormatException ignored) {
+                else if (k.equals("apprenticeDelivery")) s.apprenticeDelivery = !v.equals("0");
+                else if (k.equals("resetNotice")) s.progressResetNotice = v.equals("1");
+                else if (k.startsWith("price.")) s.prices.put(k.substring(6), Integer.parseInt(v));
+                else if (k.startsWith("bill.")) {
+                    Bill b = Bill.parse(Integer.parseInt(k.substring(5)), v);
+                    if (b != null) s.bills.add(b);
+                } else if (k.startsWith("loan.")) {
+                    Loan l = Loan.parse(Integer.parseInt(k.substring(5)), v);
+                    if (l != null && !l.isClosed()) s.loans.add(l);
+                }
+                else if (k.equals("credit")) s.creditScore = Math.max(0, Math.min(Finance.CREDIT_MAX, Integer.parseInt(v)));
+                else if (k.equals("wageDebt")) s.wageDebt = Math.max(0, Integer.parseInt(v));
+                else if (k.equals("salesTax")) s.salesSinceTax = Math.max(0, Integer.parseInt(v));
+                else if (k.equals("finId")) s.nextFinanceId = Math.max(1, Integer.parseInt(v));
+            } catch (RuntimeException ignored) {
                 // bozuk satır atlanır
             }
         }
         if (s.bestDay < s.day) s.bestDay = s.day;
+        Pricing.sanitize(s.prices);
+        for (Bill b : s.bills) s.nextFinanceId = Math.max(s.nextFinanceId, b.id + 1);
+        for (Loan l : s.loans) s.nextFinanceId = Math.max(s.nextFinanceId, l.id + 1);
+        if (s.epoch < EPOCH) {
+            // v2.5 dönem sıfırlaması: ilerleme sıfır, ayarlar korunur, bir kez bildirim
+            SaveData fresh = newGameKeepingSettings(s);
+            fresh.progressResetNotice = progress || s.progressResetNotice;
+            return fresh;
+        }
         return s;
     }
 }

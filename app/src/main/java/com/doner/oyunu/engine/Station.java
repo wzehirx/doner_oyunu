@@ -4,11 +4,11 @@ package com.doner.oyunu.engine;
 public enum Station {
     DONER(1, "Döner makinesi"),
     EKMEK(2, "Ekmek ısıtıcı"),
-    SOS(3, "Sos ve salata tezgahı"),
+    SOS(3, "Sos ve salata tezgâhı"),
     IZGARA(4, "Ocak"),
     PAKET(5, "Paketleme"),
     ICECEK(6, "İçecek dolabı"),
-    TATLI(7, "Tatlı tezgahı");
+    TATLI(7, "Tatlı tezgâhı");
 
     public final int id;
     public final String displayName;

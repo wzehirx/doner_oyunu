@@ -170,7 +170,7 @@ public class NarratorV06Test {
         e.startPrepDoner("et_doner", 2);
         for (int i = 0; i < 40; i++) e.tick(0.1f);
         assertEquals("Hazır: döner 2 porsiyon.", n.readyStockText());
-        assertTrue(n.stationLabel(Station.DONER), n.stationLabel(Station.DONER).contains("hazır 2 porsiyon"));
+        assertTrue(n.stationLabel(Station.DONER), n.stationLabel(Station.DONER).contains("hazır döner 2 porsiyon") /* v2.5 terim birliği */);
         assertEquals("2 porsiyon döner dilimlendi. Hazır döner 2 porsiyon.", n.prepFinished(PrepKind.DONER, false, 2));
     }
 

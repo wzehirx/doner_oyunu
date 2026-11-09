@@ -6,13 +6,43 @@ import com.doner.oyunu.engine.*;
 
 import org.junit.Test;
 
-/** v0.4 kayıtları v0.5'te yüklenmeli; yeni alanlar varsayılan. */
+/**
+ * v0.4 kayıtları v0.5'te yüklenmeli; yeni alanlar varsayılan. v2.5: dönemsiz (eski) kayıt yüklenince İLERLEME sıfırlanır,
+ * AYARLAR korunur (design_v25 §8); alan ayrıştırması aynı metnin {@code epoch=25} ekli haliyle sınanır.
+ */
 public class SaveCompatTest {
+    /** Aynı kayıt metni, bu sürümün dönemiyle (alan ayrıştırmasını sınamak için). */
+    static String current(String old) { return "epoch=" + SaveData.EPOCH + "\n" + old; }
+
     private static final String V04 = "v=1\nday=9\nbestDay=11\nmoney=8123\nstars=4.2\nstock.et_doner=12\nstock.ekmek=7\n"
             + "up.cirak=2\nup.tabela=1\ntempo=1.2\nspeech=1\nspeechRate=1.4\nvibration=0\nmusic=0.3\nsfx=0.9\ntutorial=1\n";
 
-    @Test public void v04SaveLoadsWithDefaultsForNewFields() {
+    @Test public void v04SaveResetsProgressButKeepsSettings() {
         SaveData s = SaveData.parse(V04);
+        assertEquals("ilerleme sıfır", 1, s.day);
+        assertEquals(1, s.bestDay);
+        assertEquals(SaveData.START_MONEY, s.money);
+        assertEquals(SaveData.START_STARS, s.stars, 1e-9);
+        assertEquals(0, s.level("cirak"));
+        assertEquals(0, s.level("tabela"));
+        assertEquals("yeni oyun stoğu", SaveData.newGame().inventory.asMap(), s.inventory.asMap());
+        // ayarlar korunur
+        assertEquals(1.2, s.tempo, 1e-9);
+        assertTrue(s.speechOn);
+        assertEquals(1.4, s.speechRate, 1e-9);
+        assertFalse(s.vibration);
+        assertEquals(0.3, s.musicVolume, 1e-9);
+        assertEquals(0.9, s.sfxVolume, 1e-9);
+        assertTrue(s.tutorialDone);
+        assertTrue("bir kez bildirilir", s.progressResetNotice);
+        assertEquals(SaveData.EPOCH, s.epoch);
+        // bildirim gösterilince kapanır ve kayda yazılmaz
+        s.clearProgressResetNotice();
+        assertFalse(SaveData.parse(s.serialize()).progressResetNotice);
+    }
+
+    @Test public void v04SaveLoadsWithDefaultsForNewFields() {
+        SaveData s = SaveData.parse(current(V04));
         assertEquals(9, s.day);
         assertEquals(11, s.bestDay);
         assertEquals(8123, s.money);
@@ -30,12 +60,20 @@ public class SaveCompatTest {
     }
 
     @Test public void v04SaveStartsAGameDayAndPlaysWithoutCrash() {
+        // v2.5: eski kayıt 1. günden başlar ve oynanır
         SaveData s = SaveData.parse(V04);
         Shop.buyRecommended(s);
         GameEngine e = new GameEngine(3, s);
         new TestBot(1.0f, true, true).playDay(e);
         assertEquals(GameEngine.State.FINISHED, e.getState());
-        assertEquals(10, s.day);
+        assertEquals(2, s.day);
+        // aynı içerik bu dönemde: kaldığı günden
+        SaveData c = SaveData.parse(current(V04));
+        Shop.buyRecommended(c);
+        GameEngine f = new GameEngine(3, c);
+        new TestBot(1.0f, true, true).playDay(f);
+        assertEquals(GameEngine.State.FINISHED, f.getState());
+        assertEquals(10, c.day);
     }
 
     @Test public void newFieldsRoundTrip() {
@@ -43,7 +81,7 @@ public class SaveCompatTest {
         s.apprenticeAnnounce = false;
         s.readyDrinks = 6;
         String text = s.serialize();
-        assertTrue("v0.7 kaydı v=4 yazar", text.startsWith("v=4"));
+        assertTrue("v2.5 kaydı v=5 ve dönemi yazar", text.startsWith("v=5\nepoch=" + SaveData.EPOCH + "\n"));
         SaveData t = SaveData.parse(text);
         assertFalse(t.apprenticeAnnounce);
         assertEquals(6, t.readyDrinks);
@@ -55,12 +93,12 @@ public class SaveCompatTest {
     }
 
     @Test public void badNewFieldsAreTolerated() {
-        SaveData s = SaveData.parse("readyDrinks=abc\napprenticeAnnounce=x\nday=3\n");
+        SaveData s = SaveData.parse(current("readyDrinks=abc\napprenticeAnnounce=x\nday=3\n"));
         assertEquals(0, s.readyDrinks);
         assertFalse(s.apprenticeAnnounce); // "1" değil -> kapalı
         assertEquals(3, s.day);
-        assertEquals(40, SaveData.parse("readyDrinks=99999\n").readyDrinks);
-        assertEquals(0, SaveData.parse("readyDrinks=-5\n").readyDrinks);
+        assertEquals(40, SaveData.parse(current("readyDrinks=99999\n")).readyDrinks);
+        assertEquals(0, SaveData.parse(current("readyDrinks=-5\n")).readyDrinks);
     }
 
     @Test public void readyDrinksCarryOverToNextDay() {

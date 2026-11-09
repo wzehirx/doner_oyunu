@@ -31,5 +31,8 @@ public enum StartResult {
     /** Oyuncunun eli dolu: başka bir AKTİF iş (ya da pasif işi koyma anı) sürüyor; {@code onHandsBusy} verilir. */
     HANDS_BUSY,
     /** Pasif istasyon dolu (ör. "Ocak dolu (2/2)"); {@code onStationFull} verilir. */
-    STATION_FULL
+    STATION_FULL,
+    // ---- v2.5
+    /** Ödenmemiş fatura kesintisi: istasyon kapalı (doğalgaz tam kesikken Ocak); {@code onUtilityBlocked} verilir. */
+    UTILITY_OFF
 }

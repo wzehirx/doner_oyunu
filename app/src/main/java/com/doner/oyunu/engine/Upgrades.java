@@ -65,17 +65,33 @@ public final class Upgrades {
         return base + (int) Math.round(add);
     }
 
-    /** Çırak seviyesi 0..3: otomatik işçi sayısı ve yetenek seviyesi. */
+    /** Çırak yükseltme seviyesi 0..5 (v2.5; 1–3 = çırak sayısı ve yetenek, 4 kalfa, 5 dördüncü çırak). */
     public int apprenticeLevel() { return (int) Math.round(sum(Upgrade.EffectType.APPRENTICE)); }
 
-    /** Hazır stok kapasitesi (buzdolabı seviyesiyle artar): döner 8, içecek 8, tepsi (malzeme başına kullanım) 12. */
+    /** Çalışan çırak sayısı: seviye 1–3 = seviye, 4 = 3, 5 = 4. */
+    public static int apprenticeWorkers(int level) { return level <= 3 ? Math.max(0, level) : level == 4 ? 3 : 4; }
+
+    /** Çırağın yetenek kademesi (hangi istasyonlar): en çok 3. */
+    public static int apprenticeSkill(int level) { return Math.min(3, Math.max(0, level)); }
+
+    /** Çırak yavaşlığı: seviye 1–3 ×1,2; 4+ (kalfa) ×1,05. */
+    public static float apprenticeSlowdown(int level) { return level >= 4 ? 1.05f : 1.2f; }
+
+    /** Hazır stok kapasitesi (buzdolabı seviyesiyle artar): döner 8, içecek 8, tepsi (malzeme başına kullanım) 12; v2.5 soğutmalı vitrin ek. */
     public int readyCapacity(PrepKind kind) {
         int lv = save.level("buzdolabi");
+        int extra = (int) Math.round(sum(Upgrade.EffectType.READY_CAP));
         switch (kind) {
-            case TRAY: return 12 + 6 * lv;
-            default: return 8 + 4 * lv;
+            case TRAY: return 12 + 6 * lv + (extra * 3) / 2;
+            default: return 8 + 4 * lv + extra;
         }
     }
+
+    /** Jeneratör: elektrik kesintisini karşıladığı kademe (0..2). */
+    public int powerBackup() { return (int) Math.round(sum(Upgrade.EffectType.POWER_BACKUP)); }
+
+    /** Su deposu: su kesintisini karşıladığı kademe (0..2). */
+    public int waterBackup() { return (int) Math.round(sum(Upgrade.EffectType.WATER_BACKUP)); }
     public double patienceMult() { return 1.0 + sum(Upgrade.EffectType.PATIENCE); }
     public double arrivalMult() { return 1.0 + sum(Upgrade.EffectType.ARRIVAL); }
     public double tipMult() { return 1.0 + sum(Upgrade.EffectType.TIP); }

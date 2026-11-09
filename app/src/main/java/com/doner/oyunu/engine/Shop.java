@@ -62,7 +62,8 @@ public final class Shop {
         DayConfig cfg = DayConfig.forDay(save.day);
         Upgrades up = new Upgrades(save);
         double starMult = Math.max(1.0, DayConfig.starMultiplier(save.stars));
-        double customers = cfg.duration / cfg.arrivalInterval * starMult * up.arrivalMult() * 1.15;
+        double customers = cfg.duration / cfg.arrivalInterval * starMult * up.arrivalMult() * 1.15
+                * Pricing.arrivalMultiplier(save); // v2.5: fiyatlara göre talep (referansta 1)
         double items = customers * cfg.expectedItemsPerOrder();
         java.util.List<Product> menu = Catalog.productsForDay(save.day);
         Map<String, Double> demand = new LinkedHashMap<>();

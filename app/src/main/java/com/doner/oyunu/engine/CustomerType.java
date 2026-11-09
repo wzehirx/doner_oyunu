@@ -16,6 +16,11 @@ public final class CustomerType {
     /** Döner kaleminde yarım / duble boy isteme olasılığı (boy açıldıktan sonra; kalan olasılık tam ekmek). */
     public float halfChance = 0.2f;
     public float doubleChance = 0.15f;
+    /**
+     * v2.5 fiyat duyarlılığı e (öğrenci 1,8 … gurme 0,3): fiyat referansın üstüne çıkınca bu tipin gelişi ve memnuniyeti
+     * ne kadar düşer (design_v25 §2). Varsayılan 1.
+     */
+    public float priceSensitivity = 1.0f;
 
     public CustomerType(String id, String name, int minDay, int weight, float patienceSeconds,
                         float tipMult, float extraItemChance, String hint, String... preferred) {
@@ -34,6 +39,12 @@ public final class CustomerType {
     CustomerType sizes(float half, float dbl) {
         this.halfChance = half;
         this.doubleChance = dbl;
+        return this;
+    }
+
+    /** Fiyat duyarlılığını ayarlar (katalog kurulumu). */
+    CustomerType price(float e) {
+        this.priceSensitivity = e;
         return this;
     }
 

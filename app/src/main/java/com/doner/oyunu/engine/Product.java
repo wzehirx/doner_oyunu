@@ -53,6 +53,12 @@ public final class Product {
         this.toppingPool = Collections.unmodifiableList(new ArrayList<>(toppingPool));
     }
 
+    /** v2.5: su gerektiren ürün (çay, çorba): su tam kesikken menüden çıkar. */
+    private boolean needsWater;
+    void setNeedsWater() { needsWater = true; }
+    /** Su gerektiren ürün mü (çay, çorba). */
+    public boolean needsWater() { return needsWater; }
+
     /** Katalog kurulumu: bu ürün patatesli sipariş edilebilir. */
     void setFriesOk() { friesOk = true; }
 

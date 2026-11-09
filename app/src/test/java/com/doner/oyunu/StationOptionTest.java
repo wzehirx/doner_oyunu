@@ -288,7 +288,7 @@ public class StationOptionTest {
         GameEngine e = new GameEngine(1, s);
         StationOption drink = e.getStationOptions(-1, -1, Station.ICECEK.id).get(0);
         assertFalse(drink.enabled);
-        assertEquals("Malzeme yetmiyor: Ayran şişesi", drink.lockReason);
+        assertEquals("Malzeme yetmiyor: ayran şişesi", drink.lockReason); // v2.5 terim birliği: cümle içinde malzeme adı küçük harf
         assertEquals(StartResult.OUT_OF_STOCK, e.applyStationOption(-1, -1, Station.ICECEK.id, "prep:drink"));
         s.inventory.set("et_doner", 3);
         StationOption four = e.getStationOptions(-1, -1, Station.DONER.id).get(0);

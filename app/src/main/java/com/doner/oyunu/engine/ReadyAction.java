@@ -23,7 +23,8 @@ public final class ReadyAction {
         DELIVER
     }
 
-    public enum Status { NOW, HANDS_BUSY, STATION_FULL, OUT_OF_STOCK, RUNNING }
+    /** v2.5: {@link #CLOSED} = istasyon kesinti yüzünden kapalı ("Ocak kapalı, doğalgaz kesik"). */
+    public enum Status { NOW, HANDS_BUSY, STATION_FULL, OUT_OF_STOCK, RUNNING, CLOSED }
 
     public final Kind kind;
     public final Status status;

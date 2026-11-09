@@ -110,4 +110,17 @@ public interface GameListener {
     default void onAlreadyRunning(Order order, ActiveStep job) {}
     /** Pasif işin koyma süresi bitti: eller serbest, iş istasyonda kendi başına sürüyor (yalnızca oyuncu işleri). */
     default void onHandsFree(ActiveStep job) {}
+
+    // ---- v2.5: faturalar, kesintiler, banka
+    /**
+     * Gün açılırken (hazırlık ya da gün başında, bir kez) fatura/kesinti/maaş/taksit uyarıları (önce en ağırı), kısa
+     * Türkçe cümleler ({@link Finance#notices}). Uyarı yoksa gelmez.
+     */
+    default void onFinanceNotices(java.util.List<String> notices) {}
+    /** Kesinti yüzünden istasyon/hazırlık kapalı (Ocak: doğalgaz; tepsi: su). order hazırlıkta null. */
+    default void onUtilityBlocked(Order order, Station station, BillType cause) {}
+    /** Stok bozuldu (gün başında hazır ayran: elektrik kesintisi). */
+    default void onStockSpoiled(Ingredient ingredient, int amount, BillType cause) {}
+    /** Gün içinde fatura ödendi ({@link GameEngine#payBill}); kesinti kalktı. paid: ödenen tutar. */
+    default void onBillPaid(Bill bill, int paid) {}
 }

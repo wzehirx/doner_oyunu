@@ -15,5 +15,7 @@ public enum PrepResult {
     /** v2.0: oyuncunun eli dolu (başka aktif iş sürüyor). */
     HANDS_BUSY,
     /** v2.0: pasif istasyon dolu (patates hazırlığı için ocak gözleri). */
-    STATION_FULL
+    STATION_FULL,
+    /** v2.5: kesinti: su kesikken tepsi, Ocak kapalıyken patates hazırlanamaz ({@code onUtilityBlocked}). */
+    UTILITY_OFF
 }

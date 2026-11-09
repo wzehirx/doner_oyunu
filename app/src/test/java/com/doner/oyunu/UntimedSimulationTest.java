@@ -70,8 +70,17 @@ public class UntimedSimulationTest {
         for (DaySummary d : u.results) { tipU += d.tips; revU += d.revenue; }
         assertTrue("bahşiş oranı süresizde süreliden düşük", tipU / revU < tipT / revT);
         assertTrue("ama bahşiş yine verilir", tipU > 0);
-        assertTrue("kazanç süreliden biraz düşük: " + u.save.money + " < " + t.save.money, u.save.money < t.save.money);
-        assertTrue("ama çok düşük değil (en az %70): " + u.save.money + " vs " + t.save.money, u.save.money >= 0.7 * t.save.money);
+        // v2.5: botlar faturayı, maaşı ve farklı yükseltmeleri öder; kasadaki para tek başına kazancı ölçmez. v0.8 ilkesi
+        // ("süresiz kazanç süreliden düşük ama en az %70") artık GELİRLE (satış + bahşiş) ölçülür: sabit giderler (kira,
+        // fatura, maaş) iki modda bilerek aynıdır, bu yüzden net servet farkı büyür (yine de anlamlı kalmalı: ≥ %35).
+        long gt = (long) (tipT + revT), gu = (long) (tipU + revU);
+        long wt = t.netWorth(), wu = u.netWorth();
+        System.out.println("UNT gelir süreli=" + gt + " süresiz=" + gu + " oran=" + String.format("%.2f", gu / (double) gt)
+                + " | servet süreli=" + wt + " süresiz=" + wu + " oran=" + String.format("%.2f", wu / (double) wt));
+        assertTrue("kazanç süreliden biraz düşük: " + gu + " < " + gt, gu < gt);
+        assertTrue("ama çok düşük değil (en az %70): " + gu + " vs " + gt, gu >= 0.7 * gt);
+        assertTrue("servet süreliden düşük", wu < wt);
+        assertTrue("servet de anlamlı (en az %35): " + wu + " vs " + wt, wu >= 0.35 * wt);
     }
 
     @Test public void doNothingBotNeverFinishesAnUntimedDay() {

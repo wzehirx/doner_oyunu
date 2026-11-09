@@ -15,8 +15,15 @@ public final class ApprenticeAction {
     public final PrepKind prep;
     public final boolean pack;
     public final float seconds;
+    /** v2.5: teslim işi (bitişte sipariş teslim edildi; onOrderDelivered da gelir). */
+    public final boolean deliver;
 
     ApprenticeAction(int worker, boolean started, Order order, int itemIndex, Step step, PrepKind prep, boolean pack, float seconds) {
+        this(worker, started, order, itemIndex, step, prep, pack, seconds, false);
+    }
+
+    ApprenticeAction(int worker, boolean started, Order order, int itemIndex, Step step, PrepKind prep, boolean pack, float seconds, boolean deliver) {
+        this.deliver = deliver;
         this.worker = worker;
         this.started = started;
         this.order = order;

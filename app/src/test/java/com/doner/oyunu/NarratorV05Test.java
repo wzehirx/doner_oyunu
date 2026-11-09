@@ -67,7 +67,7 @@ public class NarratorV05Test {
         assertTrue(said.toString(), said.contains("Ayranı doldur bitti."));
         assertTrue(said.toString(), said.contains("Önerilen: Siparişi paketle. Paketleme."));
         Flow.doItemStation(e, o, 0, Station.PAKET);
-        assertTrue(said.toString(), said.contains("Sipariş hazır: " + o.customer.name + ". Teslim et."));
+        assertTrue(said.toString(), said.contains("Sipariş " + o.getPosition() + " teslime hazır: " + o.customer.name + ". Teslim et.") /* v2.5 terim birliği */);
         Order t = e.spawnOrder(Collections.singletonList("ekmek_arasi"), NONE);
         e.startStep(t.id, Station.SOS.id);
         assertTrue(said.get(said.size() - 1), said.get(said.size() - 1).startsWith("Malzeme eklemeden önce"));
@@ -82,7 +82,7 @@ public class NarratorV05Test {
         assertEquals("İçecek dolabı, boş, sıradaki: Ayranı doldur", n.stationLabel(Station.ICECEK));
         assertEquals("Paketleme, boş", n.stationLabel(Station.PAKET));
         e.getSave().readyDrinks = 3;
-        assertTrue(n.stationLabel(Station.ICECEK).endsWith("hazır 3 bardak ayran"));
+        assertTrue(n.stationLabel(Station.ICECEK).endsWith("hazır ayran 3 bardak") /* v2.5 terim birliği: "hazır <şey> <sayı> <birim>" */);
         Flow.doItemStation(e, o, 0, Station.EKMEK);
         Flow.doItemStation(e, o, 0, Station.DONER);
         Flow.doItemStation(e, o, 0, Station.SOS);

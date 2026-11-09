@@ -158,15 +158,21 @@ public class EngineFixesTest {
         }));
         assertEquals(StartResult.OUT_OF_STOCK, e.startStep(o.id, 0, Station.DONER.id));
         String t = said.get(said.size() - 1);
-        for (Ingredient i : e.missingIngredients(o.id)) assertTrue(t, t.contains(i.name));
+        // v2.5 terim birliği: malzeme adı cümle içinde küçük harf ("Stokta yok: lahmacun harcı ve et döner.")
+        for (Ingredient i : e.missingIngredients(o.id)) assertTrue(t, t.contains(i.name.toLowerCase(new java.util.Locale("tr"))));
         assertTrue(t, t.contains(e.emergencyCostForMissing(o.id) + " lira"));
     }
 
     // ------------------------------------------------------------ madde 5: kira
+    /**
+     * v2.5: günlük kira kalktı (kira haftalık faturadır). Aynı ilke (gün sonu gideri yalnızca eldeki paradan düşülür, kalan
+     * borç olur, metin dürüst) artık çırak MAAŞI ile sınanır: 1. gün, çırak seviye 1, maaş 250 lira.
+     */
     private static GameEngine finishWithMoney(int money, Narrator[] outN, final List<String> said) {
         SaveData save = SaveData.newGame();
         save.stars = 5.0;
         save.money = money;
+        save.upgradeLevels.put("cirak", 1);
         GameEngine e = new GameEngine(3, save);
         Narrator n = new Narrator(e, new Narrator.Output() {
             @Override public void say(String text, boolean urgent) { said.add(text); }
@@ -179,42 +185,50 @@ public class EngineFixesTest {
     }
 
     @Test public void rentIsOnlyWhatWasActuallyDeductedWhenMoneyIsShort() {
+        // v2.5: kira yerine maaş; para yetmeyen kısım maaş borcu olur (ertesi gün çırak gelmez)
         List<String> said = new ArrayList<>();
         GameEngine e = finishWithMoney(100, new Narrator[1], said);
         DaySummary s = e.getSummary();
-        assertEquals(300, s.rentDue);
-        assertEquals("yalnızca eldeki para düşülür", 100, s.rent);
-        assertEquals(200, s.rentUnpaid());
-        assertEquals(0, s.moneyAfter);
-        assertEquals(0, e.getSave().money);
+        int wage = Finance.dailyWage(1, 1);
+        assertEquals(250, wage);
+        assertEquals(0, s.rent);
+        assertEquals(wage, s.wagesDue);
+        int cash = 100 + s.revenue + s.tips - s.emergencySpend;
+        assertEquals("yalnızca eldeki para düşülür", Math.min(wage, cash), s.wagesPaid);
+        assertEquals(wage - s.wagesPaid, s.wageDebt);
+        assertEquals(cash - s.wagesPaid, s.moneyAfter);
+        assertEquals(s.moneyAfter, e.getSave().money);
         assertEquals(s.moneyAfter, e.getMoney());
         // net, kasadaki gerçek değişimle tutarlı
         assertEquals(s.moneyAfter - 100, s.profit());
         String t = said.get(said.size() - 1);
-        assertTrue(t, t.contains("yalnızca 100 lira ödenebildi"));
-        assertTrue(t, t.contains("300 lira"));
-        assertTrue(t, t.contains("200 lira ödenemedi"));
+        assertTrue(t, t.contains("çırak maaşı " + s.wagesPaid + " lira") || s.wagesPaid == 0);
         assertTrue(t, t.contains("Net eksi") || t.contains("Net " + s.profit()));
-        assertFalse(t, t.contains("kira 300 lira. Net"));
     }
 
     @Test public void rentFullyPaidWhenAffordable() {
+        // v2.5: maaş tam ödenir, kira günlük düşülmez; 1. gün fatura kesilmez (ilki 3. gün sonu elektrik)
         List<String> said = new ArrayList<>();
         GameEngine e = finishWithMoney(5000, new Narrator[1], said);
         DaySummary s = e.getSummary();
-        assertEquals(300, s.rent);
-        assertEquals(300, s.rentDue);
+        assertEquals(0, s.rent);
         assertEquals(0, s.rentUnpaid());
-        assertEquals(5000 - 300 + s.revenue + s.tips - s.emergencySpend, s.moneyAfter);
+        assertEquals(250, s.wagesPaid);
+        assertEquals(0, s.wageDebt);
+        assertEquals(5000 - 250 + s.revenue + s.tips - s.emergencySpend, s.moneyAfter);
+        assertTrue(s.newBills.isEmpty());
         String t = said.get(said.size() - 1);
-        assertTrue(t, t.contains("kira 300 lira. Net"));
+        assertTrue(t, t.contains("çırak maaşı 250 lira. Net"));
         assertFalse(t, t.contains("ödenemedi"));
+        assertFalse(t, t.contains("Maaş borcu"));
     }
 
     @Test public void rentWithNoMoneyAtAllChargesNothing() {
+        // v2.5: hiç para yokken (ve gün de kazandırmazsa) para eksiye düşmez; maaşın ödenemeyen kısmı borçtur
         GameEngine e = finishWithMoney(0, new Narrator[1], new ArrayList<String>());
-        assertEquals(0, e.getSummary().rent);
-        assertEquals(300, e.getSummary().rentUnpaid());
+        DaySummary s = e.getSummary();
+        assertEquals(0, s.rent);
+        assertEquals(s.wagesDue - s.wagesPaid, s.wageDebt);
         assertTrue(e.getMoney() >= 0);
     }
 

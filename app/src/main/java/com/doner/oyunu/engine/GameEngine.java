@@ -28,7 +28,12 @@ public final class GameEngine {
     private static final float READY_DRINK_SECONDS = 0.5f;
     private static final float READY_FRIES_SECONDS = 0.8f;
     private static final float TOPPING_SECONDS_EACH = 0.3f;
+    /** v2.0 çırak yavaşlığı (seviye 1–3); v2.5 kalfa (4+) {@link Upgrades#apprenticeSlowdown}. */
     private static final float APPRENTICE_SLOWDOWN = 1.2f;
+    /** v2.5: çırağın teslim işi süresi (sn, tempo ve yavaşlıkla). */
+    public static final float DELIVER_SECONDS = 1.0f;
+    /** v2.5: çırağın teslim işinin sentetik adımı. */
+    static final Step DELIVER_STEP = new Step("Teslim et", Station.PAKET, DELIVER_SECONDS, Collections.<String, Integer>emptyMap());
     private static final double MISTAKE_PENALTY_EACH = 0.05;
     private static final double MISTAKE_PENALTY_MAX = 0.15;
     /** Süresiz mod (v0.8): hız bonusu yok; bahşiş oranı standart, çarpanla biraz düşük (süreli oyuncu haksız duruma düşmesin). */
@@ -61,7 +66,17 @@ public final class GameEngine {
     private final DayConfig cfg;
     private final Random rng;
     private final int day;
-    private final List<Product> menu;
+    /** Bugünün menüsü (v2.5: kesinti yüzünden satılamayan ürünler çıkarılır; gün içinde fatura ödenirse geri gelir). */
+    private List<Product> menu;
+    /** v2.5: ödenmemiş fatura kesintileri (v0.6 dengesinde hiç). */
+    private UtilityStatus util;
+    /** v2.5: fiyatlara göre müşteri tipi talebi ve genel geliş çarpanı (gün başında sabitlenir). */
+    private final Map<CustomerType, Double> typeDemand = new HashMap<>();
+    private double priceArrival = 1.0;
+    /** v2.5: gün açılış etkileri (bozulma, ihtarname, uyarılar) uygulandı mı. */
+    private boolean openEffectsDone;
+    /** v2.5: bugün çalışan çırak seviyesi (maaş için; gelmediyse 0). */
+    private int workedApprenticeLevel;
     private final List<GameListener> listeners = new ArrayList<>();
     private final List<Order> orders = new ArrayList<>();
     private final List<ActiveStep> active = new ArrayList<>();
@@ -115,8 +130,10 @@ public final class GameEngine {
         this.upgrades = new Upgrades(save);
         this.day = save.day;
         this.cfg = DayConfig.forDay(day);
-        this.menu = Catalog.productsForDay(day);
-        this.quota = cfg.quota(upgrades.arrivalMult());
+        this.util = v06Balance ? UtilityStatus.NONE : UtilityStatus.of(save, day);
+        this.menu = buildMenu();
+        computeDemand();
+        this.quota = cfg.quota(upgrades.arrivalMult(), priceArrival * util.arrivalMult() * DayConfig.untimedStarFactor(save.stars));
         this.rng = new Random(seed);
         this.friesRng = new Random(mix(seed ^ 0x5DEECE66DL));
         this.nameCursor = rng.nextInt(Catalog.NAMES.length);
@@ -135,6 +152,33 @@ public final class GameEngine {
         z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
         return z ^ (z >>> 31);
     }
+
+    /** Günün menüsü: açık ürünler, kesinti yüzünden satılamayanlar hariç (en az ilk ürün kalır). */
+    private List<Product> buildMenu() {
+        List<Product> all = Catalog.productsForDay(day);
+        if (!util.any()) return all;
+        List<Product> out = new ArrayList<>();
+        for (Product p : all) if (util.productAvailable(p)) out.add(p);
+        if (out.isEmpty()) out.add(all.get(0));
+        return out;
+    }
+
+    /** Fiyatlara göre tip talepleri ve genel geliş çarpanı (tüm fiyatlar %100 ise hepsi 1). */
+    private void computeDemand() {
+        typeDemand.clear();
+        priceArrival = 1.0;
+        if (v06Balance || Pricing.allDefault(save)) return;
+        for (CustomerType t : Catalog.typesForDay(day)) typeDemand.put(t, Pricing.typeDemand(save, t, menu, save.stars));
+        priceArrival = Pricing.arrivalMultiplier(save, menu, Catalog.typesForDay(day), upgrades, save.stars);
+    }
+
+    private double demandOf(CustomerType t) { Double d = typeDemand.get(t); return d == null ? 1.0 : d; }
+
+    /** İstasyon süre çarpanı: yükseltmeler × kesinti (v2.5). */
+    private double speed(Station st) { return upgrades.speedMult(st) * util.speedMult(st); }
+
+    /** Çırak yavaşlığı (worker > 0): seviye 1–3 ×1,2; kalfa ×1,05. */
+    private float apprSlow(int worker) { return worker > 0 ? Upgrades.apprenticeSlowdown(getApprenticeLevel()) : 1f; }
 
     /** Otomatik müşteri gelişini kapatır/açar (öğretici ve senaryo testleri için; varsayılan açık). */
     public void setSpawning(boolean on) { spawning = on; }
@@ -181,7 +225,9 @@ public final class GameEngine {
     /** İstasyon pasif iş alır mı (ekmek ısıtıcı, ocak); v0.6 dengesinde hiçbiri. */
     public boolean isPassiveStation(Station st) { return !v06Balance && upgrades.stationCapacity(st) > 0; }
     /** Pasif istasyonun kapasitesi (yer/göz; yükseltmeyle artar); pasif olmayan istasyonda 0. */
-    public int getStationCapacity(Station st) { return v06Balance ? 0 : upgrades.stationCapacity(st); }
+    public int getStationCapacity(Station st) { return v06Balance ? 0 : util.capacity(st, upgrades.stationCapacity(st)); }
+    /** v2.5: istasyon kesinti yüzünden kapalı mı (doğalgaz tam kesikken Ocak). */
+    public boolean isStationClosed(Station st) { return util.stationClosed(st); }
     /** Pasif istasyonda şu an pişen iş sayısı (oyuncu + çırak). */
     public int getStationUsed(Station st) {
         int n = 0;
@@ -196,6 +242,7 @@ public final class GameEngine {
     }
     /** Pasif istasyonda boş yer var mı (pasif değilse true). */
     public boolean hasStationRoom(Station st) {
+        if (isStationClosed(st)) return false;
         int cap = getStationCapacity(st);
         return cap <= 0 || getStationUsed(st) < cap;
     }
@@ -234,8 +281,52 @@ public final class GameEngine {
         if (!on) checkEnd();
     }
 
-    /** Çırak seviyesi (0..3) = otomatik işçi sayısı. */
-    public int getApprenticeLevel() { return upgrades.apprenticeLevel(); }
+    /** Bugün çalışan çırak seviyesi (0..5; v2.5: maaş borcu varsa çırak gelmez = 0). Sahip olunan: {@link Upgrades#apprenticeLevel}. */
+    public int getApprenticeLevel() { return util.apprenticeAbsent ? 0 : upgrades.apprenticeLevel(); }
+    /** v2.5: çırak maaşını alamadığı için bugün gelmedi mi. */
+    public boolean isApprenticeAbsent() { return util.apprenticeAbsent; }
+    /** v2.5: bugün çalışan çırak sayısı. */
+    public int getApprenticeWorkers() { return Upgrades.apprenticeWorkers(getApprenticeLevel()); }
+
+    // ---------------------------------------------------------------- v2.5: fiyat, kesinti, fatura (gün içi)
+    /** Bugünün menüsü (kesintide satılamayan ürünler hariç). */
+    public List<Product> getMenu() { return Collections.unmodifiableList(new ArrayList<>(menu)); }
+    /** Kesinti durumu (gün başında hesaplanır; gün içinde fatura ödenince yenilenir). */
+    public UtilityStatus getUtilityStatus() { return util; }
+    /** Fiyatlara göre müşteri geliş çarpanı (1 = referans fiyatlar). */
+    public double getPriceArrivalMultiplier() { return priceArrival; }
+
+    /**
+     * Faturayı gün içinde öder (Duraklat menüsü): kesinti o an kalkar, menü yenilenir, {@code onBillPaid} verilir. Gün
+     * başarısız olursa para ve fatura gün başına döner.
+     */
+    public Finance.PayResult payBill(int billId) {
+        Bill b = Finance.bill(save, billId);
+        if (b == null) return Finance.PayResult.UNKNOWN;
+        int due = b.amountDue(day);
+        if (save.money < due) { for (GameListener l : snap()) l.onNotEnoughMoney(due); return Finance.PayResult.NOT_ENOUGH_MONEY; }
+        Finance.PayResult r = Finance.pay(save, billId);
+        if (r == Finance.PayResult.OK) {
+            refreshUtilities();
+            for (GameListener l : snap()) l.onBillPaid(b, due);
+        }
+        return r;
+    }
+
+    /** Maaş borcunu gün içinde öder: çırak hemen işe gelir. */
+    public Finance.PayResult payWages() {
+        int due = save.wageDebt;
+        Finance.PayResult r = Finance.payWages(save);
+        if (r == Finance.PayResult.NOT_ENOUGH_MONEY) for (GameListener l : snap()) l.onNotEnoughMoney(due);
+        if (r == Finance.PayResult.OK) refreshUtilities();
+        return r;
+    }
+
+    private void refreshUtilities() {
+        if (v06Balance) return;
+        util = UtilityStatus.of(save, day);
+        menu = buildMenu();
+    }
 
     public Order getOrder(int id) {
         for (Order o : orders) if (o.id == id) return o;
@@ -317,8 +408,15 @@ public final class GameEngine {
         Order o = getOrder(orderId);
         if (o == null || state != State.RUNNING) return out;
         if (o.ready) {
-            out.add(new ReadyAction(ReadyAction.Kind.DELIVER, ReadyAction.Status.NOW, o.id, -1, null, null, false, false, false,
-                    0f, "Teslim et", "Teslim et"));
+            if (o.delivering) {
+                float left = 0f;
+                for (ActiveStep a : active) if (a.order == o && a.deliver) left = a.remaining;
+                out.add(new ReadyAction(ReadyAction.Kind.DELIVER, ReadyAction.Status.RUNNING, o.id, -1, null, null, false, false, true,
+                        Math.max(0f, left), "Teslim et", "Teslim ediliyor, çırak"));
+            } else {
+                out.add(new ReadyAction(ReadyAction.Kind.DELIVER, ReadyAction.Status.NOW, o.id, -1, null, null, false, false, false,
+                        0f, "Teslim et", "Teslim et"));
+            }
             return out;
         }
         List<ReadyAction> nowP = new ArrayList<>(), nowA = new ArrayList<>(), wait = new ArrayList<>(), run = new ArrayList<>();
@@ -347,7 +445,7 @@ public final class GameEngine {
         } else if (o.canPack()) {
             Step ps = o.getPackStep();
             boolean free = handsFree(0);
-            float dur = (float) Math.max(MIN_STEP_SECONDS, ps.baseSeconds * upgrades.speedMult(ps.station) * save.tempo);
+            float dur = (float) Math.max(MIN_STEP_SECONDS, ps.baseSeconds * speed(ps.station) * save.tempo);
             ReadyAction pa = new ReadyAction(ReadyAction.Kind.PACK, free ? ReadyAction.Status.NOW : ReadyAction.Status.HANDS_BUSY,
                     o.id, -1, Station.PAKET, "step", false, false, false, free ? dur : 0f, ps.name,
                     ps.name + ", " + Station.PAKET.displayName + (free ? "" : ", elin dolu"));
@@ -383,7 +481,8 @@ public final class GameEngine {
         }
         ReadyAction.Status st;
         String extra = "";
-        if (!save.inventory.hasAll(need)) { st = ReadyAction.Status.OUT_OF_STOCK; extra = ", malzeme yok"; }
+        if (isStationClosed(s.station)) { st = ReadyAction.Status.CLOSED; extra = " kapalı, doğalgaz kesik"; }
+        else if (!save.inventory.hasAll(need)) { st = ReadyAction.Status.OUT_OF_STOCK; extra = ", stokta yok"; }
         else if (passive && !hasStationRoom(s.station)) { st = ReadyAction.Status.STATION_FULL; extra = ", " + stationFullText(s.station); }
         else if (!handsFree(0)) { st = ReadyAction.Status.HANDS_BUSY; extra = ", elin dolu"; }
         else st = ReadyAction.Status.NOW;
@@ -443,6 +542,18 @@ public final class GameEngine {
 
     private boolean passivePrep(PrepKind kind) { return !v06Balance && kind == PrepKind.FRIES && upgrades.stationCapacity(kind.station) > 0; }
 
+    /** v2.5: istasyon kapalıysa ("Ocak kapalı: doğalgaz kesik") oyuncuya bildirir. */
+    private boolean closedFor(Order o, Station st, boolean emit) {
+        if (!isStationClosed(st)) return false;
+        if (emit) for (GameListener l : snap()) l.onUtilityBlocked(o, st, BillType.DOGALGAZ);
+        return true;
+    }
+
+    /** "Ocak kapalı, doğalgaz kesik" (kilit nedeni). */
+    public static final String LOCK_CLOSED = "Ocak kapalı, doğalgaz kesik";
+    /** "Su kesik" (tepsi kilidi). */
+    public static final String LOCK_WATER = "Su kesik";
+
     /** "Ocak dolu (2/2)" — pasif istasyon doluluk metni (kilit nedeni ve duyuru). */
     public String stationFullText(Station st) {
         return st.displayName + " dolu (" + getStationUsed(st) + "/" + getStationCapacity(st) + ")";
@@ -473,6 +584,7 @@ public final class GameEngine {
 
     /** Seçenek kilit nedeni (kaynak yüzünden): istasyon dolu / el dolu; uygunsa null. */
     private String resourceReason(Station st, boolean passive) {
+        if (isStationClosed(st)) return LOCK_CLOSED;
         if (passive && !hasStationRoom(st)) return stationFullText(st);
         if (!handsFree(0)) return LOCK_HANDS;
         return null;
@@ -480,7 +592,7 @@ public final class GameEngine {
 
     /** Pasif işin koyma süresi (sn). */
     private float loadSeconds(int worker, float total) {
-        double d = PASSIVE_LOAD_SECONDS * save.tempo * (worker > 0 ? APPRENTICE_SLOWDOWN : 1f);
+        double d = PASSIVE_LOAD_SECONDS * save.tempo * apprSlow(worker);
         return (float) Math.min(total, Math.max(MIN_LOAD_SECONDS, d));
     }
 
@@ -553,7 +665,7 @@ public final class GameEngine {
 
     /** Bugünün menüsünde patatesli sipariş olabilir mi (patates açık ve en az bir ürün patates alıyor). */
     public boolean menuHasFries() {
-        if (day < Catalog.FRIES_OPEN_DAY) return false;
+        if (day < Catalog.FRIES_OPEN_DAY || isStationClosed(Station.IZGARA)) return false;
         for (Product p : menu) if (p.friesOk()) return true;
         return false;
     }
@@ -737,18 +849,62 @@ public final class GameEngine {
      */
     public boolean beginPrep() {
         if (state != State.READY) return false;
+        if (util.evicted()) { failEvicted(); return false; }
         state = State.PREP;
         for (GameListener l : snap()) l.onPrepPhaseStarted(day);
+        openEffects();
         return true;
+    }
+
+    /**
+     * v2.5 gün açılış etkileri (bir kez; hazırlık ya da gün başında): elektrik kesintisinde hazır ayran bozulur, kira
+     * ihtarnamesinde yıldız düşer, uyarılar ({@link Finance#notices}) {@code onFinanceNotices} ile bildirilir.
+     */
+    private void openEffects() {
+        if (openEffectsDone) return;
+        openEffectsDone = true;
+        workedApprenticeLevel = getApprenticeLevel();
+        double spoil = util.drinkSpoilFraction();
+        if (spoil > 0 && save.readyDrinks > 0) {
+            int n = (int) Math.ceil(save.readyDrinks * spoil);
+            save.readyDrinks -= n;
+            summary.spoiledDrinks = n;
+            for (GameListener l : snap()) l.onStockSpoiled(Catalog.ingredient(Catalog.AYRAN), n, BillType.ELEKTRIK);
+        }
+        if (util.rentStarPenalty() > 0) {
+            summary.rentStarPenalty = util.rentStarPenalty();
+            changeStarsAnyState(-util.rentStarPenalty());
+        }
+        if (!v06Balance) {
+            List<String> notes = Finance.notices(save, day);
+            if (!notes.isEmpty()) for (GameListener l : snap()) l.onFinanceNotices(notes);
+        }
+    }
+
+    /** Tahliye: kira 6+ gün gecikti, dükkân açılamaz (gün başarısız; para/stok korunur). */
+    private void failEvicted() {
+        summary.failReason = "tahliye";
+        state = State.RUNNING; // failDay RUNNING'den çağrılır
+        failDay();
+    }
+
+    /** Hazırlık aşamasında da yıldızı değiştirir (gün başarısızlığı yalnızca gün içinde denetlenir). */
+    private void changeStarsAnyState(double delta) {
+        double old = save.stars;
+        double now = Math.max(1.0, Math.min(5.0, old + delta));
+        save.stars = now;
+        if (Math.abs(now - old) > 1e-9) for (GameListener l : snap()) l.onStarsChanged(old, now);
     }
 
     /** "Dükkânı aç": hazırlık aşamasını (varsa) bitirip günü başlatır. false: gün zaten başlamış/bitmiş. */
     public boolean startDay() {
         if (state != State.READY && state != State.PREP) return false;
+        if (util.evicted()) { failEvicted(); return false; }
         boolean wasPrep = state == State.PREP;
         state = State.RUNNING;
         if (wasPrep) for (GameListener l : snap()) l.onPrepPhaseEnded(day);
         for (GameListener l : snap()) l.onDayStarted(day, cfg);
+        openEffects();
         return true;
     }
 
@@ -870,6 +1026,7 @@ public final class GameEngine {
         }
         OrderLine line = o.getLine(foundLine);
         Step step = line.step(foundStep);
+        if (closedFor(o, step.station, true)) return StartResult.UTILITY_OFF;
         StartResult res = checkResources(o, step.station, passiveJob(step), 0, true);
         if (res != null) return res;
         if (step.isTopping()) {
@@ -937,7 +1094,7 @@ public final class GameEngine {
         playerAction();
         double frac = ordered.isEmpty() ? 0.0 : covered / (double) ordered.size();
         double d = (step.baseSeconds + TOPPING_SECONDS_EACH * ordered.size()) * (1.0 - 0.5 * frac)
-                * upgrades.speedMult(step.station) * save.tempo;
+                * speed(step.station) * save.tempo;
         float dur = (float) Math.max(MIN_STEP_SECONDS, d);
         line.setChosen(ordered);
         line.setRunning(ti, true);
@@ -973,7 +1130,7 @@ public final class GameEngine {
     private float addSeconds(Ingredient ing, boolean fromTray) {
         double d = ing.category == Ingredient.Category.SALATA ? ADD_SALAD_SECONDS : ADD_SAUCE_SECONDS;
         if (fromTray) d *= 0.5;
-        d *= upgrades.speedMult(Station.SOS) * save.tempo;
+        d *= speed(Station.SOS) * save.tempo;
         return (float) Math.max(MIN_ADD_SECONDS, d);
     }
 
@@ -1177,7 +1334,7 @@ public final class GameEngine {
     }
 
     /** Gerçekçi akışta standart set kısayolu açık mı (çırak seviye 2+). */
-    public boolean standardSetUnlocked() { return upgrades.apprenticeLevel() >= STANDARD_SET_APPRENTICE_LEVEL; }
+    public boolean standardSetUnlocked() { return getApprenticeLevel() >= STANDARD_SET_APPRENTICE_LEVEL; }
 
     /** Otomatik işin istediği küme: Rahat = hedef (istekler dahil), Dengeli = günün varsayılanı. */
     private Set<String> autoWanted(OrderLine line) {
@@ -1428,7 +1585,7 @@ public final class GameEngine {
         String sizeText = "";
         if (s.isBreadStep() && sz != PortionSize.FULL) sizeText = ", " + sz.spoken();
         else if (s.isSized() && line.hasSize() && PortionSize.HALF.isOpen(day)) sizeText = ", " + sz.spoken();
-        String desc = who + s.name + sizeText + (out ? ", malzeme yok" : "");
+        String desc = who + s.name + sizeText + (out ? ", stokta yok" : "");
         return new StationOption("step", StationOption.Group.STEP, who + s.name, desc, ok, reason, null, out);
     }
 
@@ -1451,7 +1608,7 @@ public final class GameEngine {
             String reason = !open ? sz.unlockDay + ". günde açılır" : running ? "Dilimleme sürüyor"
                     : locked ? "Önce kalemin önceki adımları bitmeli" : LOCK_HANDS;
             boolean oos = !save.inventory.hasAll(effectiveNeeds(s, sz));
-            String desc = who + sz.displayName + (oos ? ", malzeme yok" : "");
+            String desc = who + sz.displayName + (oos ? ", stokta yok" : "");
             out.add(new StationOption("size:" + sz.id, StationOption.Group.SIZE, sz.displayName, desc, ok, reason, meat, oos));
         }
     }
@@ -1553,7 +1710,7 @@ public final class GameEngine {
         boolean oos = !save.inventory.hasAll(autoNeeds(line));
         String name = autoName(m);
         StringBuilder d = new StringBuilder(who).append(name);
-        if (oos) d.append(", malzeme yok");
+        if (oos) d.append(", stokta yok");
         String reason = locked ? lockedReason : running ? "Ekleme sürüyor" : LOCK_HANDS;
         return new StationOption("auto", StationOption.Group.STEP, who + name, d.toString(),
                 !locked && !running && slot, reason, null, oos);
@@ -1572,7 +1729,7 @@ public final class GameEngine {
                     int cap = upgrades.readyCapacity(PrepKind.DONER) * 2;
                     boolean full = getReadyMeatHalves(m.id) + 2 * pendingPrep(PrepKind.DONER, m.id) + 2 * n > cap;
                     boolean lack = !save.inventory.has(m.id, n);
-                    String reason = full ? "Hazır stok dolu" : lack ? "Malzeme yetmiyor: " + m.name : LOCK_HANDS;
+                    String reason = full ? "Hazır stok dolu" : lack ? "Malzeme yetmiyor: " + m.name.toLowerCase(new java.util.Locale("tr")) : LOCK_HANDS;
                     out.add(new StationOption("prep:doner:" + m.id + ":" + n, StationOption.Group.PREP, name, name,
                             slot && !full && !lack, reason, m.id, false));
                 }
@@ -1581,16 +1738,16 @@ public final class GameEngine {
             int cap = upgrades.readyCapacity(PrepKind.DRINK);
             boolean full = save.readyDrinks + pendingPrep(PrepKind.DRINK, null) + PrepKind.DRINK.batch > cap;
             boolean lack = !save.inventory.has(Catalog.AYRAN, PrepKind.DRINK.batch);
-            String reason = full ? "Hazır stok dolu" : lack ? "Malzeme yetmiyor: Ayran şişesi" : LOCK_HANDS;
+            String reason = full ? "Hazır stok dolu" : lack ? "Malzeme yetmiyor: ayran şişesi" : LOCK_HANDS;
             String name = PrepKind.DRINK.batch + " bardak ayran doldur";
             out.add(new StationOption("prep:drink", StationOption.Group.PREP, name, name,
                     slot && !full && !lack, reason, Catalog.AYRAN, false));
-        } else if (st == Station.IZGARA && menuHasFries()) {
+        } else if (st == Station.IZGARA && menuHasFries() && !isStationClosed(st)) {
             int cap = upgrades.readyCapacity(PrepKind.FRIES);
             boolean full = readyFries + pendingPrep(PrepKind.FRIES, null) + PrepKind.FRIES.batch > cap;
             boolean lack = !save.inventory.has(Catalog.PATATES, PrepKind.FRIES.batch);
             String res = resourceReason(st, passivePrep(PrepKind.FRIES));
-            String reason = full ? "Hazır stok dolu" : lack ? "Malzeme yetmiyor: Patates" : res;
+            String reason = full ? "Hazır stok dolu" : lack ? "Malzeme yetmiyor: patates" : res;
             String name = PrepKind.FRIES.batch + " porsiyon patates kızart";
             out.add(new StationOption("prep:fries", StationOption.Group.PREP, name, name,
                     res == null && !full && !lack, reason, Catalog.PATATES, false));
@@ -1598,14 +1755,15 @@ public final class GameEngine {
             Set<String> pick = trayPick(false);
             boolean enough = pick.size() >= 2;
             String name = "Salata ve sos tepsisi hazırla";
+            boolean water = util.trayBlocked();
             out.add(new StationOption("prep:tray", StationOption.Group.PREP, name, name,
-                    slot && enough, enough ? LOCK_HANDS : "Yeterli malzeme yok", null, false));
+                    slot && enough && !water, water ? LOCK_WATER : enough ? LOCK_HANDS : "Yeterli malzeme yok", null, false));
         }
     }
 
     private float prepSeconds(PrepKind kind, int amount) {
         double d = kind.baseSeconds * (kind == PrepKind.DONER && amount < kind.batch ? PREP_SMALL_BATCH_FACTOR : 1.0)
-                * upgrades.speedMult(kind.station) * save.tempo;
+                * speed(kind.station) * save.tempo;
         return (float) Math.max(MIN_STEP_SECONDS, d);
     }
 
@@ -1706,6 +1864,9 @@ public final class GameEngine {
     private static StartResult fromPrep(PrepResult r) {
         switch (r) {
             case STARTED: return StartResult.STARTED;
+            case UTILITY_OFF: return StartResult.UTILITY_OFF;
+            case HANDS_BUSY: return StartResult.HANDS_BUSY;
+            case STATION_FULL: return StartResult.STATION_FULL;
             case NO_SLOT: return StartResult.NO_SLOT;
             case OUT_OF_STOCK: return StartResult.OUT_OF_STOCK;
             case FULL: return StartResult.FULL;
@@ -1723,6 +1884,12 @@ public final class GameEngine {
     public PrepResult startPrep(PrepKind kind, Collection<String> ids) {
         if (state == State.FINISHED || state == State.FAILED) return PrepResult.NOT_ALLOWED;
         if (state == State.READY) beginPrep();
+        if (state == State.FAILED) return PrepResult.NOT_ALLOWED;
+        if (kind == PrepKind.TRAY && util.trayBlocked()) {
+            for (GameListener l : snap()) l.onUtilityBlocked(null, Station.SOS, BillType.SU);
+            return reject(kind, PrepResult.UTILITY_OFF, null);
+        }
+        if (kind == PrepKind.FRIES && closedFor(null, Station.IZGARA, true)) return reject(kind, PrepResult.UTILITY_OFF, null);
         PrepResult res = prepResources(kind);
         if (res != null) return res;
         PrepResult r = launchPrep(kind, ids, 0, kind.batch);
@@ -1834,7 +2001,7 @@ public final class GameEngine {
         save.inventory.consumeAll(need);
         if (worker == 0) playerAction();
         boolean passive = passivePrep(kind);
-        double d = prepSeconds(kind, amount) * (worker > 0 && !passive ? APPRENTICE_SLOWDOWN : 1f);
+        double d = prepSeconds(kind, amount) * (!passive ? apprSlow(worker) : 1f);
         float dur = (float) Math.max(MIN_STEP_SECONDS, d);
         Step syn = new Step(kind.displayName, kind.station, dur, Collections.<String, Integer>emptyMap(), Step.Kind.NORMAL, false, passive);
         ActiveStep a = new ActiveStep(null, -1, -1, syn, dur, worker == 0 ? freeSlot() : -1, worker, kind, ids, false);
@@ -1872,10 +2039,40 @@ public final class GameEngine {
         return true;
     }
 
-    /** Hazır (paketlenmiş) siparişi teslim eder. Hazır değilse false. */
+    /**
+     * Hazır (paketlenmiş) siparişi teslim eder. Hazır değilse false. v2.5: çırak teslim ediyorsa false +
+     * {@code onAlreadyRunning}.
+     */
     public boolean deliver(int orderId) {
         Order o = getOrder(orderId);
         if (o == null || !o.ready || state == State.FINISHED || state == State.FAILED) return false;
+        if (o.delivering) {
+            ActiveStep job = null;
+            for (ActiveStep a : active) if (a.order == o && a.deliver) job = a;
+            if (job != null) for (GameListener l : snap()) l.onAlreadyRunning(o, job);
+            return false;
+        }
+        playerAction();
+        deliverImpl(o, 0);
+        return true;
+    }
+
+    /** v2.5: çırak teslimi başlar (aktif iş, 1 sn × tempo × yavaşlık). */
+    private void launchDeliver(Order o, int worker) {
+        float dur = (float) Math.max(MIN_READY_SECONDS, DELIVER_SECONDS * speed(Station.PAKET) * save.tempo * apprSlow(worker));
+        o.delivering = true;
+        ActiveStep a = new ActiveStep(o, -1, -1, DELIVER_STEP, dur, -1, worker, null, null, false);
+        a.deliver = true;
+        markJob(a, false);
+        active.add(a);
+        ApprenticeAction aa = new ApprenticeAction(worker, true, o, -1, DELIVER_STEP, null, false, dur, true);
+        for (GameListener l : snap()) l.onApprenticeAction(aa);
+    }
+
+    /** Teslim (oyuncu ya da çırak): ödeme, bahşiş, yıldız, fiyat memnuniyeti (v2.5). */
+    private void deliverImpl(Order o, int worker) {
+        o.delivering = false;
+        o.deliveredBy = worker;
         ToppingCheck check = checkToppings(o);
         int mistakes = check.mistakes();
         boolean timed = isTimed();
@@ -1884,12 +2081,17 @@ public final class GameEngine {
         boolean fast = timed && frac >= 0.5f;
         boolean happy = !timed || frac >= 0.2f;
         int price = o.price();
+        // v2.5 fiyat memnuniyeti (referans fiyatta etkisiz)
+        Pricing.Feel feel = Pricing.feel(o.priceRatio(), Pricing.sensitivity(o.customer.type, save.stars));
+        o.priceReaction = feel.reaction;
+        if (feel.reaction > 0) summary.priceComplaints++;
+        else if (feel.reaction < 0) summary.priceCompliments++;
         double tipRate = timed ? (fast ? 0.20 : (happy ? 0.08 : 0.0)) : UNTIMED_TIP_RATE;
         if (mistakes > 0) tipRate *= 0.5;
         double flowTip = v06Balance ? 1.0 : getFlowMode().tipMult;
         int tip = (int) Math.round(price * tipRate * o.customer.type.tipMult * upgrades.tipMult() * flowTip
-                * (timed ? 1.0 : UNTIMED_TIP_MULT));
-        playerAction();
+                * (timed ? 1.0 : UNTIMED_TIP_MULT) * feel.tipMult);
+        if (worker > 0) summary.apprenticeDeliveries++;
         save.money += price + tip;
         summary.revenue += price;
         summary.tips += tip;
@@ -1909,10 +2111,11 @@ public final class GameEngine {
         if (o.customer.type.id.equals("influencer") && fast) gain += 0.05;
         gain *= upgrades.starGainMult();
         if (check.perfect()) gain += PERFECT_BONUS * upgrades.starGainMult();
+        gain *= feel.starMult * util.starGainMult();
         changeStars(gain);
         if (penalty > 0) changeStars(-penalty);
+        if (feel.penalty > 0 && state == State.RUNNING) changeStars(-feel.penalty);
         checkEnd();
-        return true;
     }
 
     private ToppingCheck checkToppings(Order o) {
@@ -1993,7 +2196,7 @@ public final class GameEngine {
                 if (orders.size() < maxQueue()) {
                     spawnCustomer();
                     double fm = v06Balance ? 1.0 : getFlowMode().arrivalMult;
-                    double mult = timed ? DayConfig.starMultiplier(save.stars) * upgrades.arrivalMult() * fm
+                    double mult = timed ? DayConfig.starMultiplier(save.stars) * upgrades.arrivalMult() * fm * priceArrival * util.arrivalMult()
                             : fm * UNTIMED_ARRIVAL_FACTOR;
                     spawnTimer = (float) (cfg.arrivalInterval * (0.75 + 0.5 * rng.nextDouble()) / mult);
                 } else {
@@ -2056,11 +2259,11 @@ public final class GameEngine {
         else if (readyDrink) { d = READY_DRINK_SECONDS; min = MIN_READY_SECONDS; }
         else if (readyFry) { d = READY_FRIES_SECONDS; min = MIN_READY_SECONDS; }
         else {
-            d = step.baseSeconds * upgrades.speedMult(step.station);
+            d = step.baseSeconds * speed(step.station);
             if (step.isSized() || step.isBreadStep()) d *= sz.timeMult;
         }
         d *= save.tempo;
-        if (worker > 0) d *= APPRENTICE_SLOWDOWN;
+        d *= apprSlow(worker);
         return (float) Math.max(min, d);
     }
 
@@ -2112,7 +2315,7 @@ public final class GameEngine {
 
     private void launchPack(Order o, int worker) {
         Step step = o.getPackStep();
-        double d = step.baseSeconds * upgrades.speedMult(step.station) * save.tempo * (worker > 0 ? APPRENTICE_SLOWDOWN : 1f);
+        double d = step.baseSeconds * speed(step.station) * save.tempo * apprSlow(worker);
         float dur = (float) Math.max(MIN_STEP_SECONDS, d);
         o.packing = true;
         blocked.remove(o.id);
@@ -2133,6 +2336,15 @@ public final class GameEngine {
         active.remove(a);
         if (a.prep != null) { finishPrep(a); return; }
         Order o = a.order;
+        if (a.deliver) {
+            if (orders.contains(o)) {
+                summary.apprenticeTasks++;
+                ApprenticeAction aa = new ApprenticeAction(a.worker, false, o, -1, a.step, null, false, a.total, true);
+                deliverImpl(o, a.worker);
+                for (GameListener l : snap()) l.onApprenticeAction(aa);
+            }
+            return;
+        }
         boolean player = a.worker == 0;
         if (a.pack) {
             o.packing = false;
@@ -2301,9 +2513,10 @@ public final class GameEngine {
      * (aynı aday listesi), döngü biter.
      */
     private void runApprentices() {
-        int lvl = upgrades.apprenticeLevel();
-        if (lvl <= 0) return;
-        for (int w = 1; w <= lvl; w++) {
+        int level = getApprenticeLevel();
+        if (level <= 0) return;
+        int lvl = Upgrades.apprenticeSkill(level), workers = Upgrades.apprenticeWorkers(level);
+        for (int w = 1; w <= workers; w++) {
             if (workerBusy(w)) continue;
             if (!assignApprentice(w, lvl)) break;
         }
@@ -2335,6 +2548,17 @@ public final class GameEngine {
      */
     private boolean assignApprentice(int w, int lvl) {
         if (state == State.RUNNING && !orders.isEmpty()) {
+            // v2.5: önce teslime hazır siparişler (müşteri bekliyor), en acilden; seçili sipariş v2.0 kuralıyla
+            if (save.apprenticeDelivery && lvl >= 1) {
+                List<Order> ready = new ArrayList<>();
+                for (Order o : orders) if (o.ready && !o.delivering) ready.add(o);
+                Collections.sort(ready, URGENCY);
+                for (Order o : ready) {
+                    if (o.id == selectedId && !apprenticeMayTouchSelected()) continue;
+                    launchDeliver(o, w);
+                    return true;
+                }
+            }
             List<Order> cand = new ArrayList<>();
             for (Order o : orders) if (o.id != selectedId && !o.ready) cand.add(o);
             Collections.sort(cand, URGENCY);
@@ -2365,6 +2589,7 @@ public final class GameEngine {
                     boolean passive = passiveJob(s);
                     if ((pass == 0) != passive) continue;
                     if (!apprenticeCanDo(s, lvl)) continue;
+                    if (isStationClosed(s.station)) continue;
                     if (checkResources(o, s.station, passive, w, false) != null) continue;
                     if (!save.inventory.hasAll(effectiveNeeds(s, needSize(line, s, null)))) continue;
                     if (!dryRun) launchLineStep(o, line.index, si, w, null);
@@ -2412,7 +2637,7 @@ public final class GameEngine {
         double total = 0;
         double[] w = new double[types.size()];
         for (int i = 0; i < w.length; i++) {
-            w[i] = types.get(i).weight * (types.get(i).id.equals("turist") ? upgrades.touristMult() : 1.0);
+            w[i] = types.get(i).weight * (types.get(i).id.equals("turist") ? upgrades.touristMult() : 1.0) * demandOf(types.get(i));
             total += w[i];
         }
         double r = rng.nextDouble() * total;
@@ -2436,6 +2661,7 @@ public final class GameEngine {
      * Karar ayrı rastgele kaynaktan gelir: 3. günden önce hiç rastgele sayı tüketilmez.
      */
     private Product maybeFries(Product p) {
+        if (isStationClosed(Station.IZGARA)) return p; // v2.5: Ocak kapalı: patates yok
         double chance = DayConfig.friesChance(day);
         if (chance <= 0 || !p.friesOk()) return p;
         return friesRng.nextDouble() < chance ? p.friesVariant() : p;
@@ -2460,8 +2686,16 @@ public final class GameEngine {
         double hands = v06Balance ? 0.0 : Order.interactionWork(items, sizes, reqs, day, getFlowMode()) * Order.INTERACTION_PATIENCE;
         double pat = (type.patienceSeconds * cfg.patienceFactor + Order.estimateWork(items, sizes, v06Balance ? 1f : Order.PASSIVE_WORK_WEIGHT) * cfg.workPatience + hands)
                 * upgrades.patienceMult() * save.tempo * (v06Balance ? 1.0 : getFlowMode().patienceMult);
+        List<Double> ratios = null;
+        if (!v06Balance && !Pricing.allDefault(save)) {
+            ratios = new ArrayList<>();
+            double num = 0, den = 0;
+            for (Product p : items) { double r = Pricing.ratio(save, p.id); ratios.add(r); num += p.price * r; den += p.price; }
+            // v2.5: ucuz fiyatta müşteri biraz daha sabırlı
+            pat *= Pricing.patienceMult(den <= 0 ? 1.0 : num / den, Pricing.sensitivity(type, save.stars));
+        }
         Customer c = new Customer(name, type, (float) pat);
-        Order o = new Order(nextOrderId++, c, items, reqs, day, sizes);
+        Order o = new Order(nextOrderId++, c, items, reqs, day, sizes, ratios);
         int pos = 1;
         while (positionUsed(pos)) pos++;
         o.position = pos;
@@ -2543,8 +2777,10 @@ public final class GameEngine {
     private Product pickProduct(List<Product> menu, CustomerType type) {
         double total = 0;
         double[] w = new double[menu.size()];
+        double eff = typeDemand.isEmpty() ? 0 : Pricing.sensitivity(type, save.stars);
         for (int i = 0; i < w.length; i++) {
             w[i] = type.prefers(menu.get(i).id) ? 3.0 : 1.0;
+            if (eff > 0) w[i] *= Pricing.choiceWeight(Pricing.ratio(save, menu.get(i).id), eff);
             total += w[i];
         }
         double r = rng.nextDouble() * total;
@@ -2596,10 +2832,21 @@ public final class GameEngine {
         state = State.FINISHED;
         accountWaste();
         active.clear();
-        int rent = Math.max(0, Math.min(cfg.rent, save.money));
-        save.money -= rent;
-        summary.rentDue = cfg.rent;
-        summary.rent = rent; // gerçekten düşülen tutar
+        // v2.5: günlük kira yok (kira haftalık faturadır); elektrik tam kesikse et stoğunun %25'i bozulur
+        summary.rent = 0;
+        summary.rentDue = 0;
+        if (util.meatSpoils()) {
+            for (Ingredient i : Catalog.ingredients()) {
+                if (i.category != Ingredient.Category.ET) continue;
+                int have = save.inventory.get(i.id);
+                if (have <= 0) continue;
+                int n = (int) Math.ceil(have * 0.25);
+                save.inventory.add(i.id, -n);
+                summary.spoiledStock += n;
+                summary.spoiledCost += n * i.price;
+            }
+        }
+        if (!v06Balance) Finance.endOfDay(save, day, summary, summary.revenue + summary.tips, workedApprenticeLevel);
         summary.endStars = save.stars;
         summary.moneyAfter = save.money;
         summary.failed = false;
@@ -2639,6 +2886,7 @@ public final class GameEngine {
         save.money = snapshot.money;
         save.inventory = snapshot.inventory.copy();
         save.readyDrinks = snapshot.readyDrinks;
+        save.restoreFinanceFrom(snapshot); // v2.5: gün içi fatura ödemesi de geri alınır
         save.stars = Math.max(snapshot.stars, 1.5);
         summary.moneyAfter = save.money;
         for (GameListener l : snap()) l.onDayFailed(summary);

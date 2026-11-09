@@ -45,7 +45,7 @@ public class NarratorTest {
         e.startStep(o.id, Station.ICECEK.id);
         assertTrue(said.toString(), anySaid(said, "Yanlış istasyon. Bu sipariş için şimdi Ekmek ısıtıcı gerekli."));
         e.startStep(o.id, Station.EKMEK.id);
-        assertTrue(said.toString(), anySaid(said, "Malzeme bitti: Döner ekmeği."));
+        assertTrue(said.toString(), anySaid(said, "Stokta yok: döner ekmeği.") /* v2.5 terim birliği: "stokta yok", malzeme adı küçük harf */);
         assertTrue(said.toString(), anySaid(said, "27 lira"));
         e.emergencyBuy("ekmek");
         e.startStep(o.id, Station.EKMEK.id);
@@ -76,7 +76,7 @@ public class NarratorTest {
         StringBuilder all = new StringBuilder();
         for (String t : said) all.append(t).append('\n');
         String text = all.toString();
-        assertTrue(text, text.contains("Sipariş hazır:"));
+        assertTrue(text, text.contains("teslime hazır:")); // v2.5 terim birliği: sipariş "teslime hazır", kalem "hazır"
         assertTrue(text, text.contains("Teslim edildi. 240 lira kazandın"));
         assertTrue(text, text.contains("Gün 1 bitti."));
         assertTrue(text, text.contains("Yarın yeni ürün: Ayran."));

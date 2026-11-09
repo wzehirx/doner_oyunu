@@ -112,12 +112,18 @@ public class FlowModeTest {
 
     @Test public void oldV06AndV05SavesLoadWithDefaultFlowAndBadValuesAreIgnored() {
         String v06 = "v=3\nday=9\nbestDay=9\nmoney=7000\nstars=3.5\nstock.domates=12\ntempo=1.0\nspeech=1\nreadyDrinks=2\n";
-        SaveData s = SaveData.parse(v06);
+        // v2.5: dönemsiz kayıt = ilerleme sıfır; akış bir ayardır (yoksa varsayılan)
+        SaveData old = SaveData.parse(v06);
+        assertEquals(1, old.day);
+        assertEquals(FlowMode.DENGELI, old.flowMode);
+        assertEquals(FlowMode.RAHAT, SaveData.parse("v=4\nday=12\nflow=rahat\nflowChosen=1\n").flowMode);
+        assertTrue("akış seçimi de korunur", SaveData.parse("v=4\nday=12\nflow=rahat\nflowChosen=1\n").flowChosen);
+        SaveData s = SaveData.parse(SaveCompatTest.current(v06));
         assertEquals(9, s.day);
         assertEquals(12, s.inventory.get("domates"));
         assertEquals("eski kayıtta akış yok: varsayılan", FlowMode.DENGELI, s.flowMode);
         assertFalse("eski kayıtta akış henüz seçilmedi", s.flowChosen);
-        assertTrue(s.serialize().startsWith("v=4\n"));
+        assertTrue(s.serialize().startsWith("v=5\n"));
         assertTrue(s.serialize().contains("flow=dengeli"));
         SaveData bad = SaveData.parse("v=4\nday=3\nflow=uçan\nflowChosen=x\n");
         assertEquals(FlowMode.DENGELI, bad.flowMode);
@@ -399,7 +405,7 @@ public class FlowModeTest {
             StationOption auto = find(e.getStationOptions(o.id, -1, Station.SOS.id), "auto");
             assertTrue(m + " seçenek etkin kalır", auto.enabled);
             assertTrue(m + " ama stok yok işaretli", auto.outOfStock);
-            assertTrue(auto.label(), auto.label().contains("malzeme yok"));
+            assertTrue(auto.label(), auto.label().contains("stokta yok") /* v2.5 terim birliği */);
             assertEquals(StartResult.OUT_OF_STOCK, e.applyStationOption(o.id, -1, Station.SOS.id, "auto"));
             assertEquals("hiçbir şey tüketilmez", dom, e.getSave().inventory.get("domates"));
             assertTrue(r.log.contains("oos:marul"));

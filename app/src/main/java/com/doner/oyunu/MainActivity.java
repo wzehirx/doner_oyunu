@@ -74,22 +74,9 @@ public class MainActivity extends Activity {
         applySettings();
     }
 
-    /** Yeni oyun: ayarlar korunur, ilerleme sıfırlanır. */
+    /** Yeni oyun: ayarlar korunur, ilerleme sıfırlanır (v2.5: motorun dönem sıfırlamasıyla aynı kural). */
     public void newGame() {
-        SaveData old = save;
-        SaveData s = SaveData.newGame();
-        s.tempo = old.tempo;
-        s.speechOn = old.speechOn;
-        s.speechRate = old.speechRate;
-        s.vibration = old.vibration;
-        s.musicVolume = old.musicVolume;
-        s.sfxVolume = old.sfxVolume;
-        s.ambienceVolume = old.ambienceVolume;
-        s.tutorialDone = old.tutorialDone;
-        s.apprenticeAnnounce = old.apprenticeAnnounce;
-        s.flowMode = old.flowMode; // oyun akışı bir ayardır: yeni oyunda korunur
-        s.flowChosen = old.flowChosen;
-        s.timePressure = old.timePressure; // süre baskısı da bir ayardır: yeni oyunda korunur
+        SaveData s = SaveData.newGameKeepingSettings(save);
         save = s;
         prefs.edit().putBoolean(KEY_STARTED, true).apply();
         saveNow();

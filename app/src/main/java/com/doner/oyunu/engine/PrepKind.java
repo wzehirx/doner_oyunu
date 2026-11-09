@@ -5,7 +5,7 @@ public enum PrepKind {
     /** Dilimlenmiş döner: 4 porsiyon, ürünün döner malzemesi x4 tüketir; "Döneri dilimle" adımı ~0,8 sn olur. */
     DONER("Döner dilimleme", Station.DONER, 4, 6f),
     /** Doldurulmuş içecek (ayran): 4 bardak; gün sonunda atılmaz, ertesi güne kalır. */
-    DRINK("İçecek doldurma", Station.ICECEK, 4, 4f),
+    DRINK("Ayran doldurma", Station.ICECEK, 4, 4f),
     /** Hazır salata/sos tepsisi: seçilen malzemelerden 6'şar kullanım; topping seçimini hızlandırır. */
     TRAY("Salata ve sos tepsisi", Station.SOS, 6, 5f),
     /** Hazır kızarmış patates (v0.9): 4 porsiyon, Ocak istasyonu; "Patates kızart" adımı ~0,8 sn olur. Gün sonunda atılır (israf). */

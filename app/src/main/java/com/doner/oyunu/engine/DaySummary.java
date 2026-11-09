@@ -9,10 +9,13 @@ public final class DaySummary {
     public int revenue;
     public int tips;
     public int emergencySpend;
-    /** Gerçekten kasadan düşülen kira (para yetmezse rentDue'dan az olabilir). */
-    public int rent;
-    /** O gün için hesaplanan tam kira. */
-    public int rentDue;
+    /**
+     * ESKİ (v2.0 günlük kira). v2.5'te kira haftalık FATURADIR ({@link #newBills}); motor gün sonunda kira düşmez, bu alan
+     * her zaman 0'dır (UI/derleme uyumu için durur).
+     */
+    @Deprecated public int rent;
+    /** ESKİ: her zaman 0 (bkz. {@link #rent}). */
+    @Deprecated public int rentDue;
     public int delivered;
     public int lost;
     public int wrongTaps;
@@ -36,15 +39,47 @@ public final class DaySummary {
     /** Sonraki gün açılan yeni sos/salata malzemeleri (adlar). */
     public String newIngredientsNext = "";
 
+    // ---- v2.5 gün sonu hesabı (Finance.endOfDay)
+    /** Bugünkü çırak maaşı (çırak gelmediyse 0) ve kasadan ödenen (birikmiş borç dahil). */
+    public int wagesDue, wagesPaid;
+    /** Gün sonundaki maaş borcu (varsa çırak yarın gelmez). */
+    public int wageDebt;
+    /** Bugün vadesi gelen taksit, ödenen (gecikmiş + bedel dahil) ve kaçan kredi sayısı. */
+    public int installmentsDue, installmentsPaid, installmentsMissed;
+    /** Vergi haczi ile kasadan alınan. */
+    public int seized;
+    /** Bugün kesilen yeni faturalar. */
+    public final java.util.List<Bill> newBills = new java.util.ArrayList<>();
+    /** Gün sonundaki açık fatura borcu (yarın açılırsa, gecikme bedeli dahil) ve gecikmiş fatura sayısı. */
+    public int billsDue, billsLate;
+    /** Toplam kredi borcu ve kredi notu (gün sonunda). */
+    public int loanDebt, creditScore;
+    /** Gün başında bozulan hazır ayran (bardak) ve gün sonunda bozulan et stoğu (birim) ile değeri (elektrik kesintisi). */
+    public int spoiledDrinks, spoiledStock, spoiledCost;
+    /** Kira ihtarnamesinden düşen yıldız (gün başında). */
+    public double rentStarPenalty;
+    /** Gün başarısızlığının nedeni: null (yıldız) ya da "tahliye" (kira 6+ gün gecikti, dükkân açılamadı). */
+    public String failReason;
+    /** Fiyatı pahalı / uygun bulan müşteri sayısı (teslimde). */
+    public int priceComplaints, priceCompliments;
+    /** Çırağın teslim ettiği sipariş sayısı. */
+    public int apprenticeDeliveries;
+
+    /** Gün sonunda kasadan otomatik çıkan giderler: maaş + taksit + haciz (+ eski kira, 0). */
+    public int expenses() { return rent + wagesPaid + installmentsPaid + seized; }
+
     /** Para yetmediği için ödenemeyen kira. */
     public int rentUnpaid() { return Math.max(0, rentDue - rent); }
 
-    public int profit() { return revenue + tips - emergencySpend - rent; }
+    /** Günün net kârı: satış + bahşiş − acil alım − gün sonu giderleri (maaş, taksit, haciz). Faturalar ödendiği gün kasadan düşer. */
+    public int profit() { return revenue + tips - emergencySpend - expenses(); }
 
     @Override
     public String toString() {
         return "Gün " + day + (failed ? " BAŞARISIZ" : "") + " gelir=" + revenue + " bahşiş=" + tips
-                + " acil=" + emergencySpend + " kira=" + rent + (rentUnpaid() > 0 ? "(eksik " + rentUnpaid() + ")" : "") + " teslim=" + delivered + " kayıp=" + lost
+                + " acil=" + emergencySpend + " maaş=" + wagesPaid + (wageDebt > 0 ? "(borç " + wageDebt + ")" : "") + " taksit=" + installmentsPaid
+                + (seized > 0 ? " haciz=" + seized : "") + " fatura=" + billsDue + (billsLate > 0 ? "(geciken " + billsLate + ")" : "")
+                + (failReason != null ? " neden=" + failReason : "") + " teslim=" + delivered + " kayıp=" + lost
                 + (wastedPortions > 0 ? " israf=" + wastedPortions : "") + " yıldız=" + startStars + "->" + endStars + " para=" + moneyAfter;
     }
 }

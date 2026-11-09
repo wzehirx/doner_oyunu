@@ -61,8 +61,11 @@ public class EngineTest {
         assertEquals(2, save.day);
         DaySummary s = r.summary;
         assertTrue(s.revenue > 0 && s.profit() > 0);
-        assertEquals(300, s.rent);
-        assertEquals(SaveData.START_MONEY + s.revenue + s.tips - s.rent - s.emergencySpend, save.money);
+        // v2.5: günlük kira yok (kira 7. gün sonu haftalık faturadır); 1. gün çıraksız: gider 0
+        assertEquals(0, s.rent);
+        assertEquals(0, s.expenses());
+        assertTrue("1. günde fatura kesilmez", s.newBills.isEmpty());
+        assertEquals(SaveData.START_MONEY + s.revenue + s.tips - s.expenses() - s.emergencySpend, save.money);
         assertTrue(save.stars > 3.0);
         assertTrue(e.getOrders().isEmpty());
         assertEquals(0, r.wrong);

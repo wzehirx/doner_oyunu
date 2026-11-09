@@ -410,7 +410,7 @@ public class ToppingTest {
         e.startStep(o.id, Station.SOS.id);
         assertTrue(said.toString(), said.get(0).startsWith("Malzeme seçimi: Ekmek arası döner."));
         e.confirmToppings(o.id, 0, set("domates", "sogan"));
-        assertTrue(said.toString(), said.get(1).contains("Soğan stokta yok, seçilemez."));
+        assertTrue(said.toString(), said.get(1).contains("Soğan stokta yok. Acil al:") /* v2.5: eski panel cümlesi sadeleşti, "Acil al" düğme adıyla aynı */);
         e.confirmToppings(o.id, 0, set("domates", "marul", "mayonez"));
         Flow.waitDone(e, o);
         Flow.makeReady(e, o);

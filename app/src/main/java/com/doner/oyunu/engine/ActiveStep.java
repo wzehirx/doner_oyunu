@@ -14,7 +14,7 @@ public final class ActiveStep {
     public final float total;
     /** Oyuncu işinin sıra numarası (0..; eşzamanlı oyuncu işleri arasında; yalnızca ses/görsel anahtarı); çırak işinde -1. */
     public final int slot;
-    /** 0 = oyuncu, 1..3 = çırak numarası. */
+    /** 0 = oyuncu, 1..4 = çırak numarası. */
     public final int worker;
     /** Kalem indeksi; paketleme ve hazırlıkta -1. */
     public final int itemIndex;
@@ -36,6 +36,8 @@ public final class ActiveStep {
     FlowMode autoMode;
     /** Dilimleme/ısıtma adımında kullanılan boy (boy gerektirmeyen işte null). */
     PortionSize size;
+    /** v2.5: çırağın teslim işi. */
+    boolean deliver;
     /** v2.0: pasif iş (istasyon kendi pişirir). */
     boolean passive;
     /** v2.0: işi yapanın ellerinin bu işte kalan süresi (aktif işte = remaining; pasifte koyma süresi). */
@@ -73,6 +75,8 @@ public final class ActiveStep {
     public boolean isApprentice() { return worker > 0; }
     public boolean isPrep() { return prep != null; }
     public boolean isPack() { return pack; }
+    /** v2.5: çırağın teslim işi mi ("Teslim et"). */
+    public boolean isDeliver() { return deliver; }
     /** Tek tek malzeme ekleme işi mi (kısa süreli, topping adımını tamamlamaz). */
     public boolean isToppingAdd() { return addId != null; }
     /** Otomatik malzeme işi mi (v0.7 Rahat/Dengeli "Malzemeleri ekle"). */

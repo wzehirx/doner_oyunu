@@ -74,6 +74,20 @@ public final class TestBot {
 
     /** Günü bitene (veya başarısız olana) kadar oynar. Güvenlik: süreli 1000 sn, süresiz 6000 sn sanal süre. */
     public void playDay(GameEngine e) {
+        // v2.5: teslim sayısı ve v0.4 eşdeğeri, kimin teslim ettiğinden bağımsız sayılır (çırak da teslim eder)
+        com.doner.oyunu.engine.GameListenerAdapter counter = new com.doner.oyunu.engine.GameListenerAdapter() {
+            @Override public void onOrderDelivered(Order o, int money, int tip, boolean happy) {
+                int v04 = 2; // v0.4 eşdeğeri: seç + teslim + kalem başına (her adım bir dokunuş + kalem paketi)
+                for (OrderLine l : o.getLines()) v04 += l.stepCount() + 1;
+                delivered++;
+                v04Taps += v04;
+            }
+        };
+        e.addListener(counter);
+        try { playDayImpl(e); } finally { e.removeListener(counter); }
+    }
+
+    private void playDayImpl(GameEngine e) {
         float guard = 0;
         if (prep && e.getState() == GameEngine.State.READY) {
             e.beginPrep();
@@ -135,10 +149,8 @@ public final class TestBot {
             }
         }
         for (Order o : list) {
-            if (o.isReady()) {
-                int v04 = 2; // v0.4 eşdeğeri: seç + teslim + kalem başına (her adım bir dokunuş + kalem paketi)
-                for (OrderLine l : o.getLines()) v04 += l.stepCount() + 1;
-                e.deliver(o.id); taps++; delivered++; v04Taps += v04; panelKey = null; return true;
+            if (o.isReady() && !o.isDelivering()) { // v2.5: çırak teslim ediyorsa bekle
+                if (e.deliver(o.id)) { taps++; panelKey = null; return true; }
             }
         }
         if (e.getFreeSlots() > 0) {

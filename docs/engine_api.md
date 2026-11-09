@@ -1,6 +1,234 @@
-# Engine API v2.0 (paket `com.doner.oyunu.engine`, saf Java, android.* yok, deterministik)
+# Engine API v2.5 (paket `com.doner.oyunu.engine`, saf Java, android.* yok, deterministik)
 
-Bu belge UI geliştirmesi için TEK kaynaktır (UI ajanı yalnızca bunu ve `docs/design_v20.md`'yi okur). Şartname: **`docs/design_v20.md` (v2.0: kaynak modeli — eller + makineler, güvenilir çırak, sıradaki sipariş)**, `docs/design_v09.md` (patates, Ocak, kısa etiketler), `docs/design_v08.md` (süre baskısı), `docs/design_v07.md` (Rahat/Dengeli/Gerçekçi), `docs/design_v06.md` (eylem menüleri, tek tek malzeme, boy), `docs/design_v05.md` (akış), `docs/spec.md` (genel). §A v2.0'ı eksiksiz anlatır; sonraki bölümler önceki sürümlerden geçerli kalanlardır (§A ile çakışırsa §A kazanır).
+Bu belge UI geliştirmesi için TEK kaynaktır (UI ajanı yalnızca bunu ve `docs/design_v25.md`'yi okur). Şartname: **`docs/design_v25.md` (v2.5: 60 gün, fiyat ve talep, maaş ve faturalar, banka, çırak teslimi, 5 seviyeli yükseltmeler, kayıt dönemi)**, `docs/terminoloji.md` (metin terimleri), `docs/design_v20.md` (eller + makineler, çırak, sıradaki sipariş), `docs/design_v09.md` … `docs/design_v05.md`, `docs/spec.md`. **§B v2.5'i eksiksiz anlatır**; §A ve sonrası önceki sürümlerden geçerli kalanlardır (çakışırsa §B kazanır).
+
+## B. v2.0 -> v2.5
+
+### B.0 Özet
+| Konu | v2.0 | v2.5 |
+|---|---|---|
+| Kampanya | 40 gün (+döngü) | **60 gün** (`DayConfig.CAMPAIGN_DAYS`), sonrası sonsuz dalga; 24 ürün, 39 malzeme, 15 müşteri tipi, 16 yükseltme (§B.7, §B.8) |
+| Satış fiyatı | sabit (katalog) | oyuncu belirler: **%50–%150, %5 adım** (`Pricing`); talep, yıldız, bahşiş, sabır fiyata bağlı (§B.2) |
+| Gün sonu | günlük kira kasadan otomatik | **çırak maaşı + kredi taksiti + (vergi haczi)** otomatik; **faturalar** (elektrik, doğalgaz, su, kira, vergi) kesilir, oyuncu öder/erteler/krediyle öder (§B.3) |
+| Ödenmeyen fatura | – | türüne özel zorluk: elektrik/doğalgaz/su kesintisi, kira ihtar→ihtarname→**tahliye** (gün açılamaz), vergi **haczi** (§B.4) |
+| Banka | – | kredi limiti, faiz, vade, günlük taksit, gecikme, erken kapatma, kredi notu (§B.5) |
+| Çırak | paketler, teslimi oyuncu yapar | **paketlenen siparişi teslim de eder** (seviye 1+, ayar `apprenticeDelivery`); seviye 4 kalfa, 5 dördüncü çırak; **günlük maaş** (§B.6) |
+| Yükseltme | 3 seviye | 5 seviye (tabela 6), 5 yeni yükseltme (§B.7) |
+| Kayıt | `v=4` | **`v=5`, `epoch=25`**: dönemi eski kayıt = ilerleme sıfır + ayarlar korunur + bir kez bildirim (§B.1) |
+| Metin | – | terim birliği (`docs/terminoloji.md`): "sipariş 2", "teslime hazır", "stokta yok", "hazır ayran 3 bardak" |
+
+### B.1 Kayıt dönemi (epoch)
+```java
+SaveData.EPOCH = 25; SaveData.FORMAT = 5;       // kayıt "v=5\nepoch=25\n…"
+SaveData s = SaveData.parse(prefsText);         // epoch yok/küçük -> ilerleme sıfır, ayarlar korunur
+if (s.progressResetNotice) { speaker.say(Narrator.progressResetText()); s.clearProgressResetNotice(); save(); }
+SaveData.newGameKeepingSettings(old);           // "Yeni oyun" ile aynı kural (MainActivity.newGame bunu kullanır)
+old.copySettingsTo(target);                     // yalnızca ayarlar
+```
+- **Sıfırlanan (ilerleme):** gün, en iyi gün, para, yıldız, stok, yükseltmeler, hazır ayran, fiyatlar, faturalar, krediler, kredi notu, maaş borcu, vergi birikimi.
+- **Korunan (ayar):** tempo, konuşma açık/kapalı ve hızı, titreşim, müzik/efekt/ambiyans sesi, öğretici tamamlandı, çırak duyuruları, **çırak teslimi**, oyun akışı ve "seçildi" bayrağı, süre baskısı.
+- `progressResetNotice` yalnızca eski kayıtta ilerleme anahtarı (gün/para/yıldız/stok/yükseltme) varsa true olur; kayda `resetNotice=1` yazılır (uygulama bildirimi göstermeden kapanırsa yine gösterilir). Gelecek dönem (epoch > 25) olduğu gibi yüklenir. İleride sıfırlamak için yalnızca `EPOCH` artırılır.
+- Yeni anahtarlar: `epoch, apprenticeDelivery, resetNotice, price.<ürün>, bill.<id>=tür,tutar,kesildi,son,ödenen, loan.<id>=…, credit, wageDebt, salesTax, finId`. Bozuk satırlar atlanır.
+
+### B.2 Fiyat ve talep (`Pricing`)
+```java
+int  Pricing.percent(save, productId)            // 50..150 (yoksa 100)
+boolean Pricing.setPercent(save, productId, pct) // sınırlar, %5'e yuvarlar; 100 = kayıttan çıkar
+int  Pricing.raise(save, id) / lower(save, id)   // ±%5, yeni yüzde
+void Pricing.setAll(save, pct); boolean Pricing.allDefault(save)
+int  Pricing.priceOf(save, product)              // tam ekmek satış fiyatı (TL); referans: product.price
+double Pricing.arrivalMultiplier(save)           // tahmini müşteri çarpanı (fiyat ekranı: Narrator.demandText)
+double Pricing.demand(ratio, eff); Pricing.sensitivity(type, stars); Pricing.typeDemand(save, type, menu, stars)
+Pricing.Feel Pricing.feel(orderRatio, eff)       // teslimde: starMult, tipMult, penalty, reaction
+double Pricing.patienceMult(orderRatio, eff)     // ucuzda sabır bonusu
+// sabitler: MIN_PERCENT 50, MAX_PERCENT 150, STEP_PERCENT 5, DEFAULT_PERCENT 100, DEMAND_K 1,7, CHOICE_K 1,5, MIN_DEMAND 0,15, MAX_DEMAND 1,8
+```
+- Fiyat **gün başında** okunur (market/fiyat ekranında değiştirilir; gün içinde değiştirmek o günü etkilemez). Kalem fiyatı sipariş anında sabitlenir: `OrderLine.price()` (satış), `OrderLine.referencePrice()`, `OrderLine.getPriceRatio()`, `Order.price()/referencePrice()/priceRatio()`.
+- `CustomerType.priceSensitivity` (öğrenci 1,8 … gurme 0,3). Formüller: design_v25 §2. Teslimde `Order.getPriceReaction()` −1/0/+1 ("uygun buldu"/–/"pahalı buldu"), `DaySummary.priceComplaints/priceCompliments`.
+- Süreli günde geliş aralığı `/ getPriceArrivalMultiplier()`; süresizde kota × sınırla(A; 0,5; 1,5) (`DayConfig.quotaFor(save)` aynı değeri verir). `Shop.recommendedPurchase` talebe uyar.
+- Tüm fiyatlar %100 iken her şey v2.0 ile birebir aynıdır.
+
+### B.3 Maaş ve faturalar (`Finance`, `Bill`, `BillType`)
+```java
+// maaş
+int Finance.dailyWage(level, day)                 // 250/550/900/1250/1650 × (1 + 0,01·(gün−1))
+Finance.PayResult Finance.payWages(save)          // OK, NOT_ENOUGH_MONEY, NOTHING_DUE (UNKNOWN)
+// faturalar
+List<Bill> Finance.openBills(save)                // son ödeme gününe göre sıralı
+Bill Finance.bill(save, id); int Finance.totalDue(save); int Finance.dueWithin(save, days); int Finance.lateCount(save)
+List<Bill> Finance.forecast(save, days)           // yaklaşan (tahmini, id=-1) faturalar
+int Finance.billAmount(save, type, day); int Finance.load(save, type); int Finance.weeklyRentBase(day)
+Finance.PayResult Finance.pay(save, billId)       // tam öder (bugünkü tutar); zamanında ise kredi notu +2
+int Finance.payAll(save, keep)                    // kasada en az keep bırakarak öder; ödenen sayısı
+Bank.Result Finance.payWithLoan(save, billId, term) // fatura tutarında kredi alır ve öder (kira için limit aranmaz)
+List<String> Finance.notices(save, day)           // gün açılırken söylenen uyarılar (brifingde de göster)
+Bill Finance.issue(save, type, amount, issuedDay) // senaryo/öğretici/test
+// Bill: id, type, amount, issuedDay, dueDay, daysLate(day), daysLeft(day), lateFee(day), amountDue(day), level(day), getPaid()
+// BillType: ELEKTRIK, DOGALGAZ, SU, KIRA, VERGI — id, displayName ("Elektrik faturası", "Kira"), shortName, firstDay, period, issuedOn(day), nextIssueDay(day)
+// sabitler: DUE_DAYS 2, LATE_FEE_RATE 0,03, EVICTION_DAYS 6, TAX_RATE 0,05, SEIZURE_FINE 0,20, CREDIT_START 60
+```
+- Takvim: elektrik 3,10,17…; doğalgaz 4,11…; su 5,12…; kira 7,14…; vergi 10,20…; fatura **gün sonunda** kesilir, **son ödeme = kesildiği gün + 2**. `save.day` = açılacak gün; gecikme = `save.day − dueDay`. Gün sonu ekranında (`save.day` artmıştır) ödenen fatura, açılacak gün son günden sonraysa gecikmiş sayılır — UI "son ödeme günü bugün" uyarısını brifingte ve gün sonunda göstermeli.
+- Tutarlar: elektrik `7·(30 + 1,5·(g−1) + 10·E)`, doğalgaz `7·(25 + 1,5·(g−1) + 12·G)`, su `7·(15 + 0,8·(g−1) + 6·S)`, kira `7·(200 + 20·(g−1))`, vergi dönem satış+bahşişinin %5'i. E/G/S = `Upgrade.raises(BillType)` olan yükseltme seviyeleri toplamı.
+- **Gün sonu sırası** (motor, `finishDay`): vergi birikimi → maaş (önce maaş borcu) → kredi taksitleri → vergi haczi → kredi notu (geciken fatura −2/gün, maaş borcu −1) → yeni faturalar. Sonuçlar `DaySummary` (§B.11).
+- **Gün içinde ödeme**: `engine.payBill(id)` (kesinti o an kalkar, menü yenilenir, `onBillPaid`; para yetmezse `onNotEnoughMoney`), `engine.payWages()` (çırak hemen gelir). Gün başarısız olursa para ve faturalar gün başına döner.
+
+### B.4 Kesintiler (`UtilityStatus`)
+```java
+UtilityStatus u = engine.getUtilityStatus();      // ya da UtilityStatus.of(save, day) (brifing)
+u.electric, u.gas, u.water, u.rent, u.tax         // etkin kademe 0..2 (kira 3 = tahliye); electricBill/waterBill: koruma öncesi
+u.apprenticeAbsent; u.any(); u.ocakClosed(); u.trayBlocked(); u.waterProductsOff(); u.evicted()
+u.speedMult(st); u.capacity(st, cap); u.productAvailable(p); u.arrivalMult(); u.starGainMult(); u.drinkSpoilFraction(); u.meatSpoils(); u.rentStarPenalty()
+engine.isStationClosed(Station.IZGARA)           // doğalgaz tam kesik
+List<Product> engine.getMenu()                    // kesintide satılamayanlar hariç
+GameEngine.LOCK_CLOSED = "Ocak kapalı, doğalgaz kesik"; GameEngine.LOCK_WATER = "Su kesik"
+```
+| Kademe | Elektrik | Doğalgaz | Su | Kira | Vergi |
+|---|---|---|---|---|---|
+| 1 (1–2 gün gecikme) | ekmek ısıtıcı −1 yer, ekmek+içecek ×1,3; hazır ayranın yarısı gün başında bozulur | Ocak 1 göz, ×1,3 | tepsi hazırlanamaz (`prep:tray` kilitli "Su kesik"), Sos ve salata tezgâhı ×1,25 | ihtar (uyarı) | gecikme bedeli |
+| 2 (3+ gün) | ekmek ısıtıcı 1 yer, ×1,6; döner ×1,3; hazır ayran bozulur; gün sonu et stoklarının %25'i bozulur | **Ocak kapalı**: Ocak isteyen ürünler menüden çıkar, patates yok, müşteri ×0,9; Ocak adımı `UTILITY_OFF`, `ReadyAction.Status.CLOSED` | + çay ve çorba menüden çıkar, teslim yıldızı ×0,6 | 3–5 gün: ihtarname, gün başı −0,15 yıldız, müşteri ×0,9 | 4+ gün: **haciz** (gün sonu borç + %20 kasadan) |
+| 3 | – | – | – | **6+ gün: tahliye**: `beginPrep/startDay` false, gün `FAILED` (`summary.failReason = "tahliye"`), para/stok korunur | – |
+Jeneratör (1/2) elektrik, su deposu (1/2) su kademesini düşürür. Kesinti gün başında hesaplanır; gün içinde fatura ödenirse yenilenir.
+
+### B.5 Banka (`Bank`, `Loan`, `Bank.Quote`)
+```java
+int Bank.totalLimit(save); int Bank.available(save); boolean Bank.blocked(save)
+double Bank.dailyRate(score)                      // ≥80 0,006 · 60–79 0,008 · 40–59 0,012 · 20–39 0,018 · <20 0,025
+Bank.Quote Bank.quote(save, amount, term)         // amount ≥500, 100'ün katı; term ∈ Bank.TERMS {5,10,20}; geçersizse null
+Bank.Result Bank.takeLoan(save, amount, term)     // OK, OVER_LIMIT, INVALID_AMOUNT, INVALID_TERM, TOO_MANY_LOANS (3), BLOCKED
+Bank.Result Bank.repay(save, loanId)              // erken kapatma: OK, NOT_ENOUGH_MONEY, UNKNOWN (kredi notu +3)
+Bank.Result Bank.payOverdue(save, loanId)         // gecikmiş taksiti şimdi öde
+List<Loan> Bank.loans(save); Loan Bank.loan(save, id); int Bank.totalDebt(save); int Bank.dueToday(save); int Bank.outstandingPrincipal(save)
+// Quote: amount, term, interest, installment, total, dailyRate
+// Loan: id, principal, interest, term, takenDay, installment(), getRemaining(), getOverdue(), getFees(), getInstallmentsLeft(),
+//       getMissedStreak(), getMissedTotal(), totalOwed(), remainingPrincipal(), remainingInterest(), payoffAmount(), isClosed()
+```
+- Limit `aşağı100((2000 + 500·gün) × (0,6 + 0,1·yıldız) × sınırla(not/60; 0,25; 1,5)) − kalan anapara`. Taksit gün sonunda otomatik; kaçan taksit +%5 bedel, not −5; art arda 3 kaçan taksitte yeni kredi yok. Kira faturası için `Finance.payWithLoan` limit/engel aramaz (en yüksek faiz).
+- Kredi notu `save.creditScore` 0–100 (başlangıç 60).
+
+### B.6 Çırak teslimi ve seviyeler
+- Seviye 1+: eli boş çırak **önce teslime hazır siparişleri** (en acilden) teslim eder; seçili siparişi yalnızca `apprenticeMayTouchSelected()` (oyuncunun eli dolu ya da son eyleminden ≥1,5 sn). Teslim 1,0 sn × tempo × yavaşlık (aktif iş, `ActiveStep.isDeliver()`, istasyon PAKET). Ödeme/bahşiş/yıldız oyuncununkiyle aynı.
+- `Order.isDelivering()`, `Order.getDeliveredBy()` (0 oyuncu, 1..4 çırak, −1 teslim edilmedi). Çırak teslim ederken `engine.deliver(id)` **false** + `onAlreadyRunning(order, job)`. `getReadyActions`: DELIVER satırı `RUNNING`, `byApprentice=true`, metin "Teslim ediliyor, çırak".
+- Olaylar: `onApprenticeAction(a)` (`a.deliver=true`; başlangıç ve bitiş), bitişte `onOrderDelivered` de gelir (Narrator: "Çırak teslim etti: sipariş 2, Ali. 240 lira kazandın, …"; başlangıç sessiz; `apprenticeAnnounce=false` ise "Teslim edildi. …").
+- Ayar `SaveData.apprenticeDelivery` (varsayılan açık; kapalıysa v2.0 davranışı). `DaySummary.apprenticeDeliveries`.
+- Seviye: 1–3 = çırak sayısı ve yetenek (v2.0 tablosu), **4 = kalfa** (yavaşlık ×1,2 → ×1,05), **5 = dördüncü çırak**. `Upgrades.apprenticeWorkers(lv)`, `apprenticeSkill(lv)`, `apprenticeSlowdown(lv)`; `engine.getApprenticeLevel()` bugün çalışan seviye (maaş borcu varsa 0), `isApprenticeAbsent()`, `getApprenticeWorkers()`.
+- Maaş: §B.3. Borç varken çırak gelmez (o gün maaş yazılmaz).
+
+### B.7 Yükseltmeler (1–3. seviyeler v2.0 ile aynı)
+| id | Ad | Seviye fiyatları (TL) | Açılış günleri | Etki (seviye 1→son) | Fatura |
+|---|---|---|---|---|---|
+| `cirak` | Çırak | 3000, 9000, 24000, 38000, 58000 | 3, 8, 16, 30, 44 | 1–3 çırak, 4 kalfa, 5 dördüncü çırak | su |
+| `doner_makinesi` | Döner makinesi | 4000, 15000, 48000, 70000, 100000 | 4, 10, 18, 32, 46 | döner ×0,85→0,45 | elektrik, doğalgaz |
+| `ekmek_isitici` | Ekmek ısıtıcı | 2500, 8000, 22000, 34000, 52000 | 3, 9, 17, 29, 43 | yer 3,4,4,5,6; ×0,85→0,45 | elektrik |
+| `ocak` | Geniş ocak | 2500, 8000, 20000, 32000, 50000 | 3, 9, 17, 29, 43 | göz 3,4,4,5,6; ×0,90→0,55 | doğalgaz |
+| `oto_dilimleyici` | Otomatik dilimleyici | 3500, 12000, 34000, 52000, 78000 | 6, 12, 21, 35, 50 | döner ×0,75→0,36 | elektrik |
+| `buzdolabi` | Buzdolabı | 2000, 7500, 24000, 36000, 54000 | 2, 8, 16, 28, 42 | stok 50,100,220,300,400; hazır stok +4/seviye | elektrik |
+| `masa` | Masa takımı | 3000, 9000, 24000, 36000, 54000 | 11, 22, 28, 38, 52 | sıra +1,2,3,3,4; bahşiş +0→0,10 | su |
+| `tabela` | Tabela | 1000, 4000, 12000, 20000, 32000, 48000 | 8, 15, 24, 34, 44, 54 | müşteri +0,10→0,60 | elektrik |
+| `klima` | Klima | 2500, 7000, 18000, 28000, 42000 | 13, 21, 26, 37, 49 | sabır +0,10→0,42 | elektrik |
+| `muzik` | Müzik sistemi | 1800, 5500, 15000, 24000, 36000 | 4, 14, 23, 33, 47 | müşteri +0,05→0,20, yıldız +0,05→0,25 | elektrik |
+| `dekor` | Dekor | 2200, 6500, 20000, 30000, 45000 | 7, 16, 25, 36, 51 | turist +0,10→0,55, bahşiş +0,05→0,22, müşteri +0,05→0,20 | – |
+| **`havalandirma`** | Havalandırma | 2500, 8000, 18000, 28000, 42000 | 10, 19, 28, 39, 50 | sabır +0,04→0,18, Ocak ×0,95→0,80 | elektrik |
+| **`sogutma`** | Soğutmalı vitrin | 3000, 9000, 20000, 30000, 45000 | 12, 20, 30, 40, 52 | içecek ×0,90→0,60, hazır stok +2→+10 | elektrik |
+| **`ikinci_kasa`** | İkinci kasa | 6000, 14000, 28000, 42000, 62000 | 20, 27, 35, 44, 53 | paketleme ×0,80→0,45, sıra +1,1,2,2,2 | elektrik |
+| **`jenerator`** | Jeneratör | 8000, 22000 | 9, 30 | elektrik kesintisini 1/2 kademe karşılar | – |
+| **`su_deposu`** | Su deposu | 4000, 12000 | 11, 30 | su kesintisini 1/2 kademe karşılar | – |
+Yeni `Upgrade.EffectType`: `READY_CAP`, `POWER_BACKUP`, `WATER_BACKUP`. `Upgrade.utilities` / `raises(BillType)`. `Upgrades.powerBackup()/waterBackup()`. `Catalog.newUpgradeLevelsOnDay(day)` (brifing/market "Yeni: …").
+
+### B.8 İçerik takvimi (v2.0 içeriği aynı)
+| Gün | Ürün (id, referans fiyat, istasyonlar) | Yeni malzeme | Yeni müşteri tipi (duyarlılık) |
+|---|---|---|---|
+| 15 | | | Yemek kuryesi `kurye` (1,4) |
+| 17 | Tavuk pilav üstü `tavuk_pilav` 280 (Ocak, Döner, Sos) | | |
+| 18 | | | Memur `memur` (1,0) |
+| 19 | Su `su` 15 (İçecek dolabı) | şişe su | |
+| 20 | | maydanoz (sos/salata) | |
+| 21 | Mercimek çorbası `corba` 90 (Ocak, Sos; **su gerekir**) | mercimek çorbası | |
+| 23 | Kaşarlı dürüm `kasarli_durum` 300 (Ekmek, Döner, Ocak pasif, Sos; patatesli olabilir) | kaşar peyniri | |
+| 24 | | | İnşaat işçisi `insaatci` (1,5) |
+| 25 | Şalgam `salgam` 40 (İçecek) | şalgam | |
+| 26 | | pul biber | |
+| 27 | | | Sporcu `sporcu` (0,9) |
+| 28 | Fırın sütlaç `sutlac` 85 (Tatlı) | fırın sütlaç | |
+| 31 | Çay `cay` 20 (İçecek; **su gerekir**) | çay | |
+| 32 | | acılı ezme | |
+| 33 | | | Gurme `gurme` (0,3) |
+| 34 | Köfte ekmek `kofte_ekmek` 230 (Ekmek, Ocak pasif, Sos; patatesli olabilir) | köfte | |
+| 38 | Tavuk iskender `tavuk_iskender` 360 (Ekmek, Döner, Ocak, Sos) | kırmızı lahana | |
+| 42 | Fıstıklı baklava `baklava` 160 (Tatlı) | fıstıklı baklava | |
+| 46 | Tantuni `tantuni` 260 (Ekmek pasif, Ocak, Sos) | tantuni eti | |
+| 50 | Karışık döner tabağı `karisik_tabak` 520 (Ekmek, Döner: et+tavuk, Sos) | | |
+Boylu (döner içeren) yeni ürünler: tavuk pilav, kaşarlı dürüm, tavuk iskender, karışık tabak. `Product.needsWater()`. `Catalog.newTypesOnDay(day)`, `Narrator.newTypesText(day)` (brifing; `dayStarted` içerir). Lahmacun havuzuna maydanoz (20. gün). Var olan tiplerin duyarlılıkları: öğrenci 1,8, şikâyetçi 1,3, yaşlı 1,2, taksi 1,1, aile/esnaf 1,0, gece 0,9, acele 0,6, influencer 0,5, turist 0,4.
+Zorluk: `DayConfig.forDay(d).intensity` = d (≤40), 40 + 0,5·(d−40) (41–60), 60 sonrası dalgalı artış.
+
+### B.9 Yeni olaylar (`GameListener`, hepsi `default` boş)
+```java
+void onFinanceNotices(List<String> notices);                 // gün açılırken (hazırlık ya da gün başı), bir kez; boşsa gelmez
+void onUtilityBlocked(Order order, Station station, BillType cause); // Ocak kapalı (DOGALGAZ) / tepsi (SU); order hazırlıkta null
+void onStockSpoiled(Ingredient ingredient, int amount, BillType cause); // gün başında hazır ayran bozuldu (ELEKTRIK)
+void onBillPaid(Bill bill, int paid);                        // gün içinde engine.payBill
+```
+Değişen: `onApprenticeAction` teslim işini de taşır (`ApprenticeAction.deliver`); `onOrderDelivered` çırak teslimlerinde de gelir (`order.getDeliveredBy() > 0`); `onAlreadyRunning` çırak teslim ederken oyuncu teslimi denerse; `onDayFailed` tahliyede de (`summary.failReason`).
+Olay sırası (gün açılışı): `onPrepPhaseStarted` ya da `onDayStarted` → (bozulma) `onStockSpoiled` → (ihtarname) `onStarsChanged` → `onFinanceNotices`. Tahliyede: `onDayFailed` (gün başlamaz).
+
+### B.10 Sonuç tipleri
+- `StartResult.UTILITY_OFF` (Ocak kapalı; `onUtilityBlocked`), `PrepResult.UTILITY_OFF` (tepsi su kesik / patates Ocak kapalı). `applyStationOption("prep:*")` artık `HANDS_BUSY`/`STATION_FULL`/`UTILITY_OFF` döndürür (eskiden `NOT_RUNNING`'e düşüyordu).
+- `ReadyAction.Status.CLOSED` ("Patates kızart, Ocak kapalı, doğalgaz kesik").
+- `Finance.PayResult {OK, NOT_ENOUGH_MONEY, UNKNOWN, NOTHING_DUE}`, `Bank.Result {OK, OVER_LIMIT, INVALID_AMOUNT, INVALID_TERM, TOO_MANY_LOANS, BLOCKED, NOT_ENOUGH_MONEY, UNKNOWN}`.
+
+### B.11 `DaySummary` (yeni)
+`wagesDue, wagesPaid, wageDebt, installmentsDue, installmentsPaid, installmentsMissed, seized, newBills (List<Bill>), billsDue, billsLate, loanDebt, creditScore, spoiledDrinks, spoiledStock, spoiledCost, rentStarPenalty, failReason ("tahliye"), priceComplaints, priceCompliments, apprenticeDeliveries`, `expenses()` = maaş + taksit + haciz, **`profit()` = satış + bahşiş − acil alım − expenses()** (faturalar ödendiği gün kasadan düşer). `rent`/`rentDue` @Deprecated, her zaman 0.
+
+### B.12 Narrator (yeni/değişen)
+- Kendi konuştukları: `onFinanceNotices` (birleşik, `CAT_BILLS`), `onUtilityBlocked` (`utilityBlocked`), `onStockSpoiled` (`stockSpoiled`), `onBillPaid` (`billPaid`); `dayFinished` sonuna `financeSummary(s)` (maaş borcu, kaçan taksit, bozulan et, pahalı bulan müşteri, yeni faturalar "Yeni fatura: elektrik faturası 315 lira, son ödeme 5. gün.", açık borç); `dayFailed` tahliye metni; `dayStarted` + "Yeni müşteri tipi: …"; `orderReady` "Sipariş 2 teslime hazır: Ali. Teslim et." / "…, çırak teslim edecek."; `orderDelivered` çırak ve fiyat tepkisi; `statusText` + `financeStatusText()` ("Kesinti: elektrik kısmen kesik. Çırak bugün yok, maaş borcu var. Açık fatura 2, borç 640 lira.").
+- UI yardımcıları (statik): `billText(bill, day)`, `billsText(save)`, `newBillText(bill)`, `bankText(save)`, `loanText(loan)`, `quoteText(quote)`, `rateText(rate)`, `priceText(save, product)`, `demandText(save)`, `wageText(save)`, `newTypesText(day)`, `progressResetText()`.
+- Terim değişiklikleri (`docs/terminoloji.md` §6): "Çırak, sipariş 2: Ayranı doldur.", "Çırak paketledi: sipariş 2.", "Stokta yok: domates. Acil al: 9 lira.", "hazır döner 4 porsiyon / hazır ayran 3 bardak / hazır patates 2 porsiyon", "Ayran doldurma", "Sos ve salata tezgâhı", "Tatlı tezgâhı".
+
+### B.13 Örnek akış (gün sonu → market → gün)
+```java
+// gün bitti (onDayFinished): save.day artık yarın
+DaySummary s = e.getSummary();                     // s.wagesPaid, s.installmentsPaid, s.newBills, s.billsDue
+say(narrator.dayFinished(s));                      // Narrator kendisi de söyler
+// GÜN SONU / FATURALAR ekranı
+for (Bill b : Finance.openBills(save)) {
+    row(Narrator.billText(b, save.day));           // "Elektrik faturası 315 lira, son ödeme 5. gün, 2 gün kaldı."
+    // [Öde]       Finance.pay(save, b.id)           -> OK | NOT_ENOUGH_MONEY
+    // [Ertele]    hiçbir şey (uyarıyı tekrar oku: Finance.notices(save, save.day))
+    // [Krediyle]  Bank.quote(save, round100(b.amountDue(save.day)), 10) göster, sonra Finance.payWithLoan(save, b.id, 10)
+}
+if (save.wageDebt > 0) { /* [Maaşı öde] */ Finance.payWages(save); }
+// BANKA ekranı
+say(Narrator.bankText(save));                      // not, limit, alınabilir, faiz, borç
+Bank.Quote q = Bank.quote(save, 3000, 10);  say(Narrator.quoteText(q));
+Bank.takeLoan(save, 3000, 10);  for (Loan l : Bank.loans(save)) row(Narrator.loanText(l));  Bank.repay(save, l.id);
+// FİYAT ekranı
+for (Product p : Catalog.productsForDay(save.day)) row(Narrator.priceText(save, p));   // [−5] Pricing.lower  [+5] Pricing.raise
+say(Narrator.demandText(save));                    // "Tahmini müşteri: yüzde 12 daha az."
+// MARKET (değişmedi) + Shop.buyUpgrade; maaş bilgisi: Narrator.wageText(save)
+// BRİFİNG: Finance.notices(save, save.day) satırları + DayConfig.quotaFor(save) + Narrator.newTypesText(save.day)
+GameEngine e = new GameEngine(seed, save);
+if (!e.beginPrep() && e.getState() == GameEngine.State.FAILED) { /* tahliye: faturalar ekranına dön */ }
+// gün içinde (Duraklat > Faturalar): e.payBill(id), e.payWages()
+```
+
+### B.14 Denge (bot ölçümü; `V25BalanceTest`, rapor satırları "V25")
+Akıllı bot (Campaign: fiyat, fatura, maaş borcu, gerekirse kredi): 0,8 ve 1,5 sn botlar ve insan benzeri 1,5 sn bot her akışta 1–60 geçer (0 başarısız deneme); süresiz 1–60 geçer; hiçbir şey yapmayan ≤5 günde; hiç fatura ödemeyen bot 6. günden kesinti yaşar ve **15. günde tahliye** ile takılır. Fiyat stratejileri: ayrıntı `design_v25.md` §10.
+
+### B.15 UI yapılacaklar (v2.5)
+1. **Epoch bildirimi**: açılışta `save.progressResetNotice` ise `Narrator.progressResetText()`'i bir kez (TalkBack + ekranda) göster, `clearProgressResetNotice()` + kaydet. Menüdeki "Devam et" 1. günden başlar.
+2. **Gün sonu / Faturalar ekranı** (özetten sonra, marketten önce): yeni faturalar, açık faturalar listesi (`Finance.openBills`, `Narrator.billText`), her satırda büyük **Öde / Ertele / Krediyle öde** düğmeleri; maaş borcu satırı (**Maaşı öde**); toplam borç ve kredi notu; "son ödeme günü bugün" uyarısı. Gecikmiş/kesinti satırları önce.
+3. **Banka ekranı** (market içinden): `Narrator.bankText`, tutar seçimi (−/+ 500, en az 500, `Bank.available`), vade seçimi 5/10/20 (`Bank.TERMS`), teklif `Narrator.quoteText(Bank.quote(...))`, **Kredi al**; kredi listesi `Narrator.loanText`, **Erken kapat** (`Bank.repay`), **Gecikmiş taksiti öde** (`Bank.payOverdue`). Sonuç sesleri (`Bank.Result`).
+4. **Fiyat ekranı** (market içinden): bugünün menüsü, her ürün için satır (`Narrator.priceText`) + **−%5 / +%5** düğmeleri (`Pricing.lower/raise`), "Hepsi %100" (`Pricing.setAll(save, 100)`), tahmini müşteri (`Narrator.demandText`), kısa açıklama ("Ucuz: daha çok müşteri ve yıldız, az kâr. Pahalı: az müşteri, çok kâr, yıldız düşebilir."). Fiyat gün başında geçerli.
+5. **Brifing**: `Finance.notices(save, save.day)` satırları (önce), kesinti özeti (`UtilityStatus.of`), yeni müşteri tipi, maaş (`Narrator.wageText`), yeni yükseltme seviyeleri (`Catalog.newUpgradeLevelsOnDay`). Tahliye durumunda "Dükkânı aç" yerine faturalar ekranına yönlendir (motor zaten günü başlatmaz).
+6. **Gün içi**: Duraklat menüsüne **Faturalar** (açık faturalar + `engine.payBill`, `engine.payWages`); `onFinanceNotices`, `onUtilityBlocked` (hata sesi + titreşim), `onStockSpoiled`, `onBillPaid` (para sesi) için sesler; durum çubuğu / "Durumu oku" `narrator.statusText()` (kesinti ve açık fatura içerir).
+7. **Çırak teslimi**: `onApprenticeAction(a.deliver)` başlangıcında hafif ses (isteğe bağlı), `onOrderDelivered` çırak teslimlerinde de para sesi; "Sıradaki sipariş"/eylem satırlarında DELIVER satırı `RUNNING` "Teslim ediliyor, çırak" (dokunulamaz); `deliver` false dönerse (çırak teslim ediyor) yalnızca kısa uyarı; Ayarlar'a **"Çırak teslim etsin: Açık/Kapalı"** (`save.apprenticeDelivery`, aç/kapa etiketi durumlu); `Texts.apprenticeLevelsText` (seviye 1 teslim de eder, 4 kalfa, 5 dördüncü çırak, günlük maaş).
+8. **Yükseltmeler**: market listesi 16 yükseltme, 5–6 seviye ("Seviye 3 / 5"); açıklamalar `Upgrade.description`; faturayı artıran yükseltmede "Elektrik faturasını artırır" notu (`Upgrade.raises`); jeneratör ve su deposu açıklaması.
+9. **Özet ekranı** (`Texts.summaryRows`): "Kira" satırı yerine **Çırak maaşı, Kredi taksiti, Haciz, Yeni faturalar, Açık fatura borcu, Kredi notu, Fiyatı pahalı bulan**; `profit()` yeni tanımla; `rentUnpaid` artık 0.
+10. **Metinler**: `ui/Texts`'te terimler sözlüğüne uy: "numaralı sipariş" (Texts.java:264-266), "Sipariş hazır" (TUT_READY), "malzeme yok" (Texts.java:388), "Gün sonunda N lira kira ödenecek" (Texts.java:561; artık haftalık kira faturası: `Finance.forecast`), "TL" → "lira".
+11. **Yeni ürünler**: istasyon düğmeleri listesi `engine.getMenu()`'yü kullansın (kesintide çıkan ürünler); ürün ikonları/adları (çorba, çay, şalgam, su, sütlaç, baklava, köfte, tantuni, karışık tabak); yeni ses ÜRETİLMEYECEK, var olanlar eşlenecek (ör. çay/şalgam/su = içecek sesleri, köfte/tantuni = sizzle).
+12. **Kırılan UI testleri**: aşağıda (§B.16).
+
+### B.16 Bu sürümde kırılan Robolectric UI testleri
+Tam çalıştırmada (606 test) yalnızca `FixesUiTest.emergencyButtonIsFixedOutsideTheScrollingListAndTakesFocusWithTalkBack` kırıldı (duyuruda malzeme adı artık küçük harf: "Stokta yok: döner ekmeği."); karşılaştırma büyük/küçük harften bağımsız yapılarak uyarlandı. Şu an kırık UI testi yok; ama UI ekranları v2.5 özelliklerini (fatura, banka, fiyat, çırak teslimi, epoch bildirimi) henüz göstermiyor ve `Texts.summaryRows` "Kira 0 lira" satırı üretir — §B.15.
 
 ## A. v0.9 -> v2.0 (kaynak modeli, çırak, sıradaki sipariş)
 
@@ -228,7 +456,7 @@ engine.applyStationOption(oid, li, Station.DONER.id, "size:yarim");  // yarim | 
 engine.deliver(orderId);               // sipariş paketlenince (isReady) teslim
 // bitince onDayFinished/onDayFailed -> prefs.putString(save.serialize())
 ```
-Gün bitince motor `save.day`'i artırır, kirayı düşer. Gün BAŞARISIZ olursa para/stok/hazır içecek gün başına döner (hazırlık harcamaları dahil), yıldız en az 1.5 olur, `save.day` aynı kalır.
+Gün bitince motor `save.day`'i artırır; v2.5: günlük kira yerine maaş/taksit düşer ve faturalar kesilir (§B.3). Gün BAŞARISIZ olursa para/stok/hazır içecek gün başına döner (hazırlık harcamaları dahil), yıldız en az 1.5 olur, `save.day` aynı kalır.
 
 ## 2. Durum makinesi
 `READY → (PREP) → RUNNING → FINISHED | FAILED` (v0.5 ile aynı)

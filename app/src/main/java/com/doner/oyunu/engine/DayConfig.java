@@ -17,6 +17,8 @@ public final class DayConfig {
     public final float multiItemChance;
     public final int baseQueue;
     public final int rent;
+    /** v2.5 kampanya uzunluğu (sonrası sonsuz döngü zorluk). */
+    public static final int CAMPAIGN_DAYS = 60;
     /** Süresiz modda (süre baskısı kapalı) günün müşteri kotası: normal süre / geliş aralığı (en az 4). */
     public final int customerQuota;
     /** Kota çarpanı (süreli gün oyuncusu bütün gelenlere yetişemez; süresizde hepsi teslim edilmeli: gün makul uzunlukta kalsın). */
@@ -31,10 +33,13 @@ public final class DayConfig {
         double i;
         if (day <= 40) {
             i = day;
+        } else if (day <= CAMPAIGN_DAYS) {
+            // v2.5: 41–60. günler daha yavaş artar (60. gün 50)
+            i = 40 + 0.5 * (day - 40);
         } else {
-            int over = day - 40;
-            // 10 günlük dalgalarla (döngüsel) ve her 20 günde bir kalıcı artışla yükselir.
-            i = 40 + (over % 10) * 0.4 + (over / 10) * 3.0;
+            int over = day - CAMPAIGN_DAYS;
+            // 60 sonrası sonsuz: 10 günlük dalgalarla (döngüsel) ve her 10 günde bir kalıcı artışla yükselir.
+            i = 50 + (over % 10) * 0.4 + (over / 10) * 2.0;
         }
         this.intensity = i;
         this.duration = Math.min(300f, 120f + 6f * day);
@@ -54,6 +59,17 @@ public final class DayConfig {
      */
     public int quota(double arrivalMult) { return computeQuota(duration, arrivalInterval, arrivalMult); }
 
+    /**
+     * v2.5: fiyat talebi ve kesinti çarpanıyla kota: temel kota × sınırla(demandMult; 0,5; 1,5) (en az 5, en çok 60).
+     * demandMult = 1 iken {@link #quota(double)} ile aynı.
+     */
+    public int quota(double arrivalMult, double demandMult) {
+        int q = quota(arrivalMult);
+        if (demandMult == 1.0) return q;
+        double m = Math.max(Pricing.MIN_QUOTA_MULT, Math.min(Pricing.MAX_QUOTA_MULT, demandMult));
+        return Math.max(QUOTA_MIN, Math.min(QUOTA_MAX, (int) Math.round(q * m)));
+    }
+
     private static int computeQuota(float duration, float interval, double mult) {
         double m = Math.max(1.0, Math.min(QUOTA_MULT_MAX, mult));
         int q = (int) Math.round(duration / interval * QUOTA_FACTOR * m);
@@ -62,8 +78,15 @@ public final class DayConfig {
 
     /** Verilen kayıttaki günün (yükseltmeler dahil) müşteri kotası; brifing ve motor aynı değeri kullanır. */
     public static int quotaFor(SaveData save) {
-        return forDay(save.day).quota(new Upgrades(save).arrivalMult());
+        return forDay(save.day).quota(new Upgrades(save).arrivalMult(),
+                Pricing.arrivalMultiplier(save) * UtilityStatus.of(save, save.day).arrivalMult() * untimedStarFactor(save.stars));
     }
+
+    /**
+     * v2.5: süresiz kotada yıldızın YARI etkisi (itibar süresiz modda da anlamlı): 1 + 0,5·(yıldız çarpanı − 1); 3★'da 1,
+     * 5★'da 1,2, 1★'da 0,8.
+     */
+    public static double untimedStarFactor(double stars) { return 1.0 + 0.5 * (starMultiplier(stars) - 1.0); }
 
     /** Müşteri isteği olasılığı: 1. gün 0, 2. gün %20, sonra %45. */
     public static double requestChance(int day) {

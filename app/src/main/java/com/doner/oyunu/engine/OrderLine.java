@@ -27,7 +27,15 @@ public final class OrderLine {
     private final List<String> history = new ArrayList<>();
     private final List<Boolean> fromTray = new ArrayList<>();
 
+    /** v2.5: siparişin verildiği andaki fiyat oranı (1,0 = referans fiyat). */
+    private final double priceRatio;
+
     OrderLine(Product product, int index, Set<String> target, List<String> pool, Set<String> defaults, PortionSize size) {
+        this(product, index, target, pool, defaults, size, 1.0);
+    }
+
+    OrderLine(Product product, int index, Set<String> target, List<String> pool, Set<String> defaults, PortionSize size, double priceRatio) {
+        this.priceRatio = priceRatio;
         this.product = product;
         this.index = index;
         this.done = new boolean[product.steps.size()];
@@ -53,11 +61,20 @@ public final class OrderLine {
     /** Boy hatası var mı (seçim yapıldı ve istenenden farklı). */
     public boolean sizeMismatch() { return hasSize() && chosenSize != null && chosenSize != size; }
 
-    /** Boya göre fiyat (TL). */
+    /** Boya göre satış fiyatı (TL): referans fiyat × oyuncunun belirlediği oran (v2.5; sipariş anında sabitlenir). */
     public int price() {
+        int ref = referencePrice();
+        return priceRatio == 1.0 ? ref : (int) Math.round(ref * priceRatio);
+    }
+
+    /** Boya göre referans fiyat (TL; oran uygulanmadan, patates dahil). */
+    public int referencePrice() {
         int base = hasSize() ? (int) Math.round(product.price * size.priceMult) : product.price;
         return base + (isFries() ? Product.FRIES_PRICE : 0);
     }
+
+    /** Siparişteki fiyat oranı (1,0 = referans). */
+    public double getPriceRatio() { return priceRatio; }
 
     /** Kalem patatesli mi (adımlarda "Patates kızart" var). */
     public boolean isFries() { return product.isFries(); }

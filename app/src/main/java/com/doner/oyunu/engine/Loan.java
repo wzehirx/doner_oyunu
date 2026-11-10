@@ -12,6 +12,9 @@ public final class Loan {
     /** Vade (gün = taksit sayısı). */
     public final int term;
     public final int takenDay;
+    /** v2.6: kredi türü (normal, limitsiz kira kredisi, acil destek). Eski kayıtlarda NORMAL. */
+    public enum Kind { NORMAL, RENT, EMERGENCY }
+    public final Kind kind;
     /** Ödenmemiş toplam (anapara + faiz; vadesi gelmemiş taksitler dahil, gecikme bedeli hariç). */
     int remaining;
     /** Vadesi gelmiş ama ödenmemiş taksit tutarı (gecikmiş borç). */
@@ -25,7 +28,10 @@ public final class Loan {
     /** Toplam kaçan taksit. */
     int missedTotal;
 
-    Loan(int id, int principal, int interest, int term, int takenDay) {
+    Loan(int id, int principal, int interest, int term, int takenDay) { this(id, principal, interest, term, takenDay, Kind.NORMAL); }
+
+    Loan(int id, int principal, int interest, int term, int takenDay, Kind kind) {
+        this.kind = kind == null ? Kind.NORMAL : kind;
         this.id = id;
         this.principal = principal;
         this.interest = interest;
@@ -62,11 +68,14 @@ public final class Loan {
         return remainingPrincipal() + (int) Math.ceil(remainingInterest() * Bank.EARLY_INTEREST_SHARE) + fees;
     }
 
+    /** v2.6: en az bir taksit vadesi geldi mi (erken kapatma kredi notu ödülünün şartı). */
+    public boolean hasInstallmentHistory() { return installmentsLeft < term; }
+
     public boolean isClosed() { return remaining <= 0 && fees <= 0; }
 
     String serialize() {
         return principal + "," + interest + "," + term + "," + takenDay + "," + remaining + "," + dueNow + "," + fees + ","
-                + installmentsLeft + "," + missedStreak + "," + missedTotal;
+                + installmentsLeft + "," + missedStreak + "," + missedTotal + "," + kind.ordinal();
     }
 
     static Loan parse(int id, String v) {
@@ -75,7 +84,14 @@ public final class Loan {
         int[] n = new int[10];
         for (int i = 0; i < 10; i++) n[i] = Integer.parseInt(p[i].trim());
         if (n[0] <= 0 || n[1] < 0 || n[2] <= 0) return null;
-        Loan l = new Loan(id, n[0], n[1], n[2], Math.max(1, n[3]));
+        Kind kind = Kind.NORMAL; // v2.6: 11. alan (yoksa/bozuksa normal)
+        if (p.length >= 11) {
+            try {
+                int k = Integer.parseInt(p[10].trim());
+                if (k >= 0 && k < Kind.values().length) kind = Kind.values()[k];
+            } catch (NumberFormatException ignored) { }
+        }
+        Loan l = new Loan(id, n[0], n[1], n[2], Math.max(1, n[3]), kind);
         l.remaining = Math.max(0, Math.min(n[0] + n[1], n[4]));
         l.dueNow = Math.max(0, Math.min(l.remaining, n[5]));
         l.fees = Math.max(0, n[6]);

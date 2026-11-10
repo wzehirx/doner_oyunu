@@ -79,6 +79,25 @@ public class MainActivity extends Activity {
         return n;
     }
 
+    /** Brifingin fatura uyarılarını sesli söylediği gün (oyun ekranı aynı gün yinelemesin); -1: söylenmedi. */
+    public int briefedNoticesDay = -1;
+
+    private static final String KEY_BILL_TIP = "first_bill_tip";
+
+    /** İlk fatura öğreticisi gösterildi mi (yeni oyunda sıfırlanır). */
+    public boolean firstBillTipShown() { return prefs.getBoolean(KEY_BILL_TIP, false); }
+
+    public void markFirstBillTipShown() { prefs.edit().putBoolean(KEY_BILL_TIP, true).apply(); }
+
+    /** v2.6 iflas: yeni oyun; ayarlar ve en iyi gün rekoru korunur. */
+    public void restartAfterBankruptcy() {
+        resetNotice = null;
+        briefedNoticesDay = -1;
+        save = SaveData.restartAfterBankruptcy(save);
+        prefs.edit().putBoolean(KEY_STARTED, true).putBoolean(KEY_BILL_TIP, false).apply();
+        saveNow();
+    }
+
     public boolean hasGame() { return prefs.getBoolean(KEY_STARTED, false); }
 
     public void saveNow() {
@@ -97,7 +116,8 @@ public class MainActivity extends Activity {
         resetNotice = null; // yeni oyun zaten sıfırdan: dönem bildirimi gereksiz
         SaveData s = SaveData.newGameKeepingSettings(save);
         save = s;
-        prefs.edit().putBoolean(KEY_STARTED, true).apply();
+        briefedNoticesDay = -1;
+        prefs.edit().putBoolean(KEY_STARTED, true).putBoolean(KEY_BILL_TIP, false).apply();
         saveNow();
     }
 
@@ -161,17 +181,47 @@ public class MainActivity extends Activity {
         }, dur + 40);
     }
 
-    /** Ekran değişince başlığa odak (TalkBack) / başlığı seslendirme (TTS). */
+    /**
+     * Ekran değişince odak. TTS: başlığa odak + başlığı seslendirme. TalkBack (v2.6): pencere başlığını (pane title)
+     * TalkBack kendisi okur; odak da başlığa giderse başlık İKİ KEZ okunuyordu. Bu yüzden TalkBack açıkken odak başlıktan
+     * sonraki ilk içerik öğesine taşınır (başlık bir kez, ardından ilk bilgi satırı okunur).
+     */
     private void moveFocus(Screen s) {
         View f = s.focusTarget();
+        boolean tb = speaker.isTalkBackOn();
+        if (tb && Build.VERSION.SDK_INT >= 28 && f != null && f == s.titleTarget() && currentView != null) {
+            View c = firstContentAfter(currentView, f);
+            if (c != null) f = c;
+        }
         if (f != null) {
             f.requestFocus();
             f.sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_FOCUSED);
-            if (speaker.isTalkBackOn()) {
-                f.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null);
-            }
+            if (tb) f.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null);
         }
         speaker.screenChanged(s.title());
+    }
+
+    /** Ağaç sırasında {@code title}'dan sonraki ilk görünür, erişilebilir, odaklanabilir yaprak (yoksa null). */
+    static View firstContentAfter(View root, View title) {
+        boolean[] seen = {false};
+        return firstContent(root, title, seen);
+    }
+
+    private static View firstContent(View v, View title, boolean[] seen) {
+        if (v.getVisibility() != View.VISIBLE
+                || v.getImportantForAccessibility() == View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS) return null;
+        if (v == title) { seen[0] = true; return null; }
+        boolean leaf = (v.isFocusable() || v.isClickable()) && !(v instanceof android.widget.ScrollView)
+                && v.getImportantForAccessibility() != View.IMPORTANT_FOR_ACCESSIBILITY_NO;
+        if (seen[0] && leaf) return v;
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) {
+                View r = firstContent(g.getChildAt(i), title, seen);
+                if (r != null) return r;
+            }
+        }
+        return null;
     }
 
     /** Aynı ekran içinde bir görünüme odak taşı (ör. duraklatma paneli). */
@@ -182,6 +232,15 @@ public class MainActivity extends Activity {
         if (speaker.isTalkBackOn()) {
             f.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null);
         }
+    }
+
+    /**
+     * İşlem sonucu (v2.6, tek odak + tek duyuru): odaktaki öğe ekrandan kalktıysa odağı {@code f}'ye taşır (null: odak
+     * yerinde kalır), SONRA sonucu söyler. TalkBack'te duyuru odak okumasının arkasına sıralanır (yarışmaz).
+     */
+    public void focusThenSay(View f, String text) {
+        if (f != null) { focusOn(f); speaker.forceAfterFocus(text); }
+        else speaker.force(text);
     }
 
     // ------------------------------------------------------------------ yaşam döngüsü

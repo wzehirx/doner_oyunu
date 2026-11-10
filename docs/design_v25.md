@@ -140,3 +140,20 @@ Kaynak: oyuncu geri bildirimi *"Konuşmada tutarsızlıklar var. 'Stoğu oku' ba
 - **Yeni ürün sesleri** (yeni ses yok): çay/şalgam/çorba dökme, su dolap + şişe/kutu açma, sütlaç dolap, baklava sarma, çorbanın limonu sebze sesi; köfte/tantuni/kaşar Ocak cızırtısı.
 - **Sıfırlama bildirimi:** eski dönem kaydı açılışta menüde bir kez görsel kart ve sesli "Yeni sürüm: ilerlemen sıfırlandı, ayarların korundu." (ayrıntı `Narrator.progressResetText`); bayrak hemen temizlenip kaydedilir; "Yeni oyun" bildirimi düşürür.
 - **Kararsız test:** `MonkeyLifecycleTest.gameMonkeyTalkBackDay3Apprentice1` hatası UI hatası değil test botu hatasıydı: rastgele dokunuş sipariş listesini (sonra da Duraklat > Faturalar'ı) açıyor, liste açıkken ana ekran TalkBack'ten gizli olduğundan istasyon düğmesi bulunamıyordu. `UiBot` önce paneli kapatır; tüm arayüz testlerinde motor tohumu sabit (`UiHarness.DEFAULT_SEED`, maymunlarda kendi tohumları; eskiden hata veren tohumlar gerileme testi).
+
+## 12. v2.6 motor düzeltmeleri (denetim: `docs/denetim_v25_fable.md`; API: `engine_api.md` §C)
+
+İlke aynı: her kural tek cümle. Kayıt dönemi artmadı (ilerleme korunur).
+
+1. **Acil destek**: kasa önerilen stoğa yetmiyorsa banka, limit/engel/kredi sayısı aramadan "önerilen stok − kasa" kadar (100'e yuvarlı, en az 500) 10 günlük, en yüksek faizli bir destek kredisi verir; aynı anda yalnızca bir tane. Sıfır kasa + boş stok tuzağından her zaman bir çıkış vardır.
+2. **Süresiz gün kilidi**: hiçbir sipariş ilerletilemiyor (hazır yok, iş yok, adım yok) ve eksik malzemeyi acil almaya para yetmiyorsa 20 saniye sonra bekleyen müşteriler cezasız gider ve gün biter; gün asla sonsuza dek sürmez.
+3. **İflas**: (a) tahliye kararı + kasa kiraya yetmiyor + kira kredisi alınamıyor; (b) stok ve kasa tek ürüne yetmiyor + kredi ve acil destek yok; (c) art arda 3 başarısız gün + kredi/destek yok + kasa önerilen stoğun yarısından az. Motor yalnızca bildirir; oyuncuya "Dükkân kapandı, N. güne ulaştın" ve "Yeniden başla (ayarlar ve rekor korunur)" sunulur.
+4. **Gün içi maaş**: maaş borcu gün içinde ödenip çırak gelirse, o günün maaşı akşam yazılır.
+5. **Fiyat gün başında donar**: gün içinde fiyat değiştirmek yalnızca ertesi günü etkiler (talep, geliş, sipariş fiyatı).
+6. **Kira kredisi sınırı**: limit dışı kira kredisi en çok 2 tane açık olabilir; üçüncüsü verilmez (borç sarmalı iflasla biter).
+7. **Kredi notu çiftliği kapandı**: erken kapatmada +3 not yalnızca kredi önceki bir gün alındıysa ve en az bir taksiti vadesine geldiyse.
+8. **Kesinti kalkınca**: gün içinde fatura ödenince menüyle birlikte talep ve süresiz kota da düzelir.
+9. **Otomatik fatura ödemesi (ayar, varsayılan açık)**: gün açılışında geciken, gün sonunda son günü gelen faturalar kasa yetiyorsa (önerilen stok parası kasada kalacak biçimde) otomatik ödenir; yetmezse normal gecikme ve kesinti akışı sürer. Kapatan oyuncu v2.5 gibi elle öder.
+
+Testler: `V26EngineTest` (20 test). Bilinçli uyarlanan v2.5 testleri: elle ödeme/ödememe senaryoları otomatik ödemeyi kapatır (`V25FinanceTest.day`, `V25BalanceTest.neverPayingBot…`, `V25UiTest` üç kesinti testi); aynı gün al-kapat kredi notu beklentisi 63 → 60 (`V25BankPricingTest`, `V25UiTest.bankScreen…`).
+

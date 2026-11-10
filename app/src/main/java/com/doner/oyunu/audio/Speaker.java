@@ -1,5 +1,6 @@
 package com.doner.oyunu.audio;
 
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.content.Context;
 import android.media.AudioAttributes;
 import android.media.AudioManager;
@@ -58,6 +59,7 @@ public final class Speaker implements Narrator.Output {
     private final List<String[]> pendingBeforeReady = new ArrayList<>();
     private final Set<String> utterances = new HashSet<>();
     private int utteranceCounter;
+    private String lastUtterance;
 
     public Speaker(Context context) {
         ctx = context.getApplicationContext();
@@ -100,9 +102,18 @@ public final class Speaker implements Narrator.Output {
         if (tts != null && ttsReady) try { tts.setSpeechRate(rate); } catch (Exception ignored) { }
     }
 
+    /**
+     * Konuşan bir ekran okuyucu (TalkBack vb.) açık mı (v2.6). Eskiden yalnızca "dokunarak keşfet" açıksa true dönüyordu;
+     * dokunarak keşfi kapatıp TalkBack kullanan oyuncuda kendi TTS'imiz de konuşuyor, TalkBack ile ÇİFT konuşma oluyordu.
+     * Şimdi: erişilebilirlik açık VE (dokunarak keşif açık YA DA sesli geri bildirim veren bir servis çalışıyor).
+     */
     public boolean isTalkBackOn() {
-        try { return am != null && am.isEnabled() && am.isTouchExplorationEnabled(); }
-        catch (Exception e) { return false; }
+        try {
+            if (am == null || !am.isEnabled()) return false;
+            if (am.isTouchExplorationEnabled()) return true;
+            List<AccessibilityServiceInfo> l = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_SPOKEN);
+            return l != null && !l.isEmpty();
+        } catch (Exception e) { return false; }
     }
 
     // ------------------------------------------------------------------ Narrator.Output
@@ -114,7 +125,11 @@ public final class Speaker implements Narrator.Output {
         if (!enabled || text == null || text.isEmpty()) return;
         // "Hedefi oku" / "Eklenenleri oku" (panel okuma seçenekleri): oyuncunun açık isteği, her basışta okunur
         if (Narrator.CAT_INFO.equals(category)) { force(text); return; }
+        // v2.6: gerçek acil uyarı (hata/uyarı, sabır kritik) süren AÇIK OKUMAYI keser: uzun "Durumu oku" sürerken
+        // "sabır kritik" beklemez. (Sıra kuralı değişmedi; kesmeyi Speaker yapar.)
+        if (urgent && (Narrator.CAT_ALERT.equals(category) || Narrator.CAT_PATIENCE.equals(category))) cutExplicit();
         queue.say(text, urgent, category, fresh);
+        interruptNext = false;
         kick();
     }
 
@@ -136,13 +151,24 @@ public final class Speaker implements Narrator.Output {
      * görünmez bir ayırt edici ekle ({@link #DISTINCT_MARK}) ve dokunma olayından sonra kısa gecikmeyle duyurulur;
      * TTS'de QUEUE_FLUSH ile önceki konuşma kesilir.
      */
-    public void force(String text) {
+    public void force(String text) { forceAfter(text, EXPLICIT_DELAY_MS); }
+
+    /**
+     * Odak taşındıktan SONRA söylenecek açık okuma (v2.6): TalkBack açıkken odak okuması önce başlasın, duyuru onun
+     * arkasına sıralansın diye {@link #FOCUS_SAY_DELAY_MS} bekler (odak + duyuru yarışmaz). TTS'de hemen söylenir.
+     */
+    public void forceAfterFocus(String text) { forceAfter(text, FOCUS_SAY_DELAY_MS); }
+
+    private void forceAfter(String text, long talkBackDelay) {
         if (text == null || text.isEmpty()) return;
         explicitText = text;
         handler.removeCallbacks(explicitRunner);
-        if (isTalkBackOn()) handler.postDelayed(explicitRunner, EXPLICIT_DELAY_MS);
+        if (isTalkBackOn()) handler.postDelayed(explicitRunner, talkBackDelay);
         else explicitRunner.run();
     }
+
+    /** Odak taşıma ile ardından gelen duyuru arasındaki süre (TalkBack). */
+    public static final long FOCUS_SAY_DELAY_MS = 180;
 
     /** TalkBack açıkken açık okuma, dokunma (TYPE_VIEW_CLICKED) olayından sonra gelsin diye bu kadar ms bekler. */
     public static final long EXPLICIT_DELAY_MS = 90;
@@ -171,7 +197,8 @@ public final class Speaker implements Narrator.Output {
                 }
             }
             lastExplicitSent = t;
-            queue.sayExplicit(t);
+            explicitStarting = true;
+            try { queue.sayExplicit(t); } finally { explicitStarting = false; }
             kick();
         }
     };
@@ -185,6 +212,7 @@ public final class Speaker implements Narrator.Output {
     /** Uzun metin (yardım): bayatlamaz, sıraya eklenir; flush ise öncekileri keser. */
     public void speakLong(String text, boolean flush) {
         if (text == null || text.isEmpty()) return;
+        if (flush && isExplicitSpeaking()) { explicitUntil = 0; explicitUtterance = null; interruptNext = true; }
         queue.sayLong(text, flush);
         kick();
     }
@@ -201,6 +229,10 @@ public final class Speaker implements Narrator.Output {
     public void stop() {
         handler.removeCallbacks(explicitRunner);
         explicitText = null;
+        explicitUntil = 0;
+        speechUntil = 0;
+        explicitUtterance = null;
+        interruptNext = false;
         queue.clear();
         handler.removeCallbacks(pumper);
         pendingBeforeReady.clear();
@@ -222,7 +254,40 @@ public final class Speaker implements Narrator.Output {
     }
 
     // ------------------------------------------------------------------ sıra çalıştırma
-    private static long estimateMs(String t) { return 450 + (long) t.length() * 62; }
+    /** Tahmini konuşma süresi (normal hızda, ms). */
+    static long estimateMs(String t) { return 450 + (long) t.length() * 62; }
+
+    /**
+     * v2.6: sıranın bir duyuruyu "meşgul" saydığı en uzun süre (ms). TalkBack duyurusunun bitiş geri çağrısı yoktur; süre
+     * tahminle kurulur. Hızlı TalkBack kullanan oyuncuda 250 karakterlik okuma 16 sn meşgul sayılıyor, bu sırada gelen
+     * olağan duyurular ({@link SpeechQueue#STALE_MS} = 3,5 sn) bayatlayıp ATILIYORDU. Sınır bayatlık süresinden kısadır:
+     * bekleyen duyuru atılmadan söylenir; TalkBack kendi kuyruğunda okumanın arkasına sıralar. TTS'de yalnızca açık okumaya
+     * uygulanır (sonrakiler QUEUE_ADD ile okumanın arkasına eklenir).
+     */
+    public static final long MAX_BUSY_MS = 3000;
+
+    /** Açık okuma şu an başlatılıyor (sıranın oynatıcı çağrısı içinde). */
+    private boolean explicitStarting;
+    /** Süren açık okumanın tahmini GERÇEK bitişi (uptime ms; 0 = yok) ve TTS söz kimliği. */
+    private long explicitUntil;
+    private String explicitUtterance;
+    /** TalkBack duyurularının tahmini gerçek bitişi (müzik kısma / ses odağı için; sıra bundan önce açılabilir). */
+    private long speechUntil;
+    /** Sıradaki oynatma süren konuşmayı kessin (acil uyarı açık okumayı kesti). */
+    private boolean interruptNext;
+
+    /** Açık okuma hâlâ sürüyor mu (tahmini). */
+    public boolean isExplicitSpeaking() { return SystemClock.uptimeMillis() < explicitUntil; }
+
+    /** Süren açık okumayı keser: sıra hemen açılır, sıradaki duyuru konuşanı keserek söylenir. */
+    private void cutExplicit() {
+        long now = SystemClock.uptimeMillis();
+        if (now >= explicitUntil) return;
+        explicitUntil = 0;
+        explicitUtterance = null;
+        interruptNext = true;
+        queue.finished(now); // meşgul süresini bitirir; bekleyen acil varsa o söylenir
+    }
 
     private final Runnable pumper = new Runnable() {
         @Override public void run() { kick(); }
@@ -234,18 +299,35 @@ public final class Speaker implements Narrator.Output {
         queue.pump(now);
         handler.removeCallbacks(pumper);
         long w = queue.nextWakeup(now);
+        if (w < 0 && now < speechUntil && !isTtsActive()) w = speechUntil - now; // TalkBack hâlâ okuyor: ses odağı kalsın
         if (w >= 0) handler.postDelayed(pumper, w + 15);
         else if (speaking && !isTtsActive()) endSpeech();
     }
 
-    /** SpeechQueue oynatıcısı: bir duyuruyu hemen söyler, beklenen süreyi (ms) döner. */
+    /** SpeechQueue oynatıcısı: bir duyuruyu hemen söyler, sıranın meşgul sayacağı süreyi (ms) döner. */
     private long playNow(String text, boolean interrupt) {
+        boolean explicit = explicitStarting;
+        boolean cut = interruptNext;
+        interruptNext = false;
+        long now = SystemClock.uptimeMillis();
         if (isTalkBackOn() && anchor != null) {
             beginSpeech();
+            long est = estimateMs(text);
+            if (cut) try { am.interrupt(); } catch (Exception ignored) { } // TalkBack'in süren okumasını sustur
             try { anchor.announceForAccessibility(text); } catch (Exception ignored) { }
-            return estimateMs(text);
+            if (explicit) explicitUntil = now + est;
+            else if (interrupt || cut) explicitUntil = 0;
+            speechUntil = interrupt || cut ? now + est : Math.max(speechUntil, now) + est;
+            return Math.min(est, MAX_BUSY_MS);
         }
-        return speakTtsNow(text, interrupt);
+        long est = speakTtsNow(text, interrupt || cut);
+        if (explicit) {
+            explicitUntil = est > 0 ? now + est : 0;
+            explicitUtterance = lastUtterance;
+            return Math.min(est, MAX_BUSY_MS);
+        }
+        if (interrupt || cut) { explicitUntil = 0; explicitUtterance = null; }
+        return est;
     }
 
     private boolean isTtsActive() { return !utterances.isEmpty() || !pendingBeforeReady.isEmpty(); }
@@ -289,6 +371,7 @@ public final class Speaker implements Narrator.Output {
         handler.post(new Runnable() {
             @Override public void run() {
                 utterances.remove(id);
+                if (id != null && id.equals(explicitUtterance)) { explicitUtterance = null; explicitUntil = 0; }
                 if (!isTtsActive()) queue.finished(SystemClock.uptimeMillis());
                 kick();
             }
@@ -298,6 +381,7 @@ public final class Speaker implements Narrator.Output {
     /** TTS ile söyler; beklenen süreyi döner (bitiş geri çağrısı sırayı erken açar). */
     private long speakTtsNow(String text, boolean interrupt) {
         ensureTts();
+        lastUtterance = null;
         long est = (long) (estimateMs(text) / Math.max(0.5f, rate)) + 800;
         if (tts == null) return 0;
         if (!ttsReady) {
@@ -306,6 +390,7 @@ public final class Speaker implements Narrator.Output {
             return est;
         }
         String id = "u" + (++utteranceCounter);
+        lastUtterance = id;
         try {
             if (interrupt) utterances.clear();
             utterances.add(id);

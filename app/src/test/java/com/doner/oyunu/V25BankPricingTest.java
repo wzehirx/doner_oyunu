@@ -60,9 +60,9 @@ public class V25BankPricingTest {
         assertEquals(Bank.Result.OK, Bank.repay(s, l.id));
         assertEquals(money - 60, s.money);
         assertTrue(s.loans.isEmpty());
-        assertEquals(credit + 3, s.creditScore);
+        assertEquals("v2.6: aynı gün al-kapat kredi notu ödülü vermez", credit, s.creditScore);
         assertTrue(Narrator.quoteText(q).equals("3000 lira, 10 gün: faiz 240 lira, günlük taksit 324 lira, toplam 3240 lira."));
-        assertTrue(Narrator.bankText(s).startsWith("Kredi notu 63. Limit "));
+        assertTrue(Narrator.bankText(s).startsWith("Kredi notu 60. Limit "));
     }
 
     @Test public void installmentsAreCollectedAtDayEndAndMissedOnesCostFeesAndCredit() {

@@ -9,16 +9,46 @@ import com.doner.oyunu.engine.Narrator;
 
 import java.util.List;
 
-/** Gün brifingi: yeni ürünler, hedef, oyun akışı (v0.7; buradan da değişir), öğretici notu. */
+/**
+ * Gün brifingi: yeni ürünler, hedef, oyun akışı (v0.7; buradan da değişir), öğretici notu.
+ *
+ * <p><b>v2.6:</b> önemli satırlar (uyarı, kasa, fatura, yeni ürün/malzeme, stok) üstte; her gün aynı olan açıklamalar
+ * (hedef, menü, hazırlık, süre baskısı, TalkBack notu) 2. günden itibaren "Ayrıntıları göster" düğmesinin altında
+ * (TalkBack'te 12-15 satır yerine 5-7). Fatura uyarıları sesli olarak KISA özetle söylenir ({@link Texts#noticesBrief});
+ * oyun ekranı aynı günün uyarısını yinelemez. Geciken faturalar otomatik ödeme açıksa burada ödenir. İflasta "Güne başla"
+ * yerine "Yeni oyun"; kasa stoğa yetmiyor ve banka limiti de yoksa "Acil destek kredisi al".
+ */
 public final class BriefingScreen extends Screen {
     private TextView flowTv;
     private android.widget.Button flowBtn;
+    /** Gün açılışında otomatik ödenen faturaların cümlesi (yoksa ""). */
+    private String autoPaidLine = "";
+    private com.doner.oyunu.engine.Finance.Bankruptcy bankrupt = com.doner.oyunu.engine.Finance.Bankruptcy.NONE;
+    private boolean aid;
+
+    /** Her gün aynı olan açıklama satırı mı (2. günden itibaren "Ayrıntılar" altında). */
+    static boolean isDetailLine(String l) {
+        return l.startsWith("Hedef:") || l.startsWith("Bugünkü menü:") || l.startsWith("Önce hazırlık aşaması")
+                || l.startsWith("Süre baskısı:") || l.startsWith("İstasyon seçeneklerini") || l.startsWith("Oyun akışı:")
+                || l.startsWith("Bugün yeni ürün yok") || l.startsWith("Stoğun bugün için yeterli");
+    }
 
     public BriefingScreen(MainActivity a) { super(a); }
 
     @Override public String title() { return "Gün " + a.save.day + " brifingi"; }
 
     @Override public View create() {
+        // v2.6: otomatik ödeme açıksa geciken faturalar (kasa yetiyorsa) gün açılmadan ödenir; kesinti hiç başlamaz
+        List<com.doner.oyunu.engine.Bill> paid = com.doner.oyunu.engine.Finance.autoPayAtOpen(a.save);
+        if (!paid.isEmpty()) {
+            List<String> n = new java.util.ArrayList<>();
+            for (com.doner.oyunu.engine.Bill b : paid) n.add(b.type.displayName.toLowerCase(new java.util.Locale("tr")) + " " + b.getPaid() + " lira");
+            autoPaidLine = "Otomatik ödendi: " + Texts.join(n) + ".";
+            a.saveNow();
+        }
+        bankrupt = com.doner.oyunu.engine.Finance.bankruptcy(a.save);
+        aid = bankrupt == com.doner.oyunu.engine.Finance.Bankruptcy.NONE && com.doner.oyunu.engine.Bank.emergencyAidAvailable(a.save)
+                && com.doner.oyunu.engine.Bank.available(a.save) < com.doner.oyunu.engine.Bank.emergencyAidAmount(a.save);
         LinearLayout root = rootColumn();
         TextView t = makeTitle("Gün " + a.save.day);
         t.setContentDescription("Gün " + a.save.day + " brifingi");
@@ -44,6 +74,17 @@ public final class BriefingScreen extends Screen {
         root.addView(stat, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 0, 0, 6));
 
         LinearLayout body = scrollBody(root);
+        if (bankrupt != com.doner.oyunu.engine.Finance.Bankruptcy.NONE) body.addView(alertCard(Texts.bankruptcyText(bankrupt, a.save.day)), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 5, 0, 5));
+        if (aid) body.addView(alertCard(Texts.emergencyAidNote(a.save)), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 5, 0, 5));
+        if (!autoPaidLine.isEmpty()) {
+            LinearLayout c = card();
+            TextView tv = Ui.label(ctx, autoPaidLine, 18, Theme.GREEN, true);
+            tv.setFocusable(true);
+            c.addView(tv);
+            body.addView(c, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 5, 0, 5));
+        }
+        final List<View> details = new java.util.ArrayList<>();
+        boolean collapse = a.save.day > 1 && a.save.flowChosen;
         List<String> lines = Texts.briefingLines(a.save);
         java.util.Set<String> warn = new java.util.HashSet<>(com.doner.oyunu.engine.Finance.notices(a.save, a.save.day));
         String cut = Texts.utilitySummary(a.save);
@@ -64,9 +105,29 @@ public final class BriefingScreen extends Screen {
             }
             c.addView(tv);
             body.addView(c, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 5, 0, 5));
+            if (collapse && !warn.contains(l) && isDetailLine(l)) { c.setVisibility(View.GONE); details.add(c); }
+        }
+        if (!details.isEmpty()) {
+            final android.widget.Button more = Ui.button(ctx, "Ayrıntıları göster", Ui.SECONDARY);
+            more.setContentDescription("Ayrıntıları göster, " + details.size() + " satır");
+            tap(more, new Runnable() {
+                @Override public void run() {
+                    for (View d : details) d.setVisibility(View.VISIBLE);
+                    more.setVisibility(View.GONE);
+                    // düğme kalktı: odak açılan ilk satıra, tek duyuru
+                    a.focusThenSay(((android.view.ViewGroup) details.get(0)).getChildAt(0), details.size() + " ayrıntı satırı açıldı.");
+                }
+            });
+            body.addView(more, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 5, 0, 5));
         }
 
         LinearLayout bar = column();
+        if (aid) {
+            android.widget.Button ab = button(Texts.emergencyAidLabel(a.save), Ui.GOLD, new Runnable() {
+                @Override public void run() { takeAid(); }
+            });
+            bar.addView(ab, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 2));
+        }
         // v2.5: Faturalar, Fiyatlar, Banka (tek dokunuş; Faturalar açık fatura sayısını söyler)
         LinearLayout fin = new LinearLayout(ctx);
         fin.setOrientation(LinearLayout.HORIZONTAL);
@@ -82,7 +143,7 @@ public final class BriefingScreen extends Screen {
             @Override public void run() { a.show(new BankScreen(a, Nav.BRIEFING)); }
         });
         for (android.widget.Button b : new android.widget.Button[]{billsBtn, pricesBtn, bankBtn}) {
-            b.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15);
+            b.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16);
             b.setPadding(dp(4), dp(8), dp(4), dp(8));
         }
         fin.addView(billsBtn, Ui.lp(ctx, 0, Ui.WRAP, 1.2f, 0, 0, 3, 0));
@@ -99,7 +160,12 @@ public final class BriefingScreen extends Screen {
         }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 6));
         LinearLayout row = new LinearLayout(ctx);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        if (evicted()) {
+        if (bankrupt != com.doner.oyunu.engine.Finance.Bankruptcy.NONE) {
+            // v2.6 iflas: çıkış yolu yok; yeni oyun (ayarlar ve en iyi gün korunur)
+            row.addView(button("Yeni oyun", Ui.GOLD, new Runnable() {
+                @Override public void run() { a.restartAfterBankruptcy(); a.startBriefing(); }
+            }), Ui.lp(ctx, 0, Ui.WRAP, 1f, 0, 0, 6, 0));
+        } else if (evicted()) {
             // v2.5 tahliye: dükkân açılamaz; "Güne başla" yerine faturalara yönlendir
             row.addView(button("Faturalar: kirayı öde", Ui.GOLD, new Runnable() {
                 @Override public void run() { a.show(new BillsScreen(a, Nav.BRIEFING)); }
@@ -116,6 +182,37 @@ public final class BriefingScreen extends Screen {
         root.addView(bar);
         return root;
     }
+
+    private LinearLayout alertCard(String text) {
+        LinearLayout c = card();
+        c.setBackground(Ui.round(ctx, Theme.CARD_HI, Theme.RED, 3, 16));
+        TextView tv = Ui.label(ctx, text, 19, Theme.GOLD, true);
+        tv.setFocusable(true);
+        c.addView(tv);
+        return c;
+    }
+
+    /** Acil destek kredisi: para kasaya girer, brifing yenilenir. */
+    private void takeAid() {
+        int amount = com.doner.oyunu.engine.Bank.emergencyAidAmount(a.save);
+        com.doner.oyunu.engine.Bank.Result r = com.doner.oyunu.engine.Bank.takeEmergencyAid(a.save);
+        if (r == com.doner.oyunu.engine.Bank.Result.OK) {
+            a.sound.play("sfx_coin");
+            a.haptics.buy();
+            a.saveNow();
+            aidTaken = "Acil destek kredisi alındı: " + amount + " lira. Kasada " + a.save.money + " lira. Markete uğra.";
+            BriefingScreen next = new BriefingScreen(a);
+            next.aidTaken = aidTaken;
+            a.show(next);
+        } else {
+            a.sound.play("sfx_error");
+            a.haptics.error();
+            a.speaker.force("Acil destek alınamadı. " + Texts.bankResult(r));
+        }
+    }
+
+    /** Yenilenen brifingin girişte söyleyeceği sonuç (acil destek alındı). */
+    private String aidTaken;
 
     /** Oyun akışını sıradakine geçirir (Rahat → Dengeli → Gerçekçi), kaydeder ve kısaca duyurur. */
     private void cycleFlow() {
@@ -134,17 +231,26 @@ public final class BriefingScreen extends Screen {
     private boolean evicted() { return com.doner.oyunu.engine.UtilityStatus.of(a.save, a.save.day).evicted(); }
 
     /**
-     * v2.5: fatura/kesinti/maaş uyarıları kısa ve sesli (önce en ağır; motor gün açılışında yeniden söyler). İlk seferde
-     * (akış henüz seçilmediyse) kısa sesli soru.
+     * Girişte sesli: iflas (varsa yalnızca o); yoksa otomatik ödenenler + fatura uyarılarının KISA özeti (v2.6; uzun
+     * metinler kartlarda ve Faturalar ekranında; oyun ekranı aynı günün uyarısını yinelemez). İlk seferde (akış henüz
+     * seçilmediyse) kısa sesli soru.
      */
     @Override public void onEnter() {
-        List<String> n = com.doner.oyunu.engine.Finance.notices(a.save, a.save.day);
-        if (!n.isEmpty()) {
-            StringBuilder sb = new StringBuilder();
-            for (String x : n) { if (sb.length() > 0) sb.append(' '); sb.append(x); }
-            if (evicted()) sb.append(" Faturalar düğmesinden kirayı öde.");
-            a.speaker.say(sb.toString(), false, com.doner.oyunu.engine.Narrator.CAT_BILLS, null);
+        if (bankrupt != com.doner.oyunu.engine.Finance.Bankruptcy.NONE) {
+            a.speaker.say(Texts.bankruptcyText(bankrupt, a.save.day), true);
+            return;
         }
+        StringBuilder sb = new StringBuilder();
+        if (aidTaken != null) sb.append(aidTaken);
+        if (!autoPaidLine.isEmpty()) sb.append(sb.length() > 0 ? " " : "").append(autoPaidLine);
+        String brief = Texts.noticesBrief(a.save, a.save.day);
+        if (!brief.isEmpty()) {
+            sb.append(sb.length() > 0 ? " " : "").append(brief);
+            if (evicted()) sb.append(" Faturalar düğmesinden kirayı öde.");
+            a.briefedNoticesDay = a.save.day;
+        }
+        if (aid) sb.append(sb.length() > 0 ? " " : "").append(Texts.emergencyAidNote(a.save));
+        if (sb.length() > 0) a.speaker.say(sb.toString(), false, com.doner.oyunu.engine.Narrator.CAT_BILLS, null);
         if (!a.save.flowChosen) {
             a.speaker.say("Oyun akışı şu an " + a.save.flowMode.displayName + ". Rahat, Dengeli ya da Gerçekçi seçmek için Oyun akışı düğmesine dokun.", false);
         }

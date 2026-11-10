@@ -105,8 +105,13 @@ public final class GameEngine {
     private float dayClock;
     /** Otomatik gelen müşteri sayısı (süresiz modda kotayı doldurur; senaryo siparişleri sayılmaz). */
     private int arrived;
-    /** Günün müşteri kotası (gün başında yükseltmelerle sabitlenir). */
-    private final int quota;
+    /** Günün müşteri kotası (gün başında yükseltmelerle sabitlenir; v2.6: gün içinde kesinti kalkınca yeniden hesaplanır). */
+    private int quota;
+    /** v2.6: süresiz günde ilerleme olmadan geçen süre (yapılabilir iş, stok ve acil alım parası yok). */
+    private float stuckTime;
+    private float stuckCheck;
+    /** v2.6: süresiz günde bu kadar saniye hiçbir şey yapılamazsa gün kapanır (bekleyenler cezasız gider). */
+    public static final float STUCK_SECONDS = 20f;
     private float spawnTimer = 1.5f;
     private int nextOrderId = 1;
     private int selectedId = -1;
@@ -133,7 +138,7 @@ public final class GameEngine {
         this.util = v06Balance ? UtilityStatus.NONE : UtilityStatus.of(save, day);
         this.menu = buildMenu();
         computeDemand();
-        this.quota = cfg.quota(upgrades.arrivalMult(), priceArrival * util.arrivalMult() * DayConfig.untimedStarFactor(save.stars));
+        this.quota = computeQuota();
         this.rng = new Random(seed);
         this.friesRng = new Random(mix(seed ^ 0x5DEECE66DL));
         this.nameCursor = rng.nextInt(Catalog.NAMES.length);
@@ -163,14 +168,27 @@ public final class GameEngine {
         return out;
     }
 
-    /** Fiyatlara göre tip talepleri ve genel geliş çarpanı (tüm fiyatlar %100 ise hepsi 1). */
+    /**
+     * Fiyatlara göre tip talepleri ve genel geliş çarpanı (tüm fiyatlar %100 ise hepsi 1). v2.6: fiyatlar motor kurulurken
+     * dondurulur ({@link #dayPrices}); gün içinde {@code save.prices} değişse de bugünü etkilemez.
+     */
     private void computeDemand() {
         typeDemand.clear();
         priceArrival = 1.0;
-        if (v06Balance || Pricing.allDefault(save)) return;
-        for (CustomerType t : Catalog.typesForDay(day)) typeDemand.put(t, Pricing.typeDemand(save, t, menu, save.stars));
-        priceArrival = Pricing.arrivalMultiplier(save, menu, Catalog.typesForDay(day), upgrades, save.stars);
+        if (v06Balance || Pricing.allDefault(dayPrices())) return;
+        for (CustomerType t : Catalog.typesForDay(day)) typeDemand.put(t, Pricing.typeDemand(dayPrices(), t, menu, save.stars));
+        priceArrival = Pricing.arrivalMultiplier(dayPrices(), menu, Catalog.typesForDay(day), upgrades, save.stars);
     }
+
+    /** v2.6: bugünün donmuş fiyatları (gün başı anlık görüntüsü; yalnızca fiyat okumak için). */
+    private SaveData dayPrices() { return snapshot; }
+
+    private int computeQuota() {
+        return cfg.quota(upgrades.arrivalMult(), priceArrival * util.arrivalMult() * DayConfig.untimedStarFactor(save.stars));
+    }
+
+    /** v2.6: bugün kullanılan (gün başında dondurulan) fiyat yüzdesi. */
+    public int getDayPricePercent(String productId) { return Pricing.percent(dayPrices(), productId); }
 
     private double demandOf(CustomerType t) { Double d = typeDemand.get(t); return d == null ? 1.0 : d; }
 
@@ -318,15 +336,47 @@ public final class GameEngine {
         int due = save.wageDebt;
         Finance.PayResult r = Finance.payWages(save);
         if (r == Finance.PayResult.NOT_ENOUGH_MONEY) for (GameListener l : snap()) l.onNotEnoughMoney(due);
-        if (r == Finance.PayResult.OK) refreshUtilities();
+        if (r == Finance.PayResult.OK) {
+            refreshUtilities();
+            // v2.6: gün içinde gelen çırağın maaşı akşam yazılır (bedava çırak günü olmasın)
+            workedApprenticeLevel = Math.max(workedApprenticeLevel, getApprenticeLevel());
+        }
         return r;
     }
 
+    /** v2.6: kesinti/menü değişince talep ve (süresiz) kota da yenilenir. */
     private void refreshUtilities() {
         if (v06Balance) return;
         util = UtilityStatus.of(save, day);
         menu = buildMenu();
+        computeDemand();
+        quota = computeQuota();
     }
+
+    // ---------------------------------------------------------------- v2.6: otomatik ödeme, acil destek, iflas
+    /** Otomatik fatura ödemesi açık mı ({@link SaveData#autoPayBills}; varsayılan açık). */
+    public boolean isAutoPayBills() { return save.autoPayBills; }
+
+    /**
+     * Otomatik fatura ödemesini açar/kapatır (kayda yazılır). Açıkken gün açılışında geciken, gün sonunda son günü gelen
+     * faturalar kasa (önerilen stok payı bırakarak) yetiyorsa ödenir; yetmezse normal kesinti akışı sürer.
+     */
+    public void setAutoPayBills(boolean on) { save.autoPayBills = on; }
+
+    /** Acil destek kredisi alınabilir mi ({@link Bank#emergencyAidAvailable}). */
+    public boolean isEmergencyAidAvailable() { return !v06Balance && Bank.emergencyAidAvailable(save); }
+
+    /** Acil destek kredisini alır (gün içinde de; para hemen kasaya girer). Gün başarısız olursa geri alınır. */
+    public Bank.Result takeEmergencyAid() {
+        if (v06Balance) return Bank.Result.UNKNOWN;
+        Bank.Result r = Bank.takeEmergencyAid(save);
+        if (r == Bank.Result.OK) stuckTime = 0f;
+        return r;
+    }
+
+    /** Şu anki kayda göre iflas denetimi ({@link Finance#bankruptcy}); gün bittikten sonra ertesi gün için. */
+    public Finance.Bankruptcy getBankruptcy() { return v06Balance ? Finance.Bankruptcy.NONE : Finance.bankruptcy(save); }
+    public boolean isBankrupt() { return getBankruptcy() != Finance.Bankruptcy.NONE; }
 
     public Order getOrder(int id) {
         for (Order o : orders) if (o.id == id) return o;
@@ -863,6 +913,18 @@ public final class GameEngine {
     private void openEffects() {
         if (openEffectsDone) return;
         openEffectsDone = true;
+        if (!v06Balance && save.autoPayBills) {
+            // v2.6: geciken faturalar açılışta otomatik ödenir (kasa yetiyorsa); kesinti bugün hiç başlamaz
+            List<Bill> paid = Finance.autoPayAtOpen(save);
+            if (!paid.isEmpty()) {
+                refreshUtilities();
+                for (Bill b : paid) {
+                    summary.autoPaid.add(b);
+                    summary.autoPaidTotal += b.getPaid();
+                    for (GameListener l : snap()) l.onBillPaid(b, b.getPaid());
+                }
+            }
+        }
         workedApprenticeLevel = getApprenticeLevel();
         double spoil = util.drinkSpoilFraction();
         if (spoil > 0 && save.readyDrinks > 0) {
@@ -2206,8 +2268,44 @@ public final class GameEngine {
         }
         // 4) çırak
         runApprentices();
+        if (state != State.RUNNING) return;
+        // 4b) v2.6: süresiz günde kilitlenme (hiçbir şey yapılamıyor) -> gün kapanır
+        if (!timed && checkStuck(h)) return;
         // 5) gün sonu
         checkEnd();
+    }
+
+    /**
+     * v2.6 süresiz gün kilidi: bekleyen sipariş var ama hiçbiri teslime hazır değil, çalışan iş yok, hiçbir adım
+     * başlatılamıyor ve eksik malzemeyi acil almaya para yetmiyor; bu durum {@link #STUCK_SECONDS} sürerse bekleyenler
+     * cezasız gider ve gün biter ({@link DaySummary#stuckEnded}). true: gün kapandı.
+     */
+    private boolean checkStuck(float h) {
+        stuckCheck += h;
+        if (stuckCheck < 0.5f) return false;
+        float dt = stuckCheck;
+        stuckCheck = 0f;
+        if (!isStuckNow()) { stuckTime = 0f; return false; }
+        stuckTime += dt;
+        if (stuckTime < STUCK_SECONDS) return false;
+        int n = orders.size();
+        for (Order o : new ArrayList<>(orders)) remove(o);
+        summary.stuckEnded = true;
+        summary.stuckClosedOrders = n;
+        for (GameListener l : snap()) l.onDayStuck(n);
+        finishDay();
+        return true;
+    }
+
+    /** Şu an süresiz gün kilitli mi (bkz. {@link #checkStuck}). */
+    public boolean isStuckNow() {
+        if (state != State.RUNNING || isTimed() || orders.isEmpty() || !active.isEmpty()) return false;
+        for (Order o : orders) {
+            if (o.ready || hasDoable(o)) return false;
+            int cost = emergencyCostForMissing(o.id);
+            if (cost > 0 && cost <= save.money) return false;
+        }
+        return true;
     }
 
     private int maxQueue() { return cfg.baseQueue + upgrades.queueBonus(); }
@@ -2687,10 +2785,10 @@ public final class GameEngine {
         double pat = (type.patienceSeconds * cfg.patienceFactor + Order.estimateWork(items, sizes, v06Balance ? 1f : Order.PASSIVE_WORK_WEIGHT) * cfg.workPatience + hands)
                 * upgrades.patienceMult() * save.tempo * (v06Balance ? 1.0 : getFlowMode().patienceMult);
         List<Double> ratios = null;
-        if (!v06Balance && !Pricing.allDefault(save)) {
+        if (!v06Balance && !Pricing.allDefault(dayPrices())) {
             ratios = new ArrayList<>();
             double num = 0, den = 0;
-            for (Product p : items) { double r = Pricing.ratio(save, p.id); ratios.add(r); num += p.price * r; den += p.price; }
+            for (Product p : items) { double r = Pricing.ratio(dayPrices(), p.id); ratios.add(r); num += p.price * r; den += p.price; }
             // v2.5: ucuz fiyatta müşteri biraz daha sabırlı
             pat *= Pricing.patienceMult(den <= 0 ? 1.0 : num / den, Pricing.sensitivity(type, save.stars));
         }
@@ -2780,7 +2878,7 @@ public final class GameEngine {
         double eff = typeDemand.isEmpty() ? 0 : Pricing.sensitivity(type, save.stars);
         for (int i = 0; i < w.length; i++) {
             w[i] = type.prefers(menu.get(i).id) ? 3.0 : 1.0;
-            if (eff > 0) w[i] *= Pricing.choiceWeight(Pricing.ratio(save, menu.get(i).id), eff);
+            if (eff > 0) w[i] *= Pricing.choiceWeight(Pricing.ratio(dayPrices(), menu.get(i).id), eff);
             total += w[i];
         }
         double r = rng.nextDouble() * total;
@@ -2866,6 +2964,9 @@ public final class GameEngine {
         summary.newIngredientsNext = ni.toString();
         save.day = day + 1;
         if (save.day > save.bestDay) save.bestDay = save.day;
+        save.failStreak = 0;
+        summary.failStreak = 0;
+        summary.bankruptcy = getBankruptcy();
         for (GameListener l : snap()) l.onDayFinished(summary);
     }
 
@@ -2889,6 +2990,9 @@ public final class GameEngine {
         save.restoreFinanceFrom(snapshot); // v2.5: gün içi fatura ödemesi de geri alınır
         save.stars = Math.max(snapshot.stars, 1.5);
         summary.moneyAfter = save.money;
+        save.failStreak = snapshot.failStreak + 1;
+        summary.failStreak = save.failStreak;
+        summary.bankruptcy = getBankruptcy();
         for (GameListener l : snap()) l.onDayFailed(summary);
     }
 

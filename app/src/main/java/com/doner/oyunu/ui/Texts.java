@@ -427,8 +427,7 @@ public final class Texts {
                 step + (status.isEmpty() ? "" : ", " + status),
         };
         for (String c : cands) if (c.length() <= 60) return c;
-        String c = cands[2];
-        return c.substring(0, 60);
+        return clip(cands[2], 60);
     }
 
     /** Odak siparişinin başlık satırı: "Sipariş 2 · Ali". */
@@ -681,7 +680,7 @@ public final class Texts {
     /** Fiyat satırı düğme etiketi: "Ayran, 25 lira, yüzde 100" (kısa; ≤60). */
     public static String priceRowLabel(SaveData save, Product p) {
         String t = p.name + ", " + com.doner.oyunu.engine.Pricing.priceOf(save, p) + " lira, yüzde " + com.doner.oyunu.engine.Pricing.percent(save, p.id);
-        return t.length() <= 60 ? t : t.substring(0, 60);
+        return clip(t, 60);
     }
 
     /** Fiyat satırının görsel metni: "Ayran\n25 lira · yüzde 100 · referans 25 lira". */
@@ -698,15 +697,192 @@ public final class Texts {
         int left = b.daysLeft(day);
         String when = left > 0 ? left + " gün kaldı" : left == 0 ? "son ödeme bugün" : (-left) + " gün gecikti";
         String t = b.type.displayName + " " + b.amountDue(day) + " lira, " + when;
-        return t.length() <= 60 ? t : t.substring(0, 60);
+        return clip(t, 60);
     }
 
     /** Kredi satırının kısa etiketi (≤60): "Kredi 3000 lira, kalan 2400, 8 taksit". */
     public static String loanLabel(com.doner.oyunu.engine.Loan l) {
         String t = "Kredi " + l.principal + " lira, kalan " + l.totalOwed() + ", " + l.getInstallmentsLeft() + " taksit";
         if (l.getOverdue() > 0) t += ", gecikmiş";
-        return t.length() <= 60 ? t : t.substring(0, 60);
+        return clip(t, 60);
     }
+
+    /**
+     * v2.6: metni en çok {@code max} karaktere KELİME SINIRINDAN kısaltır (eskiden {@code substring} kelimeyi ortadan
+     * kesiyordu: "…Döner makinesi, boy se"). Önce son virgülden (anlamlı parça), olmazsa son boşluktan keser; sondaki
+     * noktalama ve boşluk atılır. Tek kelime sığmıyorsa harf sınırından kesilir.
+     */
+    public static String clip(String s, int max) {
+        if (s == null) return "";
+        if (s.length() <= max) return s;
+        String head = s.substring(0, max + 1);
+        int cut = head.lastIndexOf(',');
+        if (cut < max / 2) cut = head.lastIndexOf(' ');
+        if (cut <= 0) cut = max;
+        String t = s.substring(0, cut);
+        int e = t.length();
+        while (e > 0 && " ,;:·-".indexOf(t.charAt(e - 1)) >= 0) e--;
+        return t.substring(0, e);
+    }
+
+    // ------------------------------------------------------------------ v2.6: kısa fatura/borç metinleri (özet + ayrıntı)
+    /** Ödenmezse ilk kademede ne olur (kısa): "elektrik kesilir". */
+    private static String consequence(com.doner.oyunu.engine.BillType t) {
+        switch (t) {
+            case ELEKTRIK: return "elektrik kesilir";
+            case DOGALGAZ: return "doğalgaz kısılır";
+            case SU: return "su kesilir";
+            case KIRA: return "ev sahibi ihtar çeker";
+            default: return "gecikme bedeli eklenir";
+        }
+    }
+
+    /**
+     * Faturanın ŞU ANKİ etkisi, tek kısa cümle (fatura kartının ikinci satırı): gecikmişse kesinti ("Elektrik kısmen
+     * kesik. Ödersen hemen düzelir."), son gündeyse sonuç ("Ödemezsen yarın elektrik kesilir."), süresi varsa "".
+     * Uzun açıklama ({@code Finance.notices}) yalnızca ayrıntıda okunur.
+     */
+    public static String billEffect(SaveData save, com.doner.oyunu.engine.Bill b, int day) {
+        int left = b.daysLeft(day);
+        if (left > 0) return "";
+        if (left == 0) return "Ödemezsen yarın " + consequence(b.type) + ".";
+        com.doner.oyunu.engine.UtilityStatus u = com.doner.oyunu.engine.UtilityStatus.of(save, day);
+        int lv = b.level(day);
+        switch (b.type) {
+            case ELEKTRIK:
+                if (u.electric <= 0) return "Jeneratör çalışıyor, kesinti yok.";
+                return (u.electric >= 2 ? "Elektrik tamamen kesik." : "Elektrik kısmen kesik.") + " Ödersen hemen düzelir.";
+            case DOGALGAZ: return (lv >= 2 ? "Ocak kapalı, doğalgaz kesik." : "Doğalgaz kısık, Ocak yavaş.") + " Ödersen hemen düzelir.";
+            case SU:
+                if (u.water <= 0) return "Su deposu kullanılıyor, kesinti yok.";
+                return (u.water >= 2 ? "Su tamamen kesik." : "Su kesik, tepsi hazırlanamaz.") + " Ödersen hemen düzelir.";
+            case KIRA:
+                if (lv >= 3) return "Tahliye kararı: ödemeden dükkân açılamaz.";
+                return lv >= 2 ? "İhtarname geldi: her gün yıldız düşer." : "Ev sahibi ihtar çekti.";
+            default: return lv >= 2 ? "Haciz: gün sonunda cezasıyla kasadan alınır." : "Gecikme bedeli işliyor.";
+        }
+    }
+
+    /** Faturanın ayrıntısı (satıra dokununca okunur): tam uyarı metni varsa o, yoksa tutar ve son ödeme günü. */
+    public static String billDetail(SaveData save, com.doner.oyunu.engine.Bill b, int day) {
+        for (String n : com.doner.oyunu.engine.Finance.notices(save, day)) if (n.startsWith(b.type.displayName + " ")) return n;
+        return Narrator.billText(b, day);
+    }
+
+    /** Fatura listesi başlığı (kısa): "Açık fatura 3, borç 1929 lira. Maaş borcu 260 lira. Kasada 1000 lira." */
+    public static String billsHeader(SaveData s, int day) {
+        List<com.doner.oyunu.engine.Bill> bills = com.doner.oyunu.engine.Finance.openBills(s);
+        String head = bills.isEmpty() ? "Açık fatura yok." : "Açık fatura " + bills.size() + ", borç " + billsTotal(s, day) + " lira.";
+        if (s.wageDebt > 0) head += " Maaş borcu " + s.wageDebt + " lira.";
+        return head + " Kasada " + s.money + " lira.";
+    }
+
+    static int billsTotal(SaveData s, int day) {
+        int t = 0;
+        for (com.doner.oyunu.engine.Bill b : s.bills) t += b.amountDue(day);
+        return t;
+    }
+
+    /**
+     * "Faturaları oku" (ÖZET; tek tek faturalar satırlarında): "3 açık fatura, toplam 1929 lira. 1 gecikmiş, 1 son gün
+     * bugün. En acili: Elektrik faturası 309 lira, 1 gün gecikti. Maaş borcu 260 lira. Kasada 1000 lira."
+     */
+    public static String billsRead(SaveData s, int day) {
+        List<com.doner.oyunu.engine.Bill> bills = com.doner.oyunu.engine.Finance.openBills(s);
+        StringBuilder sb = new StringBuilder();
+        if (bills.isEmpty()) sb.append("Açık fatura yok.");
+        else {
+            sb.append(bills.size()).append(" açık fatura, toplam ").append(Narrator.fmtMoney(billsTotal(s, day))).append('.');
+            int late = 0, today = 0;
+            for (com.doner.oyunu.engine.Bill b : bills) { if (b.daysLeft(day) < 0) late++; else if (b.daysLeft(day) == 0) today++; }
+            List<String> parts = new ArrayList<>();
+            if (late > 0) parts.add(late + " gecikmiş");
+            if (today > 0) parts.add(today + " son gün bugün");
+            if (!parts.isEmpty()) sb.append(' ').append(Character.toUpperCase(join(parts).charAt(0))).append(join(parts).substring(1)).append('.');
+            sb.append(bills.size() > 1 ? " En acili: " : " ").append(billLabel(bills.get(0), day)).append('.');
+        }
+        if (s.wageDebt > 0) sb.append(" Maaş borcu ").append(Narrator.fmtMoney(s.wageDebt)).append('.');
+        sb.append(" Kasada ").append(Narrator.fmtMoney(s.money)).append('.');
+        return sb.toString();
+    }
+
+    /**
+     * Gün başı fatura uyarılarının KISA sesli özeti (brifing ve gün açılışı; uzun metinler kartlarda/Faturalar ekranında):
+     * tek uyarı: "Elektrik faturası 309 lira, 1 gün gecikti. Elektrik kısmen kesik. Ödersen hemen düzelir."; birden çok:
+     * "3 fatura uyarısı. En acili: … Ayrıntılar Faturalar ekranında." Uyarı yoksa "".
+     */
+    public static String noticesBrief(SaveData s, int day) {
+        List<String> items = new ArrayList<>();
+        for (com.doner.oyunu.engine.Bill b : com.doner.oyunu.engine.Finance.openBills(s)) {
+            if (b.daysLeft(day) > 1) continue;
+            String e = billEffect(s, b, day);
+            items.add(billLabel(b, day) + "." + (e.isEmpty() ? "" : " " + e));
+        }
+        if (s.wageDebt > 0) items.add("Maaş borcu " + Narrator.fmtMoney(s.wageDebt) + ", çırak bugün gelmedi.");
+        for (com.doner.oyunu.engine.Loan l : s.loans) {
+            if (l.getOverdue() > 0) { items.add("Kredi taksiti gecikti: " + Narrator.fmtMoney(l.getOverdue() + l.getFees()) + "."); break; }
+        }
+        if (items.isEmpty()) return "";
+        if (items.size() == 1) return items.get(0);
+        return items.size() + " fatura uyarısı. En acili: " + items.get(0) + " Ayrıntılar Faturalar ekranında.";
+    }
+
+    /** Kredi teklifi, sayı önde ve kısa: "1500 lira, 10 gün, günlük taksit 169 lira." */
+    public static String quoteShort(com.doner.oyunu.engine.Bank.Quote q) {
+        return Narrator.fmtMoney(q.amount) + ", " + q.term + " gün, günlük taksit " + Narrator.fmtMoney(q.installment) + ".";
+    }
+
+    /** Teklifin görsel/ayrıntı satırı: "Teklif: 2000 lira, 20 gün: günlük taksit 116 lira, toplam 2320 lira." */
+    public static String quoteLine(com.doner.oyunu.engine.Bank.Quote q) {
+        return "Teklif: " + q.amount + " lira, " + q.term + " gün: günlük taksit " + q.installment + " lira, toplam " + q.total + " lira.";
+    }
+
+    /** Banka bilgi satırı (kısa): "Kredi notu 60. Alınabilir 5200 lira. 1 kredi, borç 2320 lira. Kasada 800 lira." */
+    public static String bankHeader(SaveData s) {
+        String t = "Kredi notu " + s.creditScore + ". Alınabilir " + com.doner.oyunu.engine.Bank.available(s) + " lira.";
+        t += s.loans.isEmpty() ? " Kredi borcun yok." : " " + s.loans.size() + " kredi, borç " + com.doner.oyunu.engine.Bank.totalDebt(s) + " lira.";
+        return t + " Kasada " + s.money + " lira.";
+    }
+
+    /** İlk fatura öğreticisi (bir kez; otomatik ödeme açık/kapalı). */
+    public static String firstBillTip(com.doner.oyunu.engine.Bill b, boolean autoPay) {
+        String head = "İlk faturan geldi: " + b.type.displayName.toLowerCase(TR) + " " + b.amount + " lira. ";
+        return autoPay
+                ? head + "Son ödeme gününde kasadan otomatik ödenir; paran yetmezse Faturalar düğmesinden ödersin."
+                : head + "Faturalar düğmesinden Öde; iki gün içinde ödersen sorun yok.";
+    }
+
+    /** Süresiz gün kilitlenince (iş, stok ve para kalmadı) ekran notu ve özet cümlesi. */
+    public static final String STUCK_NOTE = "Stok ve para bitti: dükkân erken kapandı, bekleyen müşteriler cezasız gitti.";
+
+    /** İflas ekranının başlığı. */
+    public static final String BANKRUPT_TITLE = "Dükkân kapandı";
+
+    /** İflasın tek cümlelik nedeni + ulaşılan gün + ne yapılacağı (görsel ve sesli aynı). */
+    public static String bankruptcyText(com.doner.oyunu.engine.Finance.Bankruptcy b, int day) {
+        String why;
+        switch (b) {
+            case EVICTED: why = "Kira ödenemedi, banka da kredi vermiyor."; break;
+            case NO_MEANS: why = "Stok ve para bitti, banka da kredi vermiyor."; break;
+            case FAIL_LOOP: why = "Üst üste başarısız günler: para stoğa yetmiyor, banka da kredi vermiyor."; break;
+            default: return "";
+        }
+        return BANKRUPT_TITLE + ". " + why + " " + day + ". güne ulaştın. Yeni oyun düğmesiyle baştan başla; ayarların korunur.";
+    }
+
+    /** Acil destek kredisi düğmesi: "Acil destek kredisi al: 1500 lira" (≤60). */
+    public static String emergencyAidLabel(SaveData s) {
+        return "Acil destek kredisi al: " + com.doner.oyunu.engine.Bank.emergencyAidAmount(s) + " lira";
+    }
+
+    /** Acil destek açıklaması (tek cümle). */
+    public static String emergencyAidNote(SaveData s) {
+        return "Kasa stoğa yetmiyor. Banka " + com.doner.oyunu.engine.Bank.emergencyAidAmount(s) + " lira acil destek kredisi verir: "
+                + com.doner.oyunu.engine.Bank.EMERGENCY_TERM + " gün vade, en yüksek faiz.";
+    }
+
+    /** Otomatik ödeme ayarının notu (Ayarlar). */
+    public static final String AUTO_PAY_NOTE = "Açıkken faturalar son ödeme gününde kasadan otomatik ödenir; para yetmezse Faturalar ekranından ödersin.";
 
     /** Banka işlem sonucunun kısa cümlesi. */
     public static String bankResult(com.doner.oyunu.engine.Bank.Result r) {
@@ -839,6 +1015,11 @@ public final class Texts {
         if (s.wageDebt > 0) r.add(new String[]{"Maaş borcu", s.wageDebt + " lira, ödemezsen çırak yarın gelmez"});
         if (s.installmentsDue > 0 || s.installmentsPaid > 0) {
             r.add(new String[]{"Kredi taksiti", s.installmentsPaid + " lira" + (s.installmentsMissed > 0 ? ", " + s.installmentsMissed + " taksit ödenemedi" : "")});
+        }
+        if (!s.autoPaid.isEmpty()) {
+            List<String> ap = new ArrayList<>();
+            for (com.doner.oyunu.engine.Bill b : s.autoPaid) ap.add(b.type.displayName.toLowerCase(TR) + " " + b.getPaid() + " lira");
+            r.add(new String[]{"Otomatik ödenen fatura", join(ap)});
         }
         if (s.seized > 0) r.add(new String[]{"Haciz", s.seized + " lira"});
         if (s.spoiledStock > 0) r.add(new String[]{"Bozulan et", s.spoiledStock + " porsiyon, " + s.spoiledCost + " lira"});

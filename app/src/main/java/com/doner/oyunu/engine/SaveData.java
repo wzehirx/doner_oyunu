@@ -75,6 +75,12 @@ public final class SaveData {
     /** Fatura/kredi kimlik sayacı. */
     public int nextFinanceId = 1;
 
+    // ---- v2.6
+    /** Ayar: faturaları otomatik öde (varsayılan açık; eski kayıtlarda açık). {@link Finance#autoPay}. */
+    public boolean autoPayBills = true;
+    /** Art arda başarısız gün sayısı (başarılı gün sonunda 0). {@link Finance#bankruptcy}. */
+    public int failStreak = 0;
+
     /** Sıfırlama bildirimi gösterildi. */
     public void clearProgressResetNotice() { progressResetNotice = false; }
 
@@ -99,7 +105,7 @@ public final class SaveData {
 
     /**
      * Yeni oyun (ilerleme sıfır), AYARLAR {@code old}'dan korunur: tempo, konuşma ve hızı, titreşim, müzik/efekt/ambiyans
-     * sesi, öğretici, çırak duyuruları, çırak teslimi, oyun akışı, süre baskısı. Dönem sıfırlaması ve "Yeni oyun" bunu kullanır.
+     * sesi, öğretici, çırak duyuruları, çırak teslimi, oyun akışı, süre baskısı, v2.6 otomatik fatura ödemesi. Dönem sıfırlaması ve "Yeni oyun" bunu kullanır.
      */
     public static SaveData newGameKeepingSettings(SaveData old) {
         SaveData s = newGame();
@@ -122,6 +128,17 @@ public final class SaveData {
         s.flowMode = flowMode;
         s.flowChosen = flowChosen;
         s.timePressure = timePressure;
+        s.autoPayBills = autoPayBills;
+    }
+
+    /**
+     * v2.6 iflas sonrası yeniden başla: yeni oyun, ayarlar korunur ({@link #newGameKeepingSettings}); en iyi gün rekoru
+     * ({@link #bestDay}) da korunur.
+     */
+    public static SaveData restartAfterBankruptcy(SaveData old) {
+        SaveData s = newGameKeepingSettings(old);
+        if (old != null) s.bestDay = Math.max(s.bestDay, old.bestDay);
+        return s;
     }
 
     /** Başarısız günde para/stokla birlikte geri alınan finans durumu (gün içi fatura ödemesi dahil). */
@@ -172,6 +189,8 @@ public final class SaveData {
         sb.append("wageDebt=").append(wageDebt).append('\n');
         sb.append("salesTax=").append(salesSinceTax).append('\n');
         sb.append("finId=").append(nextFinanceId).append('\n');
+        sb.append("autoPay=").append(autoPayBills ? 1 : 0).append('\n');
+        sb.append("failStreak=").append(failStreak).append('\n');
         return sb.toString();
     }
 
@@ -239,6 +258,8 @@ public final class SaveData {
                 else if (k.equals("wageDebt")) s.wageDebt = Math.max(0, Integer.parseInt(v));
                 else if (k.equals("salesTax")) s.salesSinceTax = Math.max(0, Integer.parseInt(v));
                 else if (k.equals("finId")) s.nextFinanceId = Math.max(1, Integer.parseInt(v));
+                else if (k.equals("autoPay")) s.autoPayBills = !v.equals("0");
+                else if (k.equals("failStreak")) s.failStreak = Math.max(0, Math.min(1000, Integer.parseInt(v)));
             } catch (RuntimeException ignored) {
                 // bozuk satır atlanır
             }

@@ -123,4 +123,7 @@ public interface GameListener {
     default void onStockSpoiled(Ingredient ingredient, int amount, BillType cause) {}
     /** Gün içinde fatura ödendi ({@link GameEngine#payBill}); kesinti kalktı. paid: ödenen tutar. */
     default void onBillPaid(Bill bill, int paid) {}
+
+    /** v2.6: süresiz gün kilitlendi (yapılabilir iş/stok/para yok); {@code closedOrders} sipariş cezasız kapandı, gün bitiyor. */
+    default void onDayStuck(int closedOrders) {}
 }

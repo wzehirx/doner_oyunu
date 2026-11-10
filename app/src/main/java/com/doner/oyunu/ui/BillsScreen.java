@@ -37,7 +37,7 @@ public final class BillsScreen extends Screen {
             @Override public boolean fullOptions() { return true; }
             @Override public void tap(View v, Runnable r) { BillsScreen.this.tap(v, r); }
             @Override public void say(String text) { a.speaker.force(text); }
-            @Override public void focus(View v) { a.focusOn(v); }
+            @Override public void result(View focus, String text) { a.focusThenSay(focus, text); }
             @Override public void sound(String sfx, boolean ok) {
                 a.sound.play(sfx);
                 if (ok) a.haptics.buy(); else a.haptics.error();

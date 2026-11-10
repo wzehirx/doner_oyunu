@@ -1,6 +1,74 @@
-# Engine API v2.5 (paket `com.doner.oyunu.engine`, saf Java, android.* yok, deterministik)
+# Engine API v2.6 (paket `com.doner.oyunu.engine`, saf Java, android.* yok, deterministik)
 
-Bu belge UI geliştirmesi için TEK kaynaktır (UI ajanı yalnızca bunu ve `docs/design_v25.md`'yi okur). Şartname: **`docs/design_v25.md` (v2.5: 60 gün, fiyat ve talep, maaş ve faturalar, banka, çırak teslimi, 5 seviyeli yükseltmeler, kayıt dönemi)**, `docs/terminoloji.md` (metin terimleri), `docs/design_v20.md` (eller + makineler, çırak, sıradaki sipariş), `docs/design_v09.md` … `docs/design_v05.md`, `docs/spec.md`. **§B v2.5'i eksiksiz anlatır**; §A ve sonrası önceki sürümlerden geçerli kalanlardır (çakışırsa §B kazanır).
+Bu belge UI geliştirmesi için TEK kaynaktır (UI ajanı yalnızca bunu ve `docs/design_v25.md`'yi okur). Şartname: **`docs/design_v25.md` (v2.5: 60 gün, fiyat ve talep, maaş ve faturalar, banka, çırak teslimi, 5 seviyeli yükseltmeler, kayıt dönemi)**, `docs/terminoloji.md` (metin terimleri), `docs/design_v20.md` (eller + makineler, çırak, sıradaki sipariş), `docs/design_v09.md` … `docs/design_v05.md`, `docs/spec.md`. **§C v2.6 motor düzeltmelerini**, **§B v2.5'i eksiksiz anlatır**; §A ve sonrası önceki sürümlerden geçerli kalanlardır (çakışırsa §B kazanır).
+
+## C. v2.5 -> v2.6 (motor düzeltmeleri; `docs/denetim_v25_fable.md`)
+
+Kayıt biçimi aynı (`v=5`, `epoch=25`; dönem ARTMADI, ilerleme korunur). Yeni kayıt anahtarları: `autoPay=0|1` (yoksa 1), `failStreak=N`; `loan.<id>` satırına 11. alan tür (0 normal, 1 kira, 2 acil destek; yoksa normal).
+
+### C.1 Sıfır kasa / boş stok tuzağı (P0)
+```java
+// Acil destek (esnaf kredisi): limit, engel, kredi sayısı aranmaz; en yüksek faiz, 10 gün; aynı anda en çok 1 açık
+boolean Bank.emergencyAidAvailable(save)   // kasa < Shop.recommendedCost(save) ve açık destek yok
+int     Bank.emergencyAidAmount(save)      // önerilen stok maliyeti − kasa, 100'e yukarı, en az 500 (yoksa 0)
+Bank.Result Bank.takeEmergencyAid(save)    // OK | TOO_MANY_LOANS (açık destek var) | INVALID_AMOUNT
+boolean GameEngine.isEmergencyAidAvailable(); Bank.Result GameEngine.takeEmergencyAid()  // gün içinde de
+Bank.EMERGENCY_TERM = 10; Loan.kind: Loan.Kind.NORMAL | RENT | EMERGENCY; Bank.openCount(save, kind)
+
+// Süresiz gün kilidi: sipariş var ama hiçbiri teslime hazır değil, çalışan iş yok, hiçbir adım başlatılamıyor ve
+// eksik malzemeyi acil almaya para yetmiyor -> GameEngine.STUCK_SECONDS (20 sn) sürerse bekleyenler CEZASIZ gider,
+// gün biter (finishDay; maaş/taksit/fatura normal). Olay: GameListener.onDayStuck(int closedOrders) (varsayılan boş).
+boolean GameEngine.isStuckNow();  DaySummary.stuckEnded, stuckClosedOrders
+
+// İflas (motor yalnızca bildirir; UI "Dükkân kapandı" + yeniden başla gösterir)
+Finance.Bankruptcy Finance.bankruptcy(save)   // açılacak gün (save.day) için: NONE | EVICTED | NO_MEANS | FAIL_LOOP
+Finance.Bankruptcy GameEngine.getBankruptcy(); boolean GameEngine.isBankrupt()
+DaySummary.bankruptcy (gün sonu ve başarısız gün sonunda dolar), DaySummary.isBankrupt(), DaySummary.failStreak
+boolean Finance.canOperate(save)   // stok + kasa (market fiyatı) ile en az bir ürün yapılabilir
+boolean Finance.canRescue(save)    // normal kredi (≥ 500) ya da acil destek alınabilir
+SaveData.failStreak                // art arda başarısız gün (başarılı günde 0); Finance.FAIL_LOOP_DAYS = 3
+SaveData.restartAfterBankruptcy(old) // yeni oyun, ayarlar + en iyi gün rekoru korunur
+```
+- **EVICTED**: tahliye kararı var, kasa kiraya yetmiyor ve kira kredisi de alınamıyor (`Bank.rentLoanAvailable` false).
+- **NO_MEANS**: `!canOperate && !canRescue`.
+- **FAIL_LOOP**: `failStreak ≥ 3 && !canRescue && kasa < önerilen stok maliyetinin yarısı`.
+- Motor iflasta günü açmayı ENGELLEMEZ (yanlış pozitif kilitlemesin); UI özet/brifingde `summary.isBankrupt()` / `Finance.bankruptcy(save)` ile yeniden başlatmayı önerir. Başarısız gün acil desteği de geri alır (finans gün başına döner).
+
+### C.2 Gün içi maaş ödemesi (P1)
+`GameEngine.payWages()` başarılıysa gelen çırağın seviyesi o günün maaşına yazılır (gün sonunda `DaySummary.wagesDue = Finance.dailyWage(seviye, gün)`). Hiç gelmeyen çırak için maaş yazılmaz (değişmedi).
+
+### C.3 Fiyat gün başında donar (P1)
+Motor, kurulurken `save.prices`'ı dondurur (gün başı anlık görüntüsü): talep, geliş çarpanı, kota, ürün seçimi ve sipariş fiyat oranı bu fiyatları kullanır; gün içinde `Pricing.setPercent/setAll` bugünü etkilemez, ertesi günün motorunu etkiler. `int GameEngine.getDayPricePercent(productId)`: bugün geçerli yüzde.
+
+### C.4 Kira kredisi sınırı, kredi notu çiftliği (P2)
+```java
+Bank.MAX_RENT_LOANS = 2                      // limit dışı (en yüksek faizli) açık kira kredisi; aşılınca TOO_MANY_LOANS
+boolean Bank.rentLoanAvailable(save, amount) // normal limit içinde ya da kira kredisi sınırı dolmadı
+boolean Bank.earnsRepayBonus(save, loan)     // erken kapatma +3 kredi notu yalnızca: takenDay < save.day ve ≥1 taksit vadesi geldi
+```
+Normal limit içinde verilen kira kredisi `NORMAL` sayılır (sınıra girmez). `Finance.payWithLoan` kira için artık `TOO_MANY_LOANS` dönebilir.
+
+### C.5 Kesinti kalkınca talep/kota (P2)
+`payBill`/`payWages` (ve açılıştaki otomatik ödeme) sonrası menüyle birlikte fiyat talebi (`getPriceArrivalMultiplier`) ve süresiz kota (`getCustomerQuota`) yeniden hesaplanır (ör. doğalgaz ödenince Ocak kapalıyken ×0,9 olan kota geri gelir). PrepBox düğmeleri UI işidir.
+
+### C.6 Otomatik fatura ödemesi (P1)
+```java
+boolean GameEngine.isAutoPayBills(); void GameEngine.setAutoPayBills(boolean)  // SaveData.autoPayBills (varsayılan true; ayar, korunur)
+List<Bill> Finance.autoPay(save, day, includeDueToday)  // ödenen faturaların kopyaları (getPaid() = ödenen tutar)
+List<Bill> Finance.autoPayAtOpen(save)                  // brifing: ayar açıksa bugün GECİKEN faturaları öder (yoksa boş)
+int Finance.autoPayReserve(save, day)                   // kasada bırakılan pay = o günün önerilen stok maliyeti
+DaySummary.autoPaid (List<Bill>), DaySummary.autoPaidTotal
+```
+- Açıkken **gün açılışında** (motor `beginPrep/startDay`; UI brifingte `Finance.autoPayAtOpen` ile önceden de çağırabilir, çift ödeme olmaz) geciken faturalar, **gün sonunda** (maaş + taksitten sonra, haciz ve kredi notundan önce) son günü bugün olan ve geciken faturalar ödenir. Kasada önerilen stok payı kalmayacaksa o fatura atlanır → normal gecikme/kesinti akışı.
+- Açılışta ödenen her fatura için `onBillPaid(bill, paid)` verilir. Gün başarısız olursa ödeme geri alınır.
+- `DaySummary.expenses()/profit()` otomatik fatura ödemesini İÇERMEZ (faturalar eskisi gibi ayrı); özet "Faturalar otomatik ödendi: N lira" için `autoPaidTotal`.
+- Ayar `copySettingsTo`/`newGameKeepingSettings`/dönem sıfırlamasında korunur.
+
+### C.7 UI yapılacaklar (v2.6; UI ajanı)
+1. Ayarlar: "Faturaları otomatik öde" anahtarı (`setAutoPayBills` ya da `save.autoPayBills`).
+2. Özet: `autoPaid` satırı; `stuckEnded` cümlesi ("Yapılacak iş kalmadı, dükkânı erken kapattın"); `isBankrupt()` ise "Dükkân kapandı" + `SaveData.restartAfterBankruptcy`.
+3. Brifing/Banka: `Bank.emergencyAidAvailable` ise "Acil destek al: N lira" düğmesi (öne); iflasta yeniden başla.
+4. Banka: kira kredisi sınırı dolunca `TOO_MANY_LOANS` metni; erken kapatmada not ödülü yalnızca `earnsRepayBonus` ise söylenmeli.
 
 ## B. v2.0 -> v2.5
 

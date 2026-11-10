@@ -133,6 +133,19 @@ public final class SettingsScreen extends Screen {
         delivNote.setFocusable(true);
         body.addView(delivNote, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 4, 0, 4, 8));
 
+        // v2.6: faturaları otomatik öde (varsayılan açık; motor: GameEngine.isAutoPayBills / SaveData.autoPayBills)
+        addSwitch(body, "Faturaları otomatik öde", s.autoPayBills, new CompoundButton.OnCheckedChangeListener() {
+            @Override public void onCheckedChanged(CompoundButton b, boolean on) {
+                s.autoPayBills = on;
+                a.saveNow();
+                a.sound.play("sfx_tap");
+                a.speaker.announce(on ? "Otomatik ödeme açık: faturalar son ödeme gününde kasadan ödenir." : "Otomatik ödeme kapalı: faturaları sen ödersin.", true);
+            }
+        });
+        TextView payNote = Ui.label(ctx, Texts.AUTO_PAY_NOTE, 15, Theme.MUTED, false);
+        payNote.setFocusable(true);
+        body.addView(payNote, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 4, 0, 4, 8));
+
         root.addView(button("Geri", Ui.PRIMARY, new Runnable() {
             @Override public void run() { a.saveNow(); a.show(new MenuScreen(a)); }
         }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 8, 0, 0));

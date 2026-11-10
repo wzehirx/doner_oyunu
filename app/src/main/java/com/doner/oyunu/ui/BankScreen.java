@@ -19,7 +19,11 @@ import java.util.Map;
  * v2.5 Banka ekranı (brifing, market, faturalar ekranından): kredi notu, limit, alınabilir tutar, faiz ({@link
  * Narrator#bankText}); tutar (−/+ 500 lira, en az 500) ve vade (5/10/20 gün) seçimi, teklif ({@link Narrator#quoteText}),
  * Kredi al; aktif krediler (kalan borç, taksit, vade) için Erken kapat ve Gecikmiş taksiti öde. Her sonuç sesli ve
- * metinle; kredi listesi değişince yeniden kurulur, odak bilgi satırına döner.
+ * metinle.
+ *
+ * <p><b>v2.6:</b> bilgi satırı kısa (not, alınabilir, borç, kasa; ayrıntı "Bankayı oku"da); teklif "günlük taksit" önde.
+ * Tek odak + tek duyuru: Kredi al / tutar / vade düğmeleri yerinde kalır, odak taşınmaz, yalnızca sonuç söylenir. Kredi
+ * kapatılınca kartı kalkar: odak kredi listesinin ilk satırına taşınır, sonuç odak okumasının arkasından söylenir.
  */
 public final class BankScreen extends Screen {
     private final int from;
@@ -47,13 +51,17 @@ public final class BankScreen extends Screen {
         root.addView(makeTitle("Banka"));
         LinearLayout body = scrollBody(root);
 
-        infoTv = Ui.label(ctx, "", 18, Theme.CREAM, false);
+        infoTv = Ui.label(ctx, "", 19, Theme.GOLD, true);
         infoTv.setFocusable(true);
         infoTv.setPadding(dp(4), dp(4), dp(4), dp(8));
         body.addView(infoTv);
         body.addView(button("Bankayı oku", Ui.SECONDARY, new Runnable() {
             @Override public void run() { a.speaker.force(readAll(a.save)); }
         }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 2, 0, 6));
+
+        // ---- v2.6 acil destek (kasa önerilen stoğa yetmiyorsa; limit aranmaz): sıfır kasa / boş stok çıkışı
+        aidBox = column();
+        body.addView(aidBox);
 
         // ---- kredi al
         body.addView(sectionHeading("Kredi al"));
@@ -116,16 +124,58 @@ public final class BankScreen extends Screen {
         return root;
     }
 
-    /** Bankanın sesli özeti: not, limit, faiz, krediler. */
+    /**
+     * Bankanın sesli ÖZETİ (v2.6): not, limit, faiz, kredi sayısı ve borç; kredi varsa bugünkü taksit toplamı. Tek tek
+     * krediler kendi satırlarına dokununca okunur (eskiden hepsi tek uzun duyuruydu).
+     */
     static String readAll(SaveData s) {
-        StringBuilder sb = new StringBuilder(Narrator.bankText(s));
-        for (Loan l : Bank.loans(s)) sb.append(' ').append(Narrator.loanText(l));
-        return sb.toString();
+        String t = Narrator.bankText(s);
+        if (!s.loans.isEmpty()) t += " Bugün gün sonunda kasadan " + Narrator.fmtMoney(Bank.dueToday(s)) + " taksit alınır.";
+        return t;
+    }
+
+    private LinearLayout aidBox;
+    private Boolean aidShown;
+
+    /** Acil destek bölümü: yalnızca alınabiliyorsa görünür (durum değişince kurulur). */
+    private void buildAid() {
+        boolean on = Bank.emergencyAidAvailable(a.save);
+        if (aidShown != null && aidShown == on) return;
+        aidShown = on;
+        aidBox.removeAllViews();
+        if (!on) return;
+        LinearLayout c = card();
+        c.setBackground(Ui.round(ctx, Theme.CARD_HI, Theme.GOLD, 3, 16));
+        TextView t = Ui.label(ctx, Texts.emergencyAidNote(a.save), 17, Theme.CREAM, false);
+        t.setFocusable(true);
+        c.addView(t);
+        c.addView(button(Texts.emergencyAidLabel(a.save), Ui.GOLD, new Runnable() {
+            @Override public void run() { takeAid(); }
+        }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 8, 0, 0));
+        aidBox.addView(c, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 4));
+    }
+
+    private void takeAid() {
+        SaveData s = a.save;
+        int amt = Bank.emergencyAidAmount(s);
+        Bank.Result r = Bank.takeEmergencyAid(s);
+        if (r == Bank.Result.OK) {
+            a.sound.play("sfx_coin");
+            a.haptics.buy();
+            a.saveNow();
+            refresh();
+            // bölüm kalktı: odak bilgi satırına, sonra tek duyuru
+            a.focusThenSay(infoTv, "Acil destek kredisi alındı: " + amt + " lira, " + Bank.EMERGENCY_TERM + " gün. Kasada " + s.money + " lira.");
+        } else {
+            a.sound.play("sfx_error");
+            a.haptics.error();
+            a.speaker.force("Acil destek alınamadı. " + Texts.bankResult(r));
+        }
     }
 
     private void refresh() {
         SaveData s = a.save;
-        String info = Narrator.bankText(s) + " Kasada " + s.money + " lira.";
+        String info = Texts.bankHeader(s);
         infoTv.setText(info);
         Ui.setDesc(infoTv, info);
         String at = "Tutar: " + amount + " lira";
@@ -141,14 +191,15 @@ public final class BankScreen extends Screen {
             b.setTextColor(sel ? Theme.DARK : Theme.CREAM);
         }
         Bank.Quote q = Bank.quote(s, amount, term);
-        String qt = q == null ? "Teklif yok." : "Teklif: " + Narrator.quoteText(q);
+        String qt = q == null ? "Teklif yok." : Texts.quoteLine(q);
         boolean can = q != null && amount <= Bank.available(s) && !Bank.blocked(s) && s.loans.size() < Bank.MAX_LOANS;
         if (!can) qt += " " + whyNot(s);
         quoteTv.setText(qt);
         Ui.setDesc(quoteTv, qt);
         takeBtn.setText("Kredi al: " + amount + " lira, " + term + " gün");
-        takeBtn.setContentDescription("Kredi al: " + amount + " lira, " + term + " gün" + (can ? "" : ", alınamaz"));
+        Ui.setDesc(takeBtn, "Kredi al: " + amount + " lira, " + term + " gün" + (can ? "" : ", alınamaz"));
         Ui.dim(takeBtn, !can);
+        buildAid();
         buildLoans();
     }
 
@@ -159,6 +210,9 @@ public final class BankScreen extends Screen {
     }
 
     private String loansKey = null;
+    /** Kredi satırlarının bilgi görünümleri (işlem sonrası odak hedefi). */
+    private final Map<Integer, View> loanTexts = new HashMap<>();
+    private View firstLoanView;
 
     /** Kredi listesi (yalnızca değişince yeniden kurulur). */
     private void buildLoans() {
@@ -168,16 +222,25 @@ public final class BankScreen extends Screen {
         if (k.toString().equals(loansKey)) return;
         loansKey = k.toString();
         loansBox.removeAllViews();
+        loanTexts.clear();
+        firstLoanView = null;
         if (s.loans.isEmpty()) {
-            loansBox.addView(paragraph("Kredi borcun yok."));
+            firstLoanView = paragraph("Kredi borcun yok.");
+            loansBox.addView(firstLoanView);
             return;
         }
         for (final Loan l : Bank.loans(s)) {
             LinearLayout c = card();
-            TextView t = Ui.label(ctx, Narrator.loanText(l), 17, Theme.CREAM, false);
+            // kısa satır (≤60); tam ayrıntı satıra dokununca okunur
+            final TextView t = Ui.label(ctx, Texts.loanLabel(l) + "\nGünlük taksit " + l.installment() + " lira", 17, Theme.CREAM, true);
             t.setFocusable(true);
-            t.setContentDescription(Narrator.loanText(l));
+            t.setMinHeight(dp(56));
+            t.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            t.setContentDescription(Texts.loanLabel(l));
+            tap(t, new Runnable() { @Override public void run() { a.speaker.force(Narrator.loanText(l)); } });
             c.addView(t);
+            loanTexts.put(l.id, t);
+            if (firstLoanView == null) firstLoanView = t;
             Button close = Ui.button(ctx, "Erken kapat: " + l.payoffAmount() + " lira", Ui.SECONDARY);
             close.setContentDescription("Erken kapat: " + l.principal + " liralık kredi, " + l.payoffAmount() + " lira");
             tap(close, new Runnable() { @Override public void run() { repay(l.id); } });
@@ -207,14 +270,14 @@ public final class BankScreen extends Screen {
         amount = next;
         refresh();
         Bank.Quote q = Bank.quote(a.save, amount, term);
-        a.speaker.force("Tutar " + amount + " lira." + (q == null ? "" : " " + Narrator.quoteText(q)));
+        a.speaker.force("Tutar " + amount + " lira." + (q == null ? "" : " Günlük taksit " + q.installment + " lira."));
     }
 
     private void chooseTerm(int t) {
         term = t;
         refresh();
         Bank.Quote q = Bank.quote(a.save, amount, term);
-        a.speaker.force(t + " gün vade seçildi." + (q == null ? "" : " " + Narrator.quoteText(q)));
+        a.speaker.force(t + " gün vade." + (q == null ? "" : " Günlük taksit " + q.installment + " lira, toplam " + q.total + " lira."));
     }
 
     private void takeLoan() {
@@ -227,12 +290,12 @@ public final class BankScreen extends Screen {
             int took = amount;
             amount = Math.max(Bank.MIN_LOAN, Math.min(amount, maxAmount(s)));
             refresh();
+            // düğme yerinde: odak taşınmaz, tek duyuru
             a.speaker.force("Kredi alındı: " + took + " lira, " + term + " gün. Kasada " + s.money + " lira.");
-            a.focusOn(infoTv);
         } else {
             a.sound.play("sfx_error");
             a.haptics.error();
-            a.speaker.force("Kredi alınamadı. " + Texts.bankResult(r) + " " + (r == Bank.Result.OVER_LIMIT ? whyNot(s) : ""));
+            a.speaker.force("Kredi alınamadı. " + Texts.bankResult(r) + (r == Bank.Result.OVER_LIMIT ? " " + whyNot(s) : ""));
         }
     }
 
@@ -246,8 +309,8 @@ public final class BankScreen extends Screen {
             a.haptics.buy();
             a.saveNow();
             refresh();
-            a.speaker.force("Kredi erken kapatıldı: " + p + " lira. Kredi notu " + s.creditScore + ". Kasada " + s.money + " lira.");
-            a.focusOn(infoTv);
+            // kart kalktı: odak listenin ilk satırına (kalan kredi ya da "Kredi borcun yok."), sonra tek duyuru
+            a.focusThenSay(firstLoanView, "Kredi kapatıldı: " + p + " lira. Kredi notu " + s.creditScore + ". Kasada " + s.money + " lira.");
         } else {
             a.sound.play("sfx_error");
             a.haptics.error();
@@ -265,8 +328,8 @@ public final class BankScreen extends Screen {
             a.haptics.buy();
             a.saveNow();
             refresh();
-            a.speaker.force("Gecikmiş taksit ödendi: " + p + " lira. Kasada " + s.money + " lira.");
-            a.focusOn(infoTv);
+            View f = loanTexts.get(loanId);
+            a.focusThenSay(f != null ? f : firstLoanView, "Gecikmiş taksit ödendi: " + p + " lira. Kasada " + s.money + " lira.");
         } else {
             a.sound.play("sfx_error");
             a.haptics.error();

@@ -72,6 +72,7 @@ public class V25BalanceTest {
         for (FlowMode m : new FlowMode[]{FlowMode.DENGELI, FlowMode.GERCEKCI}) {
             Campaign c = new Campaign(m);
             c.payBills = false;
+            c.save.autoPayBills = false; // v2.6: otomatik ödeme de kapalı (hiç ödemeyen oyuncu)
             int f = c.run(30, 4, 0.8f, true, 3, true, true);
             System.out.println("V25 ödemeyen " + row(m.displayName, c, f));
             assertEquals(m + ": kira 9. günde son, 6 gün gecikince (15. gün) dükkân açılamaz", 15, f);

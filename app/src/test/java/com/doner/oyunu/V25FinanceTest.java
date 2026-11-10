@@ -15,7 +15,12 @@ import java.util.List;
 public class V25FinanceTest {
     static final List<String> NONE = Collections.emptyList();
 
-    static SaveData day(int d) { return ResourceModelTest.day(d, FlowMode.DENGELI); }
+    /** v2.6: bu dosyadaki senaryolar elle ödeyen oyuncuyu sınar (ödenmeyen fatura zorlukları); otomatik ödeme kapalı. */
+    static SaveData day(int d) {
+        SaveData s = ResourceModelTest.day(d, FlowMode.DENGELI);
+        s.autoPayBills = false;
+        return s;
+    }
 
     /** Müşterisiz bir günü sonuna kadar oynatır (gün sonu hesabı çalışır). */
     static GameEngine finishEmptyDay(SaveData s) {

@@ -3,7 +3,9 @@ package com.doner.oyunu.engine;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * v2.5 dükkân giderleri: çırak maaşı, faturalar (elektrik, doğalgaz, su, kira, vergi), gün sonu hesabı ve kredi notu.
@@ -56,7 +58,7 @@ public final class Finance {
     }
 
     /**
-     * Gün {@code day} sonunda kesilecek {@code type} faturasının tutarı (TL). Vergi: son dönemin satış + bahşişinin %6'sı
+     * Gün {@code day} sonunda kesilecek {@code type} faturasının tutarı (TL). Vergi: son dönemin satış + bahşişinin %5'i ({@link #TAX_RATE})
      * ({@link SaveData#salesSinceTax}).
      */
     public static int billAmount(SaveData save, BillType type, int day) {
@@ -165,7 +167,10 @@ public final class Finance {
         return n;
     }
 
-    /** Faturayı bankadan kredi alarak öder (kredi tutarı = fatura tutarı, 100'e yuvarlı). Kira için limit aranmaz. */
+    /**
+     * Faturayı bankadan kredi alarak öder (kredi tutarı = fatura tutarı, 100'e yuvarlı). Kira için limit aranmaz; v2.6: limit
+     * dışı açık kira kredisi en çok {@link Bank#MAX_RENT_LOANS} (aşılırsa TOO_MANY_LOANS).
+     */
     public static Bank.Result payWithLoan(SaveData save, int billId, int term) {
         Bill b = bill(save, billId);
         if (b == null) return Bank.Result.UNKNOWN;
@@ -231,6 +236,10 @@ public final class Finance {
             if (l.isClosed()) save.loans.remove(l);
         }
         if (anyPaid && s.installmentsMissed == 0) score += 1;
+        // 2b) v2.6 otomatik fatura ödemesi: son günü bugün olan ya da geciken faturalar, kasa (stok payı bırakarak) yetiyorsa
+        if (save.autoPayBills) {
+            for (Bill b : autoPay(save, day, true)) { s.autoPaid.add(b); s.autoPaidTotal += b.paid; }
+        }
         // 3) vergi haczi (4+ gün gecikmiş vergi): borç + %20 kasadan alınır
         for (Bill b : new ArrayList<>(save.bills)) {
             if (b.type != BillType.VERGI || b.level(day) < 2) continue;
@@ -268,6 +277,108 @@ public final class Finance {
         s.billsDue = total;
         s.billsLate = late;
         s.loanDebt = Bank.totalDebt(save);
+    }
+
+    // ------------------------------------------------------------ v2.6 otomatik ödeme
+    /**
+     * Otomatik fatura ödemesi ({@link SaveData#autoPayBills}): {@code includeDueToday} true ise son ödeme günü {@code day}
+     * olan ve geciken, false ise yalnızca geciken faturalar (önce en çok geciken) ödenir; kasada önerilen stok payı
+     * ({@link #autoPayReserve}) kalmayacaksa o fatura atlanır (normal kesinti/zorluk akışı sürer). Ödenen faturaların
+     * kopyaları döner ({@link Bill#paid} = ödenen tutar). Ayar kapalı olsa da çağrılabilir (çağıran denetler).
+     */
+    public static List<Bill> autoPay(SaveData save, int day, boolean includeDueToday) {
+        List<Bill> out = new ArrayList<>();
+        int keep = -1;
+        for (Bill b : openBills(save)) {
+            if (includeDueToday ? b.dueDay > day : b.dueDay >= day) continue;
+            if (keep < 0) keep = autoPayReserve(save, day + (includeDueToday ? 1 : 0));
+            int due = b.amountDue(day);
+            if (due <= 0 || save.money - due < keep) continue;
+            save.money -= due;
+            save.bills.remove(b);
+            if (b.daysLate(day) == 0) adjustCredit(save, 2);
+            out.add(new Bill(b.id, b.type, b.amount, b.issuedDay, b.dueDay, due));
+        }
+        return out;
+    }
+
+    /**
+     * Brifing/gün açılışı otomatik ödemesi: ayar açıksa bugün ({@code save.day}) geciken faturaları kasa yetiyorsa öder
+     * (kesinti o gün hiç başlamaz). Ayar kapalıysa boş liste. Motor gün açılışında kendisi de çağırır (çift ödeme olmaz).
+     */
+    public static List<Bill> autoPayAtOpen(SaveData save) {
+        if (!save.autoPayBills) return new ArrayList<>();
+        return autoPay(save, save.day, false);
+    }
+
+    /** Otomatik ödemenin kasada bıraktığı pay: {@code day} gününün önerilen stok alımının maliyeti (stok tamsa 0). */
+    public static int autoPayReserve(SaveData save, int day) {
+        int old = save.day;
+        try {
+            save.day = Math.max(1, day);
+            return Shop.recommendedCost(save);
+        } finally {
+            save.day = old;
+        }
+    }
+
+    // ------------------------------------------------------------ v2.6 iflas
+    /** Art arda bu kadar başarısız günden sonra kurtarma yolu da yoksa iflas. */
+    public static final int FAIL_LOOP_DAYS = 3;
+
+    /** İflas nedeni (NONE: iflas yok). UI özet/brifingde "Dükkân kapandı" + "Yeni oyun" gösterir. */
+    public enum Bankruptcy {
+        NONE,
+        /** Tahliye kararı var, kira ödenemiyor ve kira kredisi de alınamıyor. */
+        EVICTED,
+        /** Stokla tek ürün bile yapılamıyor, kasa en ucuz ürünün malzemesine yetmiyor, kredi/acil destek yok. */
+        NO_MEANS,
+        /** {@link #FAIL_LOOP_DAYS} gün art arda başarısız, kasa önerilen stoğun yarısına yetmiyor, kredi/acil destek yok. */
+        FAIL_LOOP
+    }
+
+    /** Kasa/stok ile en az bir ürün yapılabilir mi (eksik malzeme market fiyatıyla alınabiliyorsa da evet). */
+    public static boolean canOperate(SaveData save) {
+        UtilityStatus u = UtilityStatus.of(save, save.day);
+        for (Product p : Catalog.productsForDay(save.day)) {
+            if (!u.productAvailable(p)) continue;
+            Map<String, Integer> need = new LinkedHashMap<>();
+            for (Step st : p.steps) for (Map.Entry<String, Integer> e : st.needs.entrySet()) {
+                Integer o = need.get(e.getKey());
+                need.put(e.getKey(), (o == null ? 0 : o) + e.getValue());
+            }
+            int cost = 0;
+            for (Map.Entry<String, Integer> e : need.entrySet()) {
+                int have = save.inventory.get(e.getKey());
+                if (e.getKey().equals(Catalog.AYRAN)) have += save.readyDrinks;
+                int lack = Math.max(0, e.getValue() - have);
+                if (lack > 0) cost += Catalog.ingredient(e.getKey()).price * lack;
+            }
+            if (cost <= save.money) return true;
+        }
+        return false;
+    }
+
+    /** Kurtarma yolu var mı: normal kredi (en az {@link Bank#MIN_LOAN}) ya da acil destek alınabilir. */
+    public static boolean canRescue(SaveData save) {
+        return Bank.available(save) >= Bank.MIN_LOAN || Bank.emergencyAidAvailable(save);
+    }
+
+    /** Açılacak gün ({@code save.day}) için iflas denetimi (saf; durum değiştirmez). */
+    public static Bankruptcy bankruptcy(SaveData save) {
+        if (UtilityStatus.of(save, save.day).evicted()) {
+            int rent = 0, biggest = 0;
+            for (Bill b : save.bills) if (b.type == BillType.KIRA && b.level(save.day) >= 3) {
+                int d = b.amountDue(save.day);
+                rent += d;
+                biggest = Math.max(biggest, d);
+            }
+            if (save.money < rent && !Bank.rentLoanAvailable(save, biggest)) return Bankruptcy.EVICTED;
+        }
+        boolean rescue = canRescue(save);
+        if (!rescue && !canOperate(save)) return Bankruptcy.NO_MEANS;
+        if (!rescue && save.failStreak >= FAIL_LOOP_DAYS && save.money < Shop.recommendedCost(save) / 2) return Bankruptcy.FAIL_LOOP;
+        return Bankruptcy.NONE;
     }
 
     // ------------------------------------------------------------ uyarılar

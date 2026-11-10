@@ -154,6 +154,37 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
     @Override public String title() { return "Gün " + a.save.day + ", oyun ekranı"; }
 
+    /** Motorun gün açılışında bildirdiği fatura uyarılarının (Narrator'ın söyleyeceği) birleşik metni; yoksa null. */
+    private String openNotices;
+
+    static String joinNotices(List<String> notices) {
+        StringBuilder sb = new StringBuilder();
+        if (notices != null) for (String n : notices) { if (sb.length() > 0) sb.append(' '); sb.append(n); }
+        return sb.toString();
+    }
+
+    /**
+     * Narrator ile Speaker arasındaki süzgeç (v2.6, bilişsel yük): (1) gün açılışındaki uzun fatura uyarıları (4 geciken
+     * faturada 600+ karakter tek duyuru) yerine kısa özet ({@link Texts#noticesBrief}) söylenir; brifing bu günün
+     * uyarılarını zaten söylediyse hiç yinelenmez (ekrandaki not kalır). (2) Duraklat > Faturalar açıkken "… ödendi"
+     * anlatımı susar: sonucu fatura paneli bir kez söyler (çift duyuru olmaz).
+     */
+    private final class GameVoice implements Narrator.Output {
+        @Override public void say(String text, boolean urgent) { a.speaker.say(text, urgent); }
+
+        @Override public void say(String text, boolean urgent, String category, Narrator.Fresh fresh) {
+            if (Narrator.CAT_BILLS.equals(category) && openNotices != null && openNotices.equals(text)) {
+                openNotices = null;
+                if (a.briefedNoticesDay == engine.getDay()) return;
+                String brief = Texts.noticesBrief(engine.getSave(), engine.getDay());
+                if (!brief.isEmpty()) a.speaker.say(brief, urgent, category, fresh);
+                return;
+            }
+            if (Narrator.CAT_MONEY.equals(category) && billsOverlay != null) return;
+            a.speaker.say(text, urgent, category, fresh);
+        }
+    }
+
     /** Yalnızca testler: sabit tohum (null = her oyunda rastgele). Testlerin deterministik olması için. */
     static Long testSeed;
 
@@ -166,7 +197,11 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     @Override public View create() {
         gameSave = a.save.copy();
         engine = new GameEngine(testSeed != null ? testSeed : System.nanoTime(), gameSave);
-        narrator = new Narrator(engine, a.speaker);
+        // v2.6: anlatım GameVoice süzgecinden geçer (gün açılışındaki fatura uyarıları kısalır; brifingte söylendiyse yinelenmez)
+        engine.addListener(new GameListenerAdapter() {
+            @Override public void onFinanceNotices(List<String> notices) { openNotices = joinNotices(notices); }
+        });
+        narrator = new Narrator(engine, new GameVoice());
         engine.addListener(narrator);
         engine.addListener(new Feedback());
         inUse = Texts.stationsInUse(gameSave.day);
@@ -356,8 +391,10 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         nextBtn = Ui.button(ctx, "Sonraki sipariş", Ui.SECONDARY);
         pauseBtn = Ui.button(ctx, "Duraklat", Ui.SECONDARY);
         readBtn = Ui.button(ctx, "Durumu oku", Ui.SECONDARY);
+        // v2.6: alt çubuk okunaklı (16 sp); görsel etiketler tek satıra sığsın diye kısa, sesli etiketler tam
+        nextBtn.setText("Sonraki");
         for (Button b : new Button[]{nextBtn, pauseBtn, readBtn}) {
-            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
             b.setPadding(dp(4), dp(8), dp(4), dp(8));
         }
         tap(nextBtn, new Runnable() { @Override public void run() { onNext(); } });
@@ -634,7 +671,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             @Override public boolean fullOptions() { return false; }
             @Override public void tap(View v, Runnable r) { GameScreen.this.tap(v, r); }
             @Override public void say(String text) { a.speaker.force(text); }
-            @Override public void focus(View v) { a.focusOn(v); }
+            @Override public void result(View focus, String text) { a.focusThenSay(focus, text); }
             @Override public void sound(String sfx, boolean ok) {
                 if (!ok) { a.sound.play(sfx); a.haptics.error(); return; }
                 if ("sfx_coin".equals(sfx)) return; // fatura: para sesi + titreşim motor olayından (Feedback.onBillPaid)
@@ -1432,7 +1469,39 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
     static String stationLoopKey(Station st, String sfx) { return "st:" + st.name() + ":" + sfx; }
 
-    /** Acil al düğmesini eksik TÜM malzemeler için günceller; yeni belirince duyurur ve odağı ona taşır. */
+    /** Acil al belirince odağın eylem satırından alınmadan önce beklenen süre (ms); oyuncu bu sürede gezinirse odak taşınmaz. */
+    static final long EMERGENCY_FOCUS_DELAY_MS = 1500;
+    /** Ertelenmiş odak taşıma zamanı (uptime ms; 0 = yok) ve o an odakta olan eylem satırı. */
+    private long emergencyFocusAt;
+    private View emergencyFocusFrom;
+    /** Acil al odağı aldığında odağın bulunduğu yer: alımdan sonra odak oraya döner. */
+    private View emergencyReturn;
+
+    private static View findA11yFocused(View v) {
+        if (v.getVisibility() != View.VISIBLE) return null;
+        if (v.isAccessibilityFocused()) return v;
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) {
+                View r = findA11yFocused(g.getChildAt(i));
+                if (r != null) return r;
+            }
+        }
+        return null;
+    }
+
+    private void focusEmergency(View from) {
+        emergencyReturn = from;
+        focusRequest = FOCUS_NONE;
+        a.focusOn(emergencyBtn);
+    }
+
+    /**
+     * Acil al düğmesini eksik TÜM malzemeler için günceller; yeni belirince duyurur (Narrator) ve odağı ona taşır.
+     * v2.6 (odak çalma yumuşatıldı): oyuncu bir EYLEM SATIRINDAYSA odak hemen alınmaz; {@link #EMERGENCY_FOCUS_DELAY_MS}
+     * sonra, oyuncu hâlâ aynı satırdaysa taşınır (uyarı duyurusu ile odak okuması yarışmaz, gezinen oyuncunun odağı
+     * çalınmaz). Alımdan sonra (düğme kalkınca) odak geldiği yere döner.
+     */
     private void updateEmergency(Order selected) {
         List<Ingredient> missing = new ArrayList<>();
         int cost = 0;
@@ -1452,9 +1521,18 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             if (!dup) { missing.add(ing); cost += ing.emergencyPrice() * Ingredient.EMERGENCY_BATCH; }
         }
         if (missing.isEmpty()) {
+            boolean had = emergencyBtn.getVisibility() == View.VISIBLE && emergencyBtn.isAccessibilityFocused();
             emergencyBtn.setVisibility(View.GONE);
             emergencyKey = "";
+            emergencyFocusAt = 0;
+            emergencyFocusFrom = null;
             if (panel != null) panel.setEmergency(null, null);
+            if (had && panel == null && ordersPanel == null && !paused) {
+                // düğme kalktı: odak kaybolmasın, geldiği yere (yoksa ilk eylem satırına) dönsün
+                if (emergencyReturn != null && emergencyReturn.isShown()) a.focusOn(emergencyReturn);
+                else focusRequest = FOCUS_FIRST_ACTION;
+            }
+            emergencyReturn = null;
             return;
         }
         String label = Texts.emergencyLabel(missing, cost);
@@ -1467,9 +1545,22 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         for (Ingredient ing : missing) key.append('|').append(ing.id);
         if (!key.toString().equals(emergencyKey)) {
             emergencyKey = key.toString();
-            // Belirdi (ya da eksik küme değişti): duyuru Narrator'da yapıldı (acil, kesici);
-            // TalkBack erişilebilirlik odağı da doğrudan düğmeye taşınır (panel açıksa panelde kalır).
-            if (panel == null && ordersPanel == null && !paused) { focusRequest = FOCUS_NONE; a.focusOn(emergencyBtn); }
+            emergencyFocusAt = 0;
+            // Belirdi (ya da eksik küme değişti): duyuru Narrator'da yapıldı (acil, kesici).
+            if (panel == null && ordersPanel == null && !paused && !emergencyBtn.isAccessibilityFocused()) {
+                View cur = findA11yFocused(host);
+                if (cur instanceof ActionRow) {
+                    emergencyFocusAt = SystemClock.uptimeMillis() + EMERGENCY_FOCUS_DELAY_MS;
+                    emergencyFocusFrom = cur;
+                } else {
+                    focusEmergency(cur);
+                }
+            }
+        } else if (emergencyFocusAt > 0 && SystemClock.uptimeMillis() >= emergencyFocusAt) {
+            emergencyFocusAt = 0;
+            View from = emergencyFocusFrom;
+            emergencyFocusFrom = null;
+            if (panel == null && ordersPanel == null && !paused && from != null && from.isAccessibilityFocused()) focusEmergency(from);
         }
     }
 
@@ -2057,6 +2148,14 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             a.sound.play("sfx_warning", panForStation(Station.ICECEK), 0.8f);
             a.haptics.warning();
             notice(narrator.stockSpoiled(ing, amount));
+            dirty = true;
+        }
+
+        /** v2.6: süresiz gün kilitlendi (iş/stok/para yok): gün kapanıyor; ekranda not (anlatım Narrator/özet ekranında). */
+        @Override public void onDayStuck(int closedOrders) {
+            a.sound.play("sfx_warning");
+            a.haptics.warning();
+            notice(Texts.STUCK_NOTE);
             dirty = true;
         }
 

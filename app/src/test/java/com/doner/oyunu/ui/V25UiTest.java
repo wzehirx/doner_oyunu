@@ -245,7 +245,7 @@ public class V25UiTest {
         assertNotNull(h.clickables().toString(), close);
         close.performClick(); h.idle(150);
         assertTrue(s.loans.isEmpty());
-        assertEquals(63, s.creditScore);
+        assertEquals("v2.6: aynı gün al-kapat kredi notu ödülü vermez", 60, s.creditScore);
         // en çok 3 kredi
         for (int i = 0; i < 4; i++) { h.click("Tutarı azalt"); h.idle(20); }
         for (int i = 0; i < 3; i++) { h.click("Kredi al: 500 lira"); h.idle(50); }
@@ -370,6 +370,7 @@ public class V25UiTest {
         s.day = 6;
         s.money = 30_000;
         Shop.buyRecommended(s);
+        s.autoPayBills = false; // v2.6: otomatik ödeme açılışta öderdi
         Finance.issue(s, BillType.DOGALGAZ, 200, 1);  // son ödeme 3: 3 gün gecikti -> Ocak kapalı
         h.startDay();
         GameEngine e = h.engine();
@@ -404,6 +405,7 @@ public class V25UiTest {
         s.day = 6;
         s.money = 30_000;
         Shop.buyRecommended(s);
+        s.autoPayBills = false; // v2.6: otomatik ödeme açılışta öderdi
         Finance.issue(s, BillType.ELEKTRIK, 200, 3); // son ödeme 5: 1 gün gecikti -> kısmi
         h.startDay();
         assertTrue(UiHarness.label(h.stationTile(Station.EKMEK)).contains("elektrik kesik"));
@@ -421,6 +423,7 @@ public class V25UiTest {
         s.day = 6;
         s.money = 20_000;
         Shop.buyRecommended(s);
+        s.autoPayBills = false; // v2.6: otomatik ödeme açılışta öderdi
         Finance.issue(s, BillType.DOGALGAZ, 200, 1);
         e = new GameEngine(3, s);
         e.setSpawning(false);

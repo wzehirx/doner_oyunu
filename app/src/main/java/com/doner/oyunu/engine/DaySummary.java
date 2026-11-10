@@ -65,6 +65,23 @@ public final class DaySummary {
     /** Çırağın teslim ettiği sipariş sayısı. */
     public int apprenticeDeliveries;
 
+    // ---- v2.6
+    /** Otomatik ödenen faturalar (gün açılışında + gün sonunda; {@link Bill#getPaid()} = ödenen tutar) ve toplamı. */
+    public final java.util.List<Bill> autoPaid = new java.util.ArrayList<>();
+    public int autoPaidTotal;
+    /**
+     * Süresiz günde yapılabilir iş, stok ve acil alım parası kalmadığı için gün erken kapandı (bekleyen müşteriler cezasız
+     * gitti; {@link #stuckClosedOrders} sipariş).
+     */
+    public boolean stuckEnded;
+    public int stuckClosedOrders;
+    /** Gün sonu (başarılı ya da başarısız) iflas denetimi; NONE değilse UI "Dükkân kapandı" + yeniden başla gösterir. */
+    public Finance.Bankruptcy bankruptcy = Finance.Bankruptcy.NONE;
+    /** Gün sonundaki art arda başarısız gün sayısı. */
+    public int failStreak;
+
+    public boolean isBankrupt() { return bankruptcy != Finance.Bankruptcy.NONE; }
+
     /** Gün sonunda kasadan otomatik çıkan giderler: maaş + taksit + haciz (+ eski kira, 0). */
     public int expenses() { return rent + wagesPaid + installmentsPaid + seized; }
 

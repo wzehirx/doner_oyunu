@@ -35,6 +35,9 @@ public abstract class Screen {
     /** Ekrana girişte odaklanacak görünüm (varsayılan: başlık). */
     public View focusTarget() { return titleView; }
 
+    /** Ekran başlığı görünümü (TalkBack'te pencere başlığıyla çift okunmasın diye odak ondan sonraki öğeye gider). */
+    public View titleTarget() { return titleView; }
+
     public void onEnter() { }
 
     public void onExit() { }

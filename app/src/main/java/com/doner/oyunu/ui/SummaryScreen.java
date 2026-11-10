@@ -11,9 +11,16 @@ import com.doner.oyunu.engine.Narrator;
 
 import java.util.List;
 
-/** Gün sonu özeti. Başarısızsa "Aynı günü tekrar dene". */
+/**
+ * Gün sonu özeti. Başarısızsa "Aynı günü tekrar dene". v2.6: iflasta ({@link DaySummary#isBankrupt}) "Dükkân kapandı"
+ * kartı + "Yeni oyun" (başka çıkış sunulmaz); süresiz gün kilitlenip erken kapandıysa açıklaması; ilk fatura kesildiğinde
+ * tek cümlelik öğretici (bir kez, görsel + sesli).
+ */
 public final class SummaryScreen extends Screen {
     private final DaySummary summary;
+    /** Girişte söylenecek ek cümle (iflas ya da ilk fatura öğreticisi); yoksa null. */
+    private String enterSpeech;
+    private boolean enterUrgent;
 
     public SummaryScreen(MainActivity a, DaySummary s) {
         super(a);
@@ -48,7 +55,28 @@ public final class SummaryScreen extends Screen {
         root.addView(stars, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 0, 0, 6));
 
         LinearLayout body = scrollBody(root);
-        if (summary.failed) {
+        final boolean bankrupt = summary.isBankrupt();
+        if (bankrupt) {
+            String bt = Texts.bankruptcyText(summary.bankruptcy, summary.day);
+            body.addView(alertCard(bt), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 6));
+            enterSpeech = bt;
+            enterUrgent = true;
+        } else if (!summary.newBills.isEmpty() && !a.firstBillTipShown()) {
+            // ilk fatura öğreticisi (bir kez): ne oldu, ne yapmalı — tek cümle
+            String tip = Texts.firstBillTip(summary.newBills.get(0), a.save.autoPayBills);
+            a.markFirstBillTipShown();
+            LinearLayout c = card();
+            c.setBackground(Ui.round(ctx, Theme.CARD_HI, Theme.GOLD, 3, 16));
+            TextView tv = Ui.label(ctx, tip, 19, Theme.GOLD, true);
+            tv.setFocusable(true);
+            c.addView(tv);
+            body.addView(c, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 6));
+            enterSpeech = tip;
+        }
+        if (summary.stuckEnded) body.addView(paragraph(Texts.STUCK_NOTE));
+        if (summary.failed && bankrupt) {
+            // iflas kartı her şeyi söyledi
+        } else if (summary.failed) {
             body.addView(paragraph(evicted()
                     ? "Dükkân açılamadı: kira " + com.doner.oyunu.engine.Finance.EVICTION_DAYS + " gündür ödenmedi, tahliye kararı var. Faturalar ekranında kirayı öde; paran yetmezse Krediyle öde."
                     : "İtibarın çok düştü. Paran ve stokların gün başındaki haline döndü; aynı günü tekrar deneyebilirsin."));
@@ -88,6 +116,17 @@ public final class SummaryScreen extends Screen {
         }
 
         LinearLayout bar = column();
+        if (bankrupt) {
+            // v2.6 iflas: tek yol yeni oyun (ayarlar ve en iyi gün korunur)
+            bar.addView(button("Yeni oyun", Ui.GOLD, new Runnable() {
+                @Override public void run() { a.restartAfterBankruptcy(); a.startBriefing(); }
+            }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 6));
+            bar.addView(button("Ana menü", Ui.SECONDARY, new Runnable() {
+                @Override public void run() { a.show(new MenuScreen(a)); }
+            }));
+            root.addView(bar);
+            return root;
+        }
         // v2.5: açık fatura ya da maaş borcu varsa Faturalar ekranı (Öde / Ertele / Krediyle öde) en üstte
         if (evicted() || BillsBox.anythingDue(a.save)) {
             String bl = evicted() ? "Faturalar: kirayı öde" : "Faturalar";
@@ -120,6 +159,22 @@ public final class SummaryScreen extends Screen {
         bar.addView(row);
         root.addView(bar);
         return root;
+    }
+
+    private LinearLayout alertCard(String text) {
+        LinearLayout c = card();
+        c.setBackground(Ui.round(ctx, Theme.CARD_HI, Theme.RED, 3, 16));
+        TextView tv = Ui.label(ctx, text, 19, Theme.GOLD, true);
+        tv.setFocusable(true);
+        c.addView(tv);
+        return c;
+    }
+
+    /** İflas hemen (acil), ilk fatura öğreticisi gün sonu anlatımının ardından (öğretici kategorisi: geç bayatlar). */
+    @Override public void onEnter() {
+        if (enterSpeech == null) return;
+        if (enterUrgent) a.speaker.say(enterSpeech, true);
+        else a.speaker.say(enterSpeech, false, Narrator.CAT_TUTORIAL, null);
     }
 
     private boolean evicted() { return "tahliye".equals(summary.failReason) && com.doner.oyunu.engine.UtilityStatus.of(a.save, a.save.day).evicted(); }

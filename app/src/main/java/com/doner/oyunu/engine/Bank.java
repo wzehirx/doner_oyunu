@@ -23,6 +23,11 @@ public final class Bank {
     /** Art arda bu kadar taksit kaçınca yeni kredi verilmez. */
     public static final int BLOCK_STREAK = 3;
 
+    /** v2.6: limit dışı (en yüksek faizli) açık kira kredisi sınırı; aşılınca kira kredisi de verilmez. */
+    public static final int MAX_RENT_LOANS = 2;
+    /** v2.6: acil destek kredisinin vadesi (gün). */
+    public static final int EMERGENCY_TERM = 10;
+
     public enum Result { OK, OVER_LIMIT, INVALID_AMOUNT, INVALID_TERM, TOO_MANY_LOANS, BLOCKED, NOT_ENOUGH_MONEY, UNKNOWN }
 
     /** Kredi teklifi (alınmadan önce gösterilir). */
@@ -111,7 +116,10 @@ public final class Bank {
     /** Kredi alır: para kasaya girer, taksitler gün sonlarında alınır. */
     public static Result takeLoan(SaveData save, int amount, int term) { return takeLoan(save, amount, term, false); }
 
-    /** rentLoan: kira faturası için; limit/engel aranmaz, en yüksek faiz (tahliye kilitlenmesi olmasın). */
+    /**
+     * rentLoan: kira faturası için; limit/engel aranmaz, en yüksek faiz (tahliye kilitlenmesi olmasın). v2.6: limit dışı
+     * açık kira kredisi en çok {@link #MAX_RENT_LOANS} (aşılırsa TOO_MANY_LOANS; iflas denetimi bunu görür).
+     */
     static Result takeLoan(SaveData save, int amount, int term, boolean rentLoan) {
         if (amount < MIN_LOAN || amount % STEP != 0) return Result.INVALID_AMOUNT;
         if (!validTerm(term)) return Result.INVALID_TERM;
@@ -121,15 +129,19 @@ public final class Bank {
             if (blocked(save)) return Result.BLOCKED;
             return Result.OVER_LIMIT;
         }
+        if (!normal && openCount(save, Loan.Kind.RENT) >= MAX_RENT_LOANS) return Result.TOO_MANY_LOANS; // v2.6
         double rate = normal ? dailyRate(save.creditScore) : WORST_RATE;
         Quote q = new Quote(amount, term, rate);
-        Loan l = new Loan(save.nextFinanceId++, amount, q.interest, term, save.day);
+        Loan l = new Loan(save.nextFinanceId++, amount, q.interest, term, save.day, normal ? Loan.Kind.NORMAL : Loan.Kind.RENT);
         save.loans.add(l);
         save.money += amount;
         return Result.OK;
     }
 
-    /** Krediyi erken kapatır: kalan anapara + kalan faizin %25'i + gecikme bedeli. Kredi notu +3. */
+    /**
+     * Krediyi erken kapatır: kalan anapara + kalan faizin %25'i + gecikme bedeli. Kredi notu +3, v2.6: yalnızca kredi
+     * önceki bir gün alındıysa ve en az bir taksiti vadesine geldiyse (aynı gün al-kapat "not çiftliği" ödül almaz).
+     */
     public static Result repay(SaveData save, int loanId) {
         Loan l = loan(save, loanId);
         if (l == null) return Result.UNKNOWN;
@@ -137,7 +149,55 @@ public final class Bank {
         if (save.money < p) return Result.NOT_ENOUGH_MONEY;
         save.money -= p;
         save.loans.remove(l);
-        Finance.adjustCredit(save, 3);
+        if (earnsRepayBonus(save, l)) Finance.adjustCredit(save, 3);
+        return Result.OK;
+    }
+
+    /** v2.6: erken kapatma kredi notu ödülü verilir mi (alındığı günden sonra ve en az bir taksit vadesi gelmiş). */
+    public static boolean earnsRepayBonus(SaveData save, Loan l) {
+        return l != null && l.takenDay < save.day && l.hasInstallmentHistory();
+    }
+
+    // ------------------------------------------------------------ v2.6: kira kredisi sınırı, acil destek
+    /** Verilen türde açık kredi sayısı. */
+    public static int openCount(SaveData save, Loan.Kind kind) {
+        int n = 0;
+        for (Loan l : save.loans) if (l.kind == kind) n++;
+        return n;
+    }
+
+    /** Kira faturası için kredi alınabilir mi (normal limit içinde ya da limit dışı kira kredisi sınırı dolmadıysa). */
+    public static boolean rentLoanAvailable(SaveData save, int amount) {
+        int a = Math.max(MIN_LOAN, ((amount + STEP - 1) / STEP) * STEP);
+        boolean normal = save.loans.size() < MAX_LOANS && !blocked(save) && a <= available(save);
+        return normal || openCount(save, Loan.Kind.RENT) < MAX_RENT_LOANS;
+    }
+
+    /**
+     * Acil destek tutarı: önerilen stok maliyetinden kasadakini çıkarıp 100'e yukarı yuvarlar (en az {@link #MIN_LOAN}).
+     * Destek alınamıyorsa 0 ({@link #emergencyAidAvailable}).
+     */
+    public static int emergencyAidAmount(SaveData save) {
+        if (openCount(save, Loan.Kind.EMERGENCY) > 0) return 0;
+        int need = Shop.recommendedCost(save) - save.money;
+        if (need <= 0) return 0;
+        return Math.max(MIN_LOAN, ((need + STEP - 1) / STEP) * STEP);
+    }
+
+    /**
+     * v2.6 acil destek (esnaf kredisi): kasa önerilen stoğa yetmiyorsa limit, engel ve kredi sayısı aranmadan, en yüksek
+     * faizle {@link #EMERGENCY_TERM} günlük kredi. Aynı anda en çok bir açık acil destek. Sıfır kasa/boş stok tuzağını açar.
+     */
+    public static boolean emergencyAidAvailable(SaveData save) { return emergencyAidAmount(save) > 0; }
+
+    /** Acil destek kredisini alır (tutar {@link #emergencyAidAmount}). Alınamıyorsa TOO_MANY_LOANS (açık destek var) ya da INVALID_AMOUNT. */
+    public static Result takeEmergencyAid(SaveData save) {
+        if (openCount(save, Loan.Kind.EMERGENCY) > 0) return Result.TOO_MANY_LOANS;
+        int amount = emergencyAidAmount(save);
+        if (amount <= 0) return Result.INVALID_AMOUNT;
+        Quote q = new Quote(amount, EMERGENCY_TERM, WORST_RATE);
+        save.loans.add(new Loan(save.nextFinanceId++, amount, q.interest, EMERGENCY_TERM, save.day, Loan.Kind.EMERGENCY));
+        save.money += amount;
         return Result.OK;
     }
 

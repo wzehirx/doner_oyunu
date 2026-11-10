@@ -302,7 +302,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         cell.addView(row);
         if (below != null) cell.addView(below);
         else {
-            TextView cap = Ui.label(ctx, caption, 12, Theme.MUTED, false);
+            TextView cap = Ui.label(ctx, caption, 13, Theme.MUTED, false);
             cap.setGravity(Gravity.CENTER);
             cell.addView(cap);
             if (captionOut != null) captionOut[0] = cap;
@@ -1413,8 +1413,16 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
                 if (ev.getEventType() == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) {
                     if (!focusSeenInGroup) lastA11yFocus = null;
                     focusSeenInGroup = false;
+                    emergencyFocused = emergencyFocusEvent; // odak Acil al'da mı, başka yerde mi
+                    emergencyFocusEvent = false;
                 }
                 return super.onRequestSendAccessibilityEvent(g, child, ev);
+            }
+        });
+        emergencyBtn.setAccessibilityDelegate(new View.AccessibilityDelegate() {
+            @Override public void sendAccessibilityEventUnchecked(View v, android.view.accessibility.AccessibilityEvent ev) {
+                if (ev.getEventType() == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) emergencyFocusEvent = true;
+                super.sendAccessibilityEventUnchecked(v, ev);
             }
         });
     }
@@ -1477,18 +1485,9 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     /** Acil al odağı aldığında odağın bulunduğu yer: alımdan sonra odak oraya döner. */
     private View emergencyReturn;
 
-    private static View findA11yFocused(View v) {
-        if (v.getVisibility() != View.VISIBLE) return null;
-        if (v.isAccessibilityFocused()) return v;
-        if (v instanceof ViewGroup) {
-            ViewGroup g = (ViewGroup) v;
-            for (int i = 0; i < g.getChildCount(); i++) {
-                View r = findA11yFocused(g.getChildAt(i));
-                if (r != null) return r;
-            }
-        }
-        return null;
-    }
+    /** Erişilebilirlik odağı Acil al düğmesinde mi (olaylardan izlenir; {@link #trackAccessibilityFocus}). */
+    private boolean emergencyFocused;
+    private boolean emergencyFocusEvent;
 
     private void focusEmergency(View from) {
         emergencyReturn = from;
@@ -1521,7 +1520,8 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             if (!dup) { missing.add(ing); cost += ing.emergencyPrice() * Ingredient.EMERGENCY_BATCH; }
         }
         if (missing.isEmpty()) {
-            boolean had = emergencyBtn.getVisibility() == View.VISIBLE && emergencyBtn.isAccessibilityFocused();
+            boolean had = emergencyBtn.getVisibility() == View.VISIBLE && emergencyFocused;
+            emergencyFocused = false;
             emergencyBtn.setVisibility(View.GONE);
             emergencyKey = "";
             emergencyFocusAt = 0;
@@ -1547,20 +1547,20 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             emergencyKey = key.toString();
             emergencyFocusAt = 0;
             // Belirdi (ya da eksik küme değişti): duyuru Narrator'da yapıldı (acil, kesici).
-            if (panel == null && ordersPanel == null && !paused && !emergencyBtn.isAccessibilityFocused()) {
-                View cur = findA11yFocused(host);
-                if (cur instanceof ActionRow) {
+            if (panel == null && ordersPanel == null && !paused && !emergencyFocused) {
+                View cur = lastA11yFocus;
+                if (cur instanceof ActionRow && cur.getVisibility() == View.VISIBLE) {
                     emergencyFocusAt = SystemClock.uptimeMillis() + EMERGENCY_FOCUS_DELAY_MS;
                     emergencyFocusFrom = cur;
                 } else {
-                    focusEmergency(cur);
+                    focusEmergency(null);
                 }
             }
         } else if (emergencyFocusAt > 0 && SystemClock.uptimeMillis() >= emergencyFocusAt) {
             emergencyFocusAt = 0;
             View from = emergencyFocusFrom;
             emergencyFocusFrom = null;
-            if (panel == null && ordersPanel == null && !paused && from != null && from.isAccessibilityFocused()) focusEmergency(from);
+            if (panel == null && ordersPanel == null && !paused && from != null && lastA11yFocus == from) focusEmergency(from);
         }
     }
 

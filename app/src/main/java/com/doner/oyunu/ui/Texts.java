@@ -1137,11 +1137,14 @@ public final class Texts {
                 "Elektrik, doğalgaz, su ve kira faturası haftada bir, vergi on günde bir gün sonunda kesilir. Son ödeme kesildiği günden iki gün sonradır. "
                         + "Gün sonunda ve brifingte Faturalar ekranında her fatura için Öde, Ertele ya da Krediyle öde seçersin; oyun sırasında Duraklat menüsünde de Faturalar vardır. "
                         + "Ödenmeyen fatura zorluk getirir: elektrik kesilince ekmek ısıtıcı ve içecek yavaşlar, doğalgaz kesilince Ocak kapanır, su kesilince tepsi hazırlanamaz. "
-                        + "Kira altı gün ödenmezse dükkân açılamaz; vergi geç kalırsa haciz gelir. Ödeyince hemen düzelir."});
+                        + "Kira altı gün ödenmezse dükkân açılamaz; vergi geç kalırsa haciz gelir. Ödeyince hemen düzelir. "
+                        + "Otomatik ödeme açıkken faturalar son ödeme gününde kasadan kendiliğinden ödenir; para yetmezse sen ödersin. Ayarlardan kapatabilirsin. "
+                        + "Fatura satırına dokununca ayrıntısı okunur; Faturaları oku kısa özet verir."});
         l.add(new String[]{"Banka ve kredi",
                 "Banka ekranında limitini, kredi notunu ve kredilerini dinlersin. Tutarı 500 lira adımlarla, vadeyi 5, 10 ya da 20 gün seçip Kredi al dersin. "
                         + "Taksit her gün sonunda kasadan alınır. Erken kapat krediyi bitirir ve kredi notunu yükseltir. "
-                        + "Faturayı zamanında ödemek kredi notunu yükseltir; geciken fatura ve kaçan taksit düşürür."});
+                        + "Faturayı zamanında ödemek kredi notunu yükseltir; geciken fatura ve kaçan taksit düşürür. "
+                        + "Kasa stoğa yetmezse banka bir kez Acil destek kredisi verir. Hiçbir çıkış kalmazsa dükkân kapanır ve Yeni oyun ile baştan başlarsın; ayarların korunur."});
         l.add(new String[]{"Gün sonu ve kolaylıklar",
                 "Gün bitince satış, bahşiş, çırak maaşı, kredi taksiti, yeni faturalar, israf ve hatalar dinletilir; kayıt otomatiktir. Her ekranda Nasıl oynanır vardır. "
                         + "Durumu oku düğmesi para, yıldız, süre, seçili sipariş ve hazır stoğu söyler. Uygulama arka plana giderse oyun durur. Tüm eylemler tek dokunuşludur."});

@@ -265,6 +265,11 @@ public final class Speaker implements Narrator.Output {
      * uygulanır (sonrakiler QUEUE_ADD ile okumanın arkasına eklenir).
      */
     public static final long MAX_BUSY_MS = 3000;
+    /**
+     * Açık okumanın sırayı meşgul saydığı en uzun süre: okuma sürerken İKİ olağan duyuru birikse de ikisi de bayatlamadan
+     * söylenebilsin diye daha kısa (okuma kesilmez: TalkBack/TTS sonrakileri kendi kuyruğunda okumanın arkasına koyar).
+     */
+    public static final long EXPLICIT_BUSY_MS = 1500;
 
     /** Açık okuma şu an başlatılıyor (sıranın oynatıcı çağrısı içinde). */
     private boolean explicitStarting;
@@ -318,13 +323,13 @@ public final class Speaker implements Narrator.Output {
             if (explicit) explicitUntil = now + est;
             else if (interrupt || cut) explicitUntil = 0;
             speechUntil = interrupt || cut ? now + est : Math.max(speechUntil, now) + est;
-            return Math.min(est, MAX_BUSY_MS);
+            return Math.min(est, explicit ? EXPLICIT_BUSY_MS : MAX_BUSY_MS);
         }
         long est = speakTtsNow(text, interrupt || cut);
         if (explicit) {
             explicitUntil = est > 0 ? now + est : 0;
             explicitUtterance = lastUtterance;
-            return Math.min(est, MAX_BUSY_MS);
+            return Math.min(est, EXPLICIT_BUSY_MS);
         }
         if (interrupt || cut) { explicitUntil = 0; explicitUtterance = null; }
         return est;

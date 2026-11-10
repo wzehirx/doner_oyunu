@@ -119,6 +119,8 @@ public final class PriceScreen extends Screen {
                 if (!vis.contentEquals(info.getText())) info.setText(vis);
                 Ui.setDesc(info, Texts.priceRowLabel(s, p));
                 int pc = Pricing.percent(s, p.id);
+                // v2.6: referanstan ayrılan fiyat altın renkle öne çıkar (durum metinde de var: "yüzde 110")
+                info.setTextColor(pc != Pricing.DEFAULT_PERCENT ? Theme.GOLD : Theme.CREAM);
                 Ui.dim(minus, pc <= Pricing.MIN_PERCENT);
                 Ui.dim(plus, pc >= Pricing.MAX_PERCENT);
             }

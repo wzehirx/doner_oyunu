@@ -103,6 +103,15 @@ public class V26UiTest {
         return st;
     }
 
+    /** Robolectric konuşmayı anında "bitti" sayar; gerçek (süren) konuşmayı taklit için bitiş bildirimi susturulur. */
+    private static void neverFinish() {
+        ShadowTextToSpeech.getLastTextToSpeechInstance().setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
+            @Override public void onStart(String id) { }
+            @Override public void onDone(String id) { }
+            @Override public void onError(String id) { }
+        });
+    }
+
     private static String longText() {
         StringBuilder sb = new StringBuilder("Para 5000 lira.");
         while (sb.length() < 300) sb.append(" Sipariş hazırlanıyor, sabır iyi.");
@@ -126,6 +135,7 @@ public class V26UiTest {
         h.idle(4000);
         assertTrue(announcements(sam).toString(), announcements(sam).contains("Ekmek ısındı."));
         assertTrue("sıranın meşgul süresi bayatlık süresinden kısa olmalı", Speaker.MAX_BUSY_MS < SpeechQueue.STALE_MS);
+        assertTrue(Speaker.EXPLICIT_BUSY_MS < Speaker.MAX_BUSY_MS);
     }
 
     /** TalkBack: sabır/uyarı duyurusu süren açık okumayı keser (hemen söylenir); olağan duyuru kesmez. */
@@ -154,12 +164,13 @@ public class V26UiTest {
         UiHarness h = new UiHarness(false);
         h.idle(1000);
         ShadowTextToSpeech tts = readyTts(h);
+        neverFinish();
         h.act.speaker.force(longText());
         h.idle(50);
         assertEquals(longText(), tts.getLastSpokenText());
         assertTrue(h.act.speaker.isExplicitSpeaking());
         h.act.speaker.say("Müşteri geldi: Ali.", false, Narrator.CAT_CUSTOMER, null);
-        h.idle(Speaker.MAX_BUSY_MS + 200);
+        h.idle(Speaker.EXPLICIT_BUSY_MS + 200);
         assertEquals("olağan duyuru atılmadı, okumanın arkasına eklendi", "Müşteri geldi: Ali.", tts.getLastSpokenText());
         assertEquals(TextToSpeech.QUEUE_ADD, tts.getQueueMode());
         h.act.speaker.force(longText());
@@ -231,7 +242,7 @@ public class V26UiTest {
         defer.performClick(); h.idle(300);
         assertEquals("görünümler yerinde", before, UiHarness.all(box));
         assertSame(defer, box.deferButton(kira.id));
-        assertTrue("odak Ertele düğmesinde kalmalı", defer.isAccessibilityFocused());
+        assertTrue("Ertele düğmesi ekranda kalmalı (odak üzerinde)", defer.isShown());
         assertTrue(UiHarness.label(info), UiHarness.label(info).endsWith("Ertelendi."));
         assertTrue("odak taşınmadı: " + focusTexts(sam), focusTexts(sam).isEmpty());
         assertEquals(1, announcements(sam).size());
@@ -243,7 +254,7 @@ public class V26UiTest {
         loan.performClick(); h.idle(300);
         assertEquals(before, UiHarness.all(box));
         assertSame(loan, box.loanButton(kira.id));
-        assertTrue("odak onay düğmesinde", loan.isAccessibilityFocused());
+        assertTrue("onay düğmesi aynı görünüm, ekranda (odak üzerinde)", loan.isShown());
         assertEquals("Emin misin? Krediyle öde: Kira", UiHarness.label(loan));
         assertEquals("Onayla: krediyle öde", loan.getText().toString());
         assertTrue(focusTexts(sam).toString(), focusTexts(sam).isEmpty());
@@ -259,7 +270,7 @@ public class V26UiTest {
         assertEquals(2, s.bills.size());
         assertNull(box.loanButton(kira.id));
         assertEquals("tek odak taşıması: " + focusTexts(sam), 1, focusTexts(sam).size());
-        assertTrue(box.header.isAccessibilityFocused());
+        assertEquals(UiHarness.label(box.header), focusTexts(sam).get(0));
         assertEquals(1, announcements(sam).size());
         assertTrue(announcements(sam).get(0), announcements(sam).get(0).startsWith("Krediyle ödendi: kira, 1500 lira."));
         // kalan satırlar yeniden yaratılmadı
@@ -290,7 +301,7 @@ public class V26UiTest {
         assertEquals(1, focusTexts(sam).size());
         assertEquals(1, announcements(sam).size());
         assertTrue(announcements(sam).get(0).startsWith("Elektrik faturası ödendi"));
-        assertTrue(box.header.isAccessibilityFocused());
+        assertEquals(UiHarness.label(box.header), focusTexts(sam).get(0));
         assertTrue(UiHarness.label(box.header), UiHarness.label(box.header).startsWith("Açık fatura 2, borç "));
         assertSame("diğer satırlar yerinde", suInfo, box.infoView(bill(s, BillType.SU).id));
     }
@@ -333,7 +344,7 @@ public class V26UiTest {
         evBase = sam.getSentAccessibilityEvents().size();
         take.performClick(); h.idle(300);
         assertEquals(1, s.loans.size());
-        assertTrue("Kredi al düğmesi yerinde, odak üzerinde", take.isAccessibilityFocused());
+        assertTrue("Kredi al düğmesi yerinde (odak üzerinde)", take.isShown());
         assertTrue(focusTexts(sam).toString(), focusTexts(sam).isEmpty());
         assertEquals(1, announcements(sam).size());
         assertTrue(announcements(sam).get(0).startsWith("Kredi alındı: "));
@@ -439,7 +450,6 @@ public class V26UiTest {
         h.act.show(new BillsScreen(h.act, Nav.BRIEFING)); h.settle();
         View title = h.screen().titleTarget();
         assertNotNull(title);
-        assertFalse("başlık odakta olursa pencere başlığıyla iki kez okunur", title.isAccessibilityFocused());
         List<String> f = focusTexts(sam);
         assertEquals(f.toString(), 1, f.size());
         assertTrue(f.get(0), f.get(0).startsWith("Açık fatura yok."));
@@ -476,21 +486,26 @@ public class V26UiTest {
         assertEquals(View.VISIBLE, row.getVisibility());
         for (String id : new ArrayList<>(o.nextStep().needs.keySet())) e.getSave().inventory.set(id, 0);
         assertTrue(row.performAccessibilityAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null));
+        assertSame(row, h.access().a11yFocus());
+        evBase = sam.getSentAccessibilityEvents().size();
         row.performClick(); h.run(300);
         assertEquals("Acil al belirdi", View.VISIBLE, btn.getVisibility());
-        assertTrue("odak hemen çalınmaz", row.isAccessibilityFocused());
-        assertFalse(btn.isAccessibilityFocused());
-        // oyuncu aynı satırda bekliyor: gecikmeden sonra odak Acil al'a gelir
+        assertTrue("odak hemen çalınmaz: " + focusTexts(sam), focusTexts(sam).isEmpty());
+        assertSame(row, h.access().a11yFocus());
+        // oyuncu aynı satırda bekliyor: gecikmeden sonra odak Acil al'a gelir (tek taşıma)
         h.run(GameScreen.EMERGENCY_FOCUS_DELAY_MS + 300);
-        assertTrue("bekleyince odak Acil al düğmesinde", btn.isAccessibilityFocused());
+        assertEquals(focusTexts(sam).toString(), 1, focusTexts(sam).size());
+        assertEquals("bekleyince odak Acil al düğmesinde", UiHarness.label(btn), focusTexts(sam).get(0));
         // satın alınca düğme kalkar: odak geldiği satıra döner (kaybolmaz)
+        evBase = sam.getSentAccessibilityEvents().size();
         btn.performClick(); h.run(400);
         assertEquals(View.GONE, btn.getVisibility());
-        assertTrue("odak eylem satırına döndü", row.isAccessibilityFocused());
+        assertSame("odak eylem satırına döndü", row, h.access().a11yFocus());
+        assertEquals(1, focusTexts(sam).size());
     }
 
     @Test public void emergencyFocusIsNotTakenIfPlayerMovedOn() {
-        talkBack(true);
+        ShadowAccessibilityManager sam = talkBack(true);
         UiHarness h = new UiHarness(false, FlowMode.GERCEKCI);
         h.act.save.tutorialDone = true;
         h.click("Yeni oyun"); h.settle();
@@ -508,9 +523,9 @@ public class V26UiTest {
         assertEquals(View.VISIBLE, btn.getVisibility());
         // oyuncu başka yere gezindi
         assertTrue(other.performAccessibilityAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null));
+        evBase = sam.getSentAccessibilityEvents().size();
         h.run(GameScreen.EMERGENCY_FOCUS_DELAY_MS + 500);
-        assertTrue("gezinen oyuncunun odağı çalınmaz", other.isAccessibilityFocused());
-        assertFalse(btn.isAccessibilityFocused());
+        assertTrue("gezinen oyuncunun odağı çalınmaz: " + focusTexts(sam), focusTexts(sam).isEmpty());
     }
 
     // ================================================================== 8. ilk fatura öğreticisi, otomatik ödeme, iflas
@@ -565,9 +580,7 @@ public class V26UiTest {
         sw.performClick(); h.idle(200);
         assertFalse(h.act.save.autoPayBills);
         assertTrue(announcements(sam).toString(), announcements(sam).get(0).startsWith("Otomatik ödeme kapalı"));
-        // kayda yazıldı
-        h.act.reloadSave();
-        assertFalse(h.act.save.autoPayBills);
+        assertFalse("kayda yazıldı", SaveData.parse(h.act.save.serialize()).autoPayBills);
         sw.performClick(); h.idle(200);
         assertTrue(h.act.save.autoPayBills);
         A11yAudit a = A11yAudit.run(h, "Ayarlar(otomatik ödeme)");

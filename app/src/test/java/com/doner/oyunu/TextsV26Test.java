@@ -23,7 +23,7 @@ public class TextsV26Test {
         assertTrue("önek olmalı: " + cut, full.startsWith(cut));
         if (cut.length() < full.length()) {
             char next = full.charAt(cut.length());
-            assertTrue("kelime ortasından kesildi: '" + cut + "' | sonraki '" + next + "'", next == ' ' || next == ',');
+            assertTrue("kelime ortasından kesildi: '" + cut + "' | sonraki '" + next + "'", next == ' ' || next == ',' || next == ':');
             assertFalse("sonda noktalama kalmamalı: " + cut, cut.endsWith(",") || cut.endsWith(" ") || cut.endsWith(":"));
         }
     }

@@ -406,6 +406,10 @@ public class A11yTest {
         List<String> bad = new ArrayList<>();
         String[] banned = {"OnTouchListener", "setOnLongClickListener", "OnDragListener", "GestureDetector", "ScaleGestureDetector", "onTouchEvent", "SeekBar", "setOnGenericMotion", "MotionEvent", "startDrag", "OnLongClick"};
         scan(dir, banned, bad);
+        // v2.7: kaydırma çubuğu YALNIZCA AdjustControl'de bulunur (−/+ düğmeleri, sayısal klavye ve TalkBack eylemleri eşdeğeri
+        // vardır); başka hiçbir dosyada SeekBar ya da dokunma-hareket kodu olamaz
+        boolean only = bad.remove("AdjustControl.java:SeekBar");
+        assertTrue("SeekBar yalnızca AdjustControl'de olmalı", only);
         assertTrue("Dokunma-hareket kodu bulundu: " + bad, bad.isEmpty());
     }
 

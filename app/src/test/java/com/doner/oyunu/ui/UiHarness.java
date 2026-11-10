@@ -50,6 +50,11 @@ final class UiHarness {
         }
         controller = Robolectric.buildActivity(MainActivity.class).setup();
         act = controller.get();
+        // v2.7: eski (v2.6) arayüz testleri TÜM anlatımı sınar: anlatım düzeyi "Çok" (eski davranış) kurulur. Az/Orta ve
+        // TalkBack açık/kapalı farkı V27UiTest ve NarrationLevelTest'te açıkça sınanır.
+        act.save.narrationLevel = com.doner.oyunu.engine.NarrationLevel.HIGH;
+        act.applySettings();
+        act.saveNow();
         idle(600);
     }
 

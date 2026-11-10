@@ -126,7 +126,11 @@ final class A11yAudit {
             }
             // kayan değer / sürükleme denetimleri
             String cn = v.getClass().getName();
-            if (cn.contains("SeekBar") || cn.contains("RatingBar") || cn.contains("NumberPicker") || cn.contains("ViewPager") || cn.contains("Spinner"))
+            if (v instanceof android.widget.SeekBar && AdjustControl.SEEK_TAG.equals(v.getTag())) {
+                // v2.7: yalnızca AdjustControl'ün kaydırma çubuğuna izin var; −/+ düğmeleri ve sayısal klavye eşdeğerleri var,
+                // çubuk TalkBack'te yukarı/aşağı kaydırmayla ve SET_PROGRESS ile ayarlanır, ≥56dp, etiketli
+                checkAdjustSeek((android.widget.SeekBar) v, density, id, a);
+            } else if (cn.contains("SeekBar") || cn.contains("RatingBar") || cn.contains("NumberPicker") || cn.contains("ViewPager") || cn.contains("Spinner"))
                 a.errors.add(id + " sürükleme/karmaşık denetim: " + cn);
         }
         if (!anyHeading) a.errors.add(where + ": başlık (heading) yok");
@@ -202,6 +206,28 @@ final class A11yAudit {
             String want = st.displayName + " " + e.getStationUsed(st) + "/" + e.getStationCapacity(st);
             if (!lab.startsWith(want)) a.errors.add(where + ": istasyon doluluğu etikette yok: '" + lab + "' (beklenen '" + want + "')");
         }
+    }
+
+    /** v2.7 AdjustControl kaydırma çubuğu denetimi. */
+    int checkedSeekBars;
+
+    private static void checkAdjustSeek(android.widget.SeekBar sb, float density, String id, A11yAudit a) {
+        a.checkedSeekBars++;
+        String lab = UiHarness.label(sb).trim();
+        if (lab.isEmpty()) a.errors.add(id + " kaydırma çubuğu etiketsiz");
+        checkShort(lab, id, a);
+        float w = sb.getWidth() / density, hh = sb.getHeight() / density;
+        if (w < PREF_DP || hh < PREF_DP) a.errors.add(id + " kaydırma çubuğu <56dp: " + Math.round(w) + "x" + Math.round(hh) + "dp");
+        android.view.accessibility.AccessibilityNodeInfo info = sb.createAccessibilityNodeInfo();
+        if (info.getRangeInfo() == null) a.errors.add(id + " kaydırma çubuğunda rangeInfo yok");
+        boolean setProgress = false, fwd = false, back = false;
+        for (android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction act : info.getActionList()) {
+            if (act.getId() == android.R.id.accessibilityActionSetProgress) setProgress = true;
+            if (act.getId() == android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) fwd = true;
+            if (act.getId() == android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD) back = true;
+        }
+        if (sb.isEnabled() && !setProgress) a.errors.add(id + " kaydırma çubuğunda SET_PROGRESS eylemi yok");
+        if (sb.isEnabled() && !fwd && !back) a.errors.add(id + " kaydırma çubuğunda yukarı/aşağı kaydırma eylemi yok");
     }
 
     /** Düğmenin TalkBack özel eylemleri (ActionMenu kimlik aralığı): etiketler boş değil, Türkçe, tekrarsız. */

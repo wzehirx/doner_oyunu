@@ -19,7 +19,8 @@ import java.util.List;
 
 /**
  * v2.5 Fiyatlar ekranı (brifing ve marketten): bugünün menüsündeki her ürün için tek satır ("Ayran, 25 lira, yüzde 100")
- * ve −%5 / +%5 düğmeleri; satırın TalkBack Eylemleri "Fiyatı artır" / "Fiyatı azalt" aynı işi yapar. Tahmini müşteri
+ * ve {@link AdjustControl} (v2.7: − [kaydırma çubuğu] +, değere dokununca sayısal klavye; yüzde 50–150, her tam yüzde,
+ * düğmeler %5 basamaklı); satırın TalkBack Eylemleri "Fiyatı artır" / "Fiyatı azalt" aynı işi yapar. Tahmini müşteri
  * etkisi ({@link Pricing#arrivalMultiplier}, oyunda {@code getPriceArrivalMultiplier}) metinle okunur. Değişiklik kayda
  * hemen yazılır, gün başında geçerli olur. Görünümler bir kez kurulur, değişince yerinde güncellenir (odak kaybolmaz).
  */
@@ -27,6 +28,7 @@ public final class PriceScreen extends Screen {
     private final int from;
     private TextView demandTv;
     private final List<Runnable> refreshers = new ArrayList<>();
+    private final java.util.Map<String, AdjustControl> controls = new java.util.HashMap<>();
 
     public PriceScreen(MainActivity a, int from) {
         super(a);
@@ -92,7 +94,7 @@ public final class PriceScreen extends Screen {
         info.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
         tap(info, new Runnable() { @Override public void run() { a.speaker.force(Narrator.priceText(a.save, p)); } });
         ActionMenu.attachSimple(info, new String[]{"Fiyatı artır", "Fiyatı azalt"}, new ActionMenu.SimpleHandler() {
-            @Override public void onAction(int index) { change(p, index == 0 ? +1 : -1); }
+            @Override public void onAction(int index) { AdjustControl cc = controls.get(p.id); if (cc != null) cc.stepBy(index == 0 ? +1 : -1); }
         });
         c.addView(info, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 0, 0, 4));
         if (off) {
@@ -100,17 +102,23 @@ public final class PriceScreen extends Screen {
             note.setFocusable(true);
             c.addView(note);
         }
-        LinearLayout row = new LinearLayout(ctx);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        final Button minus = Ui.button(ctx, "−  yüzde 5", Ui.SECONDARY);
-        final Button plus = Ui.button(ctx, "+  yüzde 5", Ui.SECONDARY);
-        minus.setContentDescription(shortName(p) + " fiyatını azalt");
-        plus.setContentDescription(shortName(p) + " fiyatını artır");
-        tap(minus, new Runnable() { @Override public void run() { change(p, -1); } });
-        tap(plus, new Runnable() { @Override public void run() { change(p, +1); } });
-        row.addView(minus, Ui.lp(ctx, 0, Ui.WRAP, 1f, 0, 4, 4, 0));
-        row.addView(plus, Ui.lp(ctx, 0, Ui.WRAP, 1f, 4, 4, 0, 0));
-        c.addView(row);
+        // v2.7: − [kaydırma çubuğu] + ve değer etiketine dokununca sayısal klavye (her tam yüzde; düğmeler %5 basamaklı)
+        final AdjustControl ctl = new AdjustControl(ctx, adjustHost(), shortName(p) + " fiyatı", Pricing.MIN_PERCENT,
+                Pricing.MAX_PERCENT, 1, Pricing.STEP_PERCENT, new AdjustControl.Format() {
+            @Override public String shown(int v) { return "yüzde " + v + ", " + Math.round(p.price * (v / 100.0)) + " lira"; }
+            @Override public String spoken(int v) { return Narrator.priceText(a.save, p); }
+            @Override public String unit() { return "yüzde"; }
+        });
+        ctl.setButtonDescriptions(shortName(p) + " fiyatını azalt", shortName(p) + " fiyatını artır");
+        ctl.setListener(new AdjustControl.Listener() {
+            @Override public void onChanged(int v, boolean settled) {
+                Pricing.setPercent(a.save, p.id, v); // canlı; gün başında geçerli olur
+                if (settled) a.saveNow();
+                refreshAll();
+            }
+        });
+        controls.put(p.id, ctl);
+        c.addView(ctl, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 0, 0, 0));
         body.addView(c, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 5, 0, 5));
         refreshers.add(new Runnable() {
             @Override public void run() {
@@ -121,29 +129,13 @@ public final class PriceScreen extends Screen {
                 int pc = Pricing.percent(s, p.id);
                 // v2.6: referanstan ayrılan fiyat altın renkle öne çıkar (durum metinde de var: "yüzde 110")
                 info.setTextColor(pc != Pricing.DEFAULT_PERCENT ? Theme.GOLD : Theme.CREAM);
-                Ui.dim(minus, pc <= Pricing.MIN_PERCENT);
-                Ui.dim(plus, pc >= Pricing.MAX_PERCENT);
+                ctl.setValue(pc);
             }
         });
     }
 
     /** Ürün adı ("… fiyatını artır" etiketi en uzun adla da ≤60). */
     private static String shortName(Product p) { return p.name; }
-
-    private void change(Product p, int dir) {
-        SaveData s = a.save;
-        int before = Pricing.percent(s, p.id);
-        int after = dir > 0 ? Pricing.raise(s, p.id) : Pricing.lower(s, p.id);
-        if (after == before) {
-            a.sound.play("sfx_error");
-            a.haptics.error();
-            a.speaker.force((dir > 0 ? "En yüksek fiyat. " : "En düşük fiyat. ") + Narrator.priceText(s, p));
-            return;
-        }
-        a.saveNow();
-        refreshAll();
-        a.speaker.force(Narrator.priceText(s, p) + " " + Narrator.demandText(s));
-    }
 
     private void resetAll() {
         SaveData s = a.save;

@@ -1055,6 +1055,28 @@ public final class Texts {
     private static final java.util.Locale TR = new java.util.Locale("tr");
 
     // ------------------------------------------------------------------ ayarlar
+    /** v2.7 Anlatım düzeyi ayarının açıklaması. */
+    public static final String NARRATION_NOTE = "TalkBack açıkken oyun yalnızca seçtiğin düzeyde konuşur; TalkBack odaktakini zaten okur. "
+            + "TalkBack kapalıyken her zaman Çok.";
+
+    private static String narrationWhat(com.doner.oyunu.engine.NarrationLevel l) {
+        switch (l) {
+            case LOW: return "yalnızca önemli olaylar";
+            case MEDIUM: return "önemli olaylar ve sonuçlar";
+            default: return "her şey, ipuçları dahil";
+        }
+    }
+
+    /** "Az: yalnızca önemli olaylar, seçili" (≤60). */
+    public static String narrationOptionDescription(com.doner.oyunu.engine.NarrationLevel l, boolean selected) {
+        return l.displayName + ": " + narrationWhat(l) + (selected ? ", seçili" : "");
+    }
+
+    /** Düzey seçilince söylenen kısa cümle. */
+    public static String narrationChosen(com.doner.oyunu.engine.NarrationLevel l) {
+        return "Anlatım düzeyi " + l.displayName + ": " + narrationWhat(l) + ".";
+    }
+
     public static String volumeText(double v) { return percentShort(v); }
 
     public static String volumeSpoken(double v) { return "yüzde " + Math.round(v * 100); }

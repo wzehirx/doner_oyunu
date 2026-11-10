@@ -37,7 +37,8 @@ public final class BillsScreen extends Screen {
             @Override public boolean fullOptions() { return true; }
             @Override public void tap(View v, Runnable r) { BillsScreen.this.tap(v, r); }
             @Override public void say(String text) { a.speaker.force(text); }
-            @Override public void result(View focus, String text) { a.focusThenSay(focus, text); }
+            @Override public void say(String text, com.doner.oyunu.engine.Importance importance) { a.speaker.result(text, importance); }
+            @Override public void result(View focus, String text, com.doner.oyunu.engine.Importance importance) { a.focusThenSay(focus, text, importance); }
             @Override public void sound(String sfx, boolean ok) {
                 a.sound.play(sfx);
                 if (ok) a.haptics.buy(); else a.haptics.error();
@@ -83,7 +84,7 @@ public final class BillsScreen extends Screen {
     }
 
     @Override public void onEnter() {
-        if (evicted()) a.speaker.say("Tahliye kararı var: kirayı ödemeden dükkân açılamaz. Paran yetmezse Krediyle öde.", true);
+        if (evicted()) a.speaker.say("Tahliye kararı var: kirayı ödemeden dükkân açılamaz. Paran yetmezse Krediyle öde.", true, null, null, com.doner.oyunu.engine.Importance.CRITICAL);
     }
 
     private void back() { a.saveNow(); a.show(Nav.make(a, from == Nav.SUMMARY ? Nav.BRIEFING : from)); }

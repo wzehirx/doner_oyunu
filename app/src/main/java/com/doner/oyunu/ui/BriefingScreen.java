@@ -115,7 +115,7 @@ public final class BriefingScreen extends Screen {
                     for (View d : details) d.setVisibility(View.VISIBLE);
                     more.setVisibility(View.GONE);
                     // düğme kalktı: odak açılan ilk satıra, tek duyuru
-                    a.focusThenSay(((android.view.ViewGroup) details.get(0)).getChildAt(0), details.size() + " ayrıntı satırı açıldı.");
+                    a.focusThenSay(((android.view.ViewGroup) details.get(0)).getChildAt(0), details.size() + " ayrıntı satırı açıldı.", com.doner.oyunu.engine.Importance.VERBOSE);
                 }
             });
             body.addView(more, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 5, 0, 5));
@@ -207,7 +207,7 @@ public final class BriefingScreen extends Screen {
         } else {
             a.sound.play("sfx_error");
             a.haptics.error();
-            a.speaker.force("Acil destek alınamadı. " + Texts.bankResult(r));
+            a.speaker.result("Acil destek alınamadı. " + Texts.bankResult(r), com.doner.oyunu.engine.Importance.CRITICAL);
         }
     }
 
@@ -225,7 +225,7 @@ public final class BriefingScreen extends Screen {
             String l = Texts.flowBriefingLine(a.save);
             flowTv.setText(l);
         }
-        a.speaker.announce(a.save.flowMode.spoken(), true);
+        a.speaker.announce(a.save.flowMode.spoken(), true, com.doner.oyunu.engine.Importance.VERBOSE);
     }
 
     private boolean evicted() { return com.doner.oyunu.engine.UtilityStatus.of(a.save, a.save.day).evicted(); }
@@ -237,7 +237,7 @@ public final class BriefingScreen extends Screen {
      */
     @Override public void onEnter() {
         if (bankrupt != com.doner.oyunu.engine.Finance.Bankruptcy.NONE) {
-            a.speaker.say(Texts.bankruptcyText(bankrupt, a.save.day), true);
+            a.speaker.say(Texts.bankruptcyText(bankrupt, a.save.day), true, null, null, com.doner.oyunu.engine.Importance.CRITICAL);
             return;
         }
         StringBuilder sb = new StringBuilder();
@@ -250,9 +250,9 @@ public final class BriefingScreen extends Screen {
             a.briefedNoticesDay = a.save.day;
         }
         if (aid) sb.append(sb.length() > 0 ? " " : "").append(Texts.emergencyAidNote(a.save));
-        if (sb.length() > 0) a.speaker.say(sb.toString(), false, com.doner.oyunu.engine.Narrator.CAT_BILLS, null);
+        if (sb.length() > 0) a.speaker.say(sb.toString(), false, com.doner.oyunu.engine.Narrator.CAT_BILLS, null, com.doner.oyunu.engine.Importance.CRITICAL);
         if (!a.save.flowChosen) {
-            a.speaker.say("Oyun akışı şu an " + a.save.flowMode.displayName + ". Rahat, Dengeli ya da Gerçekçi seçmek için Oyun akışı düğmesine dokun.", false);
+            a.speaker.say("Oyun akışı şu an " + a.save.flowMode.displayName + ". Rahat, Dengeli ya da Gerçekçi seçmek için Oyun akışı düğmesine dokun.", false, null, null, com.doner.oyunu.engine.Importance.NORMAL);
         }
     }
 

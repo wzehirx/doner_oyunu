@@ -12,20 +12,12 @@ import android.content.res.ColorStateList;
 
 import com.doner.oyunu.MainActivity;
 import com.doner.oyunu.engine.FlowMode;
+import com.doner.oyunu.engine.NarrationLevel;
 import com.doner.oyunu.engine.Narrator;
 import com.doner.oyunu.engine.SaveData;
 
-/** Ayarlar: eksi/artı düğmeleriyle (sürükleme gerektirmez) ve anahtarlarla. */
+/** Ayarlar: v2.7 AdjustControl (−/+ düğmeleri, kaydırma çubuğu, sayısal klavye), seçim düğmeleri ve anahtarlarla. */
 public final class SettingsScreen extends Screen {
-    private abstract class Value {
-        final String name; final double min, max, step;
-        Value(String name, double min, double max, double step) { this.name = name; this.min = min; this.max = max; this.step = step; }
-        abstract double get();
-        abstract void set(double v);
-        abstract String shown(double v);
-        abstract String spoken(double v);
-    }
-
     public SettingsScreen(MainActivity a) { super(a); }
 
     @Override public String title() { return "Ayarlar"; }
@@ -39,24 +31,18 @@ public final class SettingsScreen extends Screen {
         addFlowChooser(body, s);
         addTimePressure(body, s);
 
-        addStepper(body, new Value("Müzik sesi", 0, 1, 0.1) {
-            double get() { return s.musicVolume; }
-            void set(double v) { s.musicVolume = v; }
-            String shown(double v) { return Texts.volumeText(v); }
-            String spoken(double v) { return Texts.volumeSpoken(v); }
+        addVolume(body, "Müzik sesi", 10, new IntSetting() {
+            @Override public int get() { return pct(s.musicVolume); }
+            @Override public void set(int v) { s.musicVolume = v / 100.0; }
         });
-        addStepper(body, new Value("Efekt sesi", 0, 1, 0.1) {
-            double get() { return s.sfxVolume; }
-            void set(double v) { s.sfxVolume = v; }
-            String shown(double v) { return Texts.volumeText(v); }
-            String spoken(double v) { return Texts.volumeSpoken(v); }
+        addVolume(body, "Efekt sesi", 10, new IntSetting() {
+            @Override public int get() { return pct(s.sfxVolume); }
+            @Override public void set(int v) { s.sfxVolume = v / 100.0; }
         });
         // v0.9: dükkân ambiyansı (müzikten bağımsız; 0 = kapalı)
-        addStepper(body, new Value("Ambiyans sesi", 0, 1, 0.05) {
-            double get() { return s.ambienceVolume; }
-            void set(double v) { s.ambienceVolume = v; }
-            String shown(double v) { return Texts.volumeText(v); }
-            String spoken(double v) { return v <= 0.001 ? "kapalı" : Texts.volumeSpoken(v); }
+        addVolume(body, "Ambiyans sesi", 5, new IntSetting() {
+            @Override public int get() { return pct(s.ambienceVolume); }
+            @Override public void set(int v) { s.ambienceVolume = v / 100.0; }
         });
 
         addSwitch(body, "Sesli anlatım", s.speechOn, new CompoundButton.OnCheckedChangeListener() {
@@ -75,12 +61,17 @@ public final class SettingsScreen extends Screen {
             }
         });
 
-        addStepper(body, new Value("Anlatım hızı", 0.5, 2.0, 0.1) {
-            double get() { return s.speechRate; }
-            void set(double v) { s.speechRate = v; }
-            String shown(double v) { return Texts.times(v); }
-            String spoken(double v) { return Texts.times(v); }
+        // v2.7: anlatım hızı yüzde olarak (50–200; eski "1,5 kat" = yüzde 150): düğme, çubuk ve klavye aynı sayıyı kullanır
+        addAdjust(body, "Anlatım hızı", 50, 200, 1, 10, new IntSetting() {
+            @Override public int get() { return pct(s.speechRate); }
+            @Override public void set(int v) { s.speechRate = v / 100.0; }
+        }, new AdjustControl.Format() {
+            @Override public String shown(int v) { return "yüzde " + v; }
+            @Override public String spoken(int v) { return "Anlatım hızı yüzde " + v; }
+            @Override public String unit() { return "yüzde"; }
         });
+
+        addNarrationLevel(body, s);
 
         body.addView(button("Sesli anlatımı dene", Ui.SECONDARY, new Runnable() {
             @Override public void run() {
@@ -88,11 +79,15 @@ public final class SettingsScreen extends Screen {
             }
         }), Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 6, 0, 6));
 
-        addStepper(body, new Value("Oyun temposu", 0.6, 1.6, 0.1) {
-            double get() { return s.tempo; }
-            void set(double v) { s.setTempo(v); }
-            String shown(double v) { return Texts.times(v); }
-            String spoken(double v) { return Texts.times(v) + (v > 1.05 ? ", daha rahat" : (v < 0.95 ? ", daha hızlı" : ", normal")); }
+        addAdjust(body, "Oyun temposu", 60, 160, 1, 10, new IntSetting() {
+            @Override public int get() { return pct(s.tempo); }
+            @Override public void set(int v) { s.setTempo(v / 100.0); }
+        }, new AdjustControl.Format() {
+            @Override public String shown(int v) { return "yüzde " + v; }
+            @Override public String spoken(int v) {
+                return "Oyun temposu yüzde " + v + (v > 105 ? ", daha rahat" : (v < 95 ? ", daha hızlı" : ", normal"));
+            }
+            @Override public String unit() { return "yüzde"; }
         });
         TextView note = Ui.label(ctx, "Tempo yükselince işlemler yavaşlar, müşteriler sabırlı olur.", 15, Theme.MUTED, false);
         note.setFocusable(true);
@@ -113,7 +108,7 @@ public final class SettingsScreen extends Screen {
                 s.apprenticeAnnounce = on;
                 a.saveNow();
                 a.sound.play("sfx_tap");
-                a.speaker.announce(on ? "Çırak duyuruları açık" : "Çırak duyuruları kapalı", true);
+                a.speaker.announce(on ? "Çırak duyuruları açık" : "Çırak duyuruları kapalı", true, com.doner.oyunu.engine.Importance.VERBOSE);
             }
         });
         TextView apprNote = Ui.label(ctx, "Açıkken çırağın işleri sesli duyurulur.", 15, Theme.MUTED, false);
@@ -126,7 +121,7 @@ public final class SettingsScreen extends Screen {
                 s.apprenticeDelivery = on;
                 a.saveNow();
                 a.sound.play("sfx_tap");
-                a.speaker.announce(on ? "Çırak teslimi açık: çırak teslime hazır siparişi teslim eder." : "Çırak teslimi kapalı: teslimi sen yaparsın.", true);
+                a.speaker.announce(on ? "Çırak teslimi açık: çırak teslime hazır siparişi teslim eder." : "Çırak teslimi kapalı: teslimi sen yaparsın.", true, com.doner.oyunu.engine.Importance.VERBOSE);
             }
         });
         TextView delivNote = Ui.label(ctx, "Açıkken çırak teslime hazır siparişi müşteriye teslim eder.", 15, Theme.MUTED, false);
@@ -139,7 +134,7 @@ public final class SettingsScreen extends Screen {
                 s.autoPayBills = on;
                 a.saveNow();
                 a.sound.play("sfx_tap");
-                a.speaker.announce(on ? "Otomatik ödeme açık: faturalar son ödeme gününde kasadan ödenir." : "Otomatik ödeme kapalı: faturaları sen ödersin.", true);
+                a.speaker.announce(on ? "Otomatik ödeme açık: faturalar son ödeme gününde kasadan ödenir." : "Otomatik ödeme kapalı: faturaları sen ödersin.", true, com.doner.oyunu.engine.Importance.VERBOSE);
             }
         });
         TextView payNote = Ui.label(ctx, Texts.AUTO_PAY_NOTE, 15, Theme.MUTED, false);
@@ -200,7 +195,7 @@ public final class SettingsScreen extends Screen {
         a.saveNow();
         refreshTimePressure(s);
         a.sound.play("sfx_tap");
-        a.speaker.announce(s.timePressure ? "Süre baskısı açık." : "Süre baskısı kapalı, kimse gitmez.", true);
+        a.speaker.announce(s.timePressure ? "Süre baskısı açık." : "Süre baskısı kapalı, kimse gitmez.", true, com.doner.oyunu.engine.Importance.VERBOSE);
     }
 
     private void refreshTimePressure(SaveData s) {
@@ -216,7 +211,7 @@ public final class SettingsScreen extends Screen {
         a.saveNow();
         refreshFlow(s);
         a.sound.play("sfx_tap");
-        a.speaker.announce(m.spoken(), true);
+        a.speaker.announce(m.spoken(), true, com.doner.oyunu.engine.Importance.VERBOSE);
     }
 
     private void refreshFlow(SaveData s) {
@@ -252,53 +247,84 @@ public final class SettingsScreen extends Screen {
         body.addView(sw, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 6, 0, 6));
     }
 
-    private void addStepper(LinearLayout body, final Value v) {
+    /** Tam sayı ayarı (yüzde): okuma ve yazma. */
+    private interface IntSetting {
+        int get();
+        void set(int v);
+    }
+
+    private static int pct(double v) { return (int) Math.round(v * 100); }
+
+    private void addVolume(LinearLayout body, final String name, int buttonStep, IntSetting st) {
+        addAdjust(body, name, 0, 100, 1, buttonStep, st, new AdjustControl.Format() {
+            @Override public String shown(int v) { return v <= 0 ? "kapalı" : "yüzde " + v; }
+            @Override public String spoken(int v) { return name + (v <= 0 ? " kapalı" : " yüzde " + v); }
+            @Override public String unit() { return "yüzde"; }
+        });
+    }
+
+    /**
+     * v2.7: her sayısal ayar AdjustControl ({@code −  [kaydırma çubuğu]  +}, değere dokununca sayısal klavye). Değer
+     * sürüklerken canlı uygulanır (ses düzeyi hemen duyulur), bırakınca/düğmeyle kesinleşince kaydedilir.
+     */
+    private AdjustControl addAdjust(LinearLayout body, String name, int min, int max, int step, int buttonStep,
+                                    final IntSetting st, AdjustControl.Format fmt) {
         LinearLayout card = card();
-        final TextView info = Ui.label(ctx, "", 19, Theme.CREAM, true);
-        info.setFocusable(true);
-        card.addView(info);
-
-        LinearLayout row = new LinearLayout(ctx);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER);
-        final Button minus = Ui.button(ctx, "−  Azalt", Ui.SECONDARY);
-        final Button plus = Ui.button(ctx, "+  Artır", Ui.SECONDARY);
-        minus.setContentDescription(v.name + " azalt");
-        plus.setContentDescription(v.name + " artır");
-        row.addView(minus, Ui.lp(ctx, 0, Ui.WRAP, 1f, 0, 8, 6, 0));
-        row.addView(plus, Ui.lp(ctx, 0, Ui.WRAP, 1f, 6, 8, 0, 0));
-        card.addView(row);
+        final AdjustControl ctl = new AdjustControl(ctx, adjustHost(), name, min, max, step, buttonStep, fmt);
+        ctl.setShowName(true);
+        ctl.setValue(st.get());
+        ctl.setListener(new AdjustControl.Listener() {
+            @Override public void onChanged(int value, boolean settled) {
+                st.set(value);
+                a.applySettings();
+                if (settled) a.saveNow();
+            }
+        });
+        card.addView(ctl);
         body.addView(card, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 6, 0, 6));
-
-        refresh(info, v);
-        tap(minus, new Runnable() { @Override public void run() { change(info, v, -1); } });
-        tap(plus, new Runnable() { @Override public void run() { change(info, v, +1); } });
+        return ctl;
     }
 
-    private void refresh(TextView info, Value v) {
-        double cur = v.get();
-        info.setText(v.name + ": " + v.shown(cur));
-        info.setContentDescription(v.name + ": " + v.spoken(cur));
-    }
+    /** v2.7 Anlatım düzeyi: Az / Orta / Çok (yalnızca TalkBack açıkken geçerli). Oyun akışı gibi üç seçimli düğme. */
+    private final java.util.Map<NarrationLevel, Button> levelButtons = new java.util.EnumMap<>(NarrationLevel.class);
 
-    private void change(TextView info, Value v, int dir) {
-        double cur = v.get();
-        double next = Math.round((cur + dir * v.step) * 100) / 100.0;
-        next = Math.max(v.min, Math.min(v.max, next));
-        if (Math.abs(next - cur) < 1e-9) {
-            a.sound.play("sfx_error");
-            a.haptics.error();
-            a.speaker.announce(dir < 0 ? "En düşük değer. " + v.spoken(cur) : "En yüksek değer. " + v.spoken(cur), true);
-            return;
+    private void addNarrationLevel(LinearLayout body, final SaveData s) {
+        TextView h = Ui.label(ctx, "Anlatım düzeyi", 21, Theme.GOLD, true);
+        Ui.heading(h);
+        h.setPadding(dp(4), dp(8), dp(4), dp(2));
+        body.addView(h);
+        TextView note = Ui.label(ctx, Texts.NARRATION_NOTE, 15, Theme.MUTED, false);
+        note.setFocusable(true);
+        body.addView(note, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 4, 0, 4, 4));
+        for (final NarrationLevel l : NarrationLevel.values()) {
+            Button b = button(l.displayName, Ui.SECONDARY, new Runnable() {
+                @Override public void run() { chooseLevel(s, l); }
+            });
+            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 19);
+            levelButtons.put(l, b);
+            body.addView(b, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 4));
         }
-        v.set(next);
+        refreshLevels(s);
+    }
+
+    private void chooseLevel(SaveData s, NarrationLevel l) {
+        s.narrationLevel = l;
         a.applySettings();
         a.saveNow();
-        refresh(info, v);
+        refreshLevels(s);
         a.sound.play("sfx_tap");
-        if (a.speaker.isTalkBackOn() || a.save.speechOn) {
-            if (v.name.equals("Anlatım hızı")) a.speaker.force(v.name + " " + v.spoken(next));
-            else a.speaker.announce(v.name + " " + v.spoken(next), true);
+        if (a.speaker.isTalkBackOn() || s.speechOn) a.speaker.force(Texts.narrationChosen(l));
+    }
+
+    private void refreshLevels(SaveData s) {
+        for (java.util.Map.Entry<NarrationLevel, Button> e : levelButtons.entrySet()) {
+            boolean sel = e.getKey() == s.narrationLevel;
+            Button b = e.getValue();
+            b.setText(e.getKey().displayName + (sel ? " (seçili)" : ""));
+            b.setContentDescription(Texts.narrationOptionDescription(e.getKey(), sel));
+            b.setBackground(Ui.buttonBg(ctx, sel ? Ui.GOLD : Ui.SECONDARY));
+            b.setTextColor(sel ? Theme.DARK : Theme.CREAM);
+            b.setSelected(sel);
         }
     }
 

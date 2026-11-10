@@ -22,6 +22,7 @@ import com.doner.oyunu.engine.ApprenticeAction;
 import com.doner.oyunu.engine.DayConfig;
 import com.doner.oyunu.engine.DaySummary;
 import com.doner.oyunu.engine.FlowMode;
+import com.doner.oyunu.engine.Importance;
 import com.doner.oyunu.engine.GameEngine;
 import com.doner.oyunu.engine.GameListenerAdapter;
 import com.doner.oyunu.engine.Catalog;
@@ -173,15 +174,19 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         @Override public void say(String text, boolean urgent) { a.speaker.say(text, urgent); }
 
         @Override public void say(String text, boolean urgent, String category, Narrator.Fresh fresh) {
+            say(text, urgent, category, fresh, Narrator.defaultImportance(category, urgent));
+        }
+
+        @Override public void say(String text, boolean urgent, String category, Narrator.Fresh fresh, Importance importance) {
             if (Narrator.CAT_BILLS.equals(category) && openNotices != null && openNotices.equals(text)) {
                 openNotices = null;
                 if (a.briefedNoticesDay == engine.getDay()) return;
                 String brief = Texts.noticesBrief(engine.getSave(), engine.getDay());
-                if (!brief.isEmpty()) a.speaker.say(brief, urgent, category, fresh);
+                if (!brief.isEmpty()) a.speaker.say(brief, urgent, category, fresh, importance);
                 return;
             }
             if (Narrator.CAT_MONEY.equals(category) && billsOverlay != null) return;
-            a.speaker.say(text, urgent, category, fresh);
+            a.speaker.say(text, urgent, category, fresh, importance);
         }
     }
 
@@ -466,7 +471,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
     @Override public boolean onBack() {
         if (finishing) { showSummary(); return true; } // gün bitti: beklemeden özete geç
-        if (ordersPanel != null && !paused) { closeOrdersPanel(true); a.speaker.announce("Sipariş listesi kapatıldı.", true); return true; }
+        if (ordersPanel != null && !paused) { closeOrdersPanel(true); a.speaker.announce("Sipariş listesi kapatıldı.", true, Importance.VERBOSE); return true; }
         if (panel != null && !paused) { cancelPanel(panel); return true; }
         if (paused && billsOverlay != null) { closeBillsPanel(true); return true; }
         if (paused) resumeGame(); else pauseGame();
@@ -532,7 +537,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         a.sound.resumeLoops();
         a.sound.setAmbienceHold(false);
         a.sound.play("sfx_tap");
-        a.speaker.announce("Oyun devam ediyor.", true);
+        a.speaker.announce("Oyun devam ediyor.", true, Importance.NORMAL);
         a.focusOn(panel != null ? panel.titleView : pauseBtn);
     }
 
@@ -583,7 +588,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
                 a.saveNow();
                 flowBtn.setText(Texts.flowButtonLabel(engine.getFlowMode()));
                 flowBtn.setContentDescription(Texts.flowButtonDescription(engine.getFlowMode()));
-                if (!a.save.speechOn) a.speaker.announce(engine.getFlowMode().spoken(), true);
+                if (!a.save.speechOn) a.speaker.announce(engine.getFlowMode().spoken(), true, Importance.VERBOSE);
             }
         });
         pnl.addView(flowBtn, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 6));
@@ -597,7 +602,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
                 a.saveNow();
                 timeBtn.setText(Texts.timePressureButtonLabel(engine.isTimed()));
                 timeBtn.setContentDescription(Texts.timePressureButtonDescription(engine.isTimed()));
-                if (!a.save.speechOn) a.speaker.announce(narrator.timePressureChanged(engine.isTimed()), true);
+                if (!a.save.speechOn) a.speaker.announce(narrator.timePressureChanged(engine.isTimed()), true, Importance.VERBOSE);
             }
         });
         pnl.addView(timeBtn, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 6));
@@ -671,7 +676,8 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             @Override public boolean fullOptions() { return false; }
             @Override public void tap(View v, Runnable r) { GameScreen.this.tap(v, r); }
             @Override public void say(String text) { a.speaker.force(text); }
-            @Override public void result(View focus, String text) { a.focusThenSay(focus, text); }
+            @Override public void say(String text, com.doner.oyunu.engine.Importance importance) { a.speaker.result(text, importance); }
+            @Override public void result(View focus, String text, com.doner.oyunu.engine.Importance importance) { a.focusThenSay(focus, text, importance); }
             @Override public void sound(String sfx, boolean ok) {
                 if (!ok) { a.sound.play(sfx); a.haptics.error(); return; }
                 if ("sfx_coin".equals(sfx)) return; // fatura: para sesi + titreşim motor olayından (Feedback.onBillPaid)
@@ -709,7 +715,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         if (overlay != null) overlay.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         refreshBillsButton();
         if (focusBack && billsBtn != null) {
-            a.speaker.announce("Faturalar kapatıldı.", true);
+            a.speaker.announce("Faturalar kapatıldı.", true, Importance.VERBOSE);
             a.focusOn(billsBtn);
         }
     }
@@ -726,7 +732,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             confirmQuit = true;
             quitBtn.setText("Emin misin? Tekrar dokun");
             quitBtn.setContentDescription("Emin misin? Günün ilerlemesi kaybolur, tekrar dokun");
-            a.speaker.announce("Günün ilerlemesi kaybolur. Çıkmak için tekrar dokun.", true);
+            a.speaker.announce("Günün ilerlemesi kaybolur. Çıkmak için tekrar dokun.", true, Importance.CRITICAL);
             return;
         }
         a.show(new MenuScreen(a));
@@ -766,7 +772,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
 
     private void cancelPanel(MenuPanel p) {
         closePanel(true);
-        a.speaker.announce("Seçenekler kapatıldı.", true);
+        a.speaker.announce("Seçenekler kapatıldı.", true, Importance.VERBOSE);
     }
 
     /** Bir seçenek seçilince panel kapansın mı? (Malzeme eklerken ve okurken açık kalır: art arda kullanım.) */
@@ -889,7 +895,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     /** TalkBack özel eylemi seçildi (panel açmadan uygular). */
     private void onStationAction(Station st, String optionId) {
         if (blocked()) return;
-        if (engine.getState() != GameEngine.State.RUNNING) { a.speaker.say("Önce dükkânı aç.", true); return; }
+        if (engine.getState() != GameEngine.State.RUNNING) { a.speaker.say("Önce dükkânı aç.", true, null, null, Importance.CRITICAL); return; }
         a.sound.play("sfx_tap");
         applyOption(pickOrderFor(st), -1, st, optionId);
     }
@@ -965,7 +971,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     private void error(String msg) {
         a.sound.play("sfx_error");
         a.haptics.error();
-        if (msg != null && !msg.isEmpty()) a.speaker.say(msg, true);
+        if (msg != null && !msg.isEmpty()) a.speaker.say(msg, true, null, null, Importance.CRITICAL);
     }
 
     /** Siparişte bu istasyonda başlatılabilir (açık) adım var mı? */
@@ -999,7 +1005,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
     private void onStation(Station st) {
         if (blocked()) return;
         if (engine.getState() != GameEngine.State.RUNNING) {
-            a.speaker.say("Önce dükkânı aç.", true);
+            a.speaker.say("Önce dükkânı aç.", true, null, null, Importance.CRITICAL);
             return;
         }
         Order target = pickOrderFor(st);
@@ -1215,7 +1221,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
                 @Override public void run() {
                     if (ordersPanel == OrdersPanel.this && !paused) {
                         closeOrdersPanel(true);
-                        a.speaker.announce("Sipariş listesi kapatıldı.", true);
+                        a.speaker.announce("Sipariş listesi kapatıldı.", true, Importance.VERBOSE);
                     }
                 }
             });
@@ -1284,7 +1290,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
             if (ordersPanel != this || paused || finishing) return;
             boolean ok = engine.selectOrder(id); // motor duyurur: seçildi + önerilen
             closeOrdersPanel(true);
-            if (!ok) a.speaker.announce("Bu sipariş artık yok.", true);
+            if (!ok) a.speaker.announce("Bu sipariş artık yok.", true, Importance.CRITICAL);
         }
 
         /** Testler: sipariş düğmesi. */
@@ -1323,7 +1329,7 @@ public final class GameScreen extends Screen implements Choreographer.FrameCallb
         if (panel != null) {
             if (panel.orderId >= 0 && engine.getOrder(panel.orderId) == null) {
                 closePanel(true);
-                a.speaker.announce("Sipariş artık yok, seçenekler kapandı.", true);
+                a.speaker.announce("Sipariş artık yok, seçenekler kapandı.", true, Importance.CRITICAL);
             } else {
                 panel.refresh();
                 if (panel.optionCount() == 0) closePanel(true);

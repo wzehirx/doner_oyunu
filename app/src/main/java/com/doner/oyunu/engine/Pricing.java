@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * v2.5 satış fiyatı ve talep. Oyuncu her ürünün fiyatını referans (katalog) fiyatın %50–%150'si arasında %5 adımla
+ * v2.5 satış fiyatı ve talep. Oyuncu her ürünün fiyatını referans (katalog) fiyatın %50–%150'si arasında (v2.7: her tam yüzde; −/+ düğmeleri %5 basamakla)
  * belirler ({@link SaveData#prices}). Talep müşteri tipinin fiyat duyarlılığına ve yıldıza bağlıdır (design_v25 §2).
  * Tüm fiyatlar %100 iken her çarpan tam 1'dir (v2.0 ile aynı).
  */
@@ -40,13 +40,15 @@ public final class Pricing {
     /** Fiyat oranı (1,0 = referans). */
     public static double ratio(SaveData save, String productId) { return percent(save, productId) / 100.0; }
 
-    /** Yüzdeyi sınırlar ve %5'e yuvarlar. */
+    /**
+     * Yüzdeyi 50–150 aralığına sınırlar. v2.7: her TAM yüzde geçerlidir (eskiden %5'in katına yuvarlanırdı); oyuncu
+     * yazarak ya da kaydırma çubuğuyla 112 gibi bir değer verebilir. {@link #STEP_PERCENT} yalnızca −/+ düğmelerinin adımıdır.
+     */
     public static int clamp(int percent) {
-        int p = Math.max(MIN_PERCENT, Math.min(MAX_PERCENT, percent));
-        return Math.round(p / (float) STEP_PERCENT) * STEP_PERCENT;
+        return Math.max(MIN_PERCENT, Math.min(MAX_PERCENT, percent));
     }
 
-    /** Ürünün fiyat yüzdesini ayarlar (sınırlanır, %5'e yuvarlanır). Bilinmeyen ürün: false. Gün başından itibaren geçerlidir. */
+    /** Ürünün fiyat yüzdesini ayarlar (50–150'ye sınırlanır, tam yüzde). Bilinmeyen ürün: false. Gün başından itibaren geçerlidir. */
     public static boolean setPercent(SaveData save, String productId, int percent) {
         if (Catalog.product(productId) == null) return false;
         int p = clamp(percent);
@@ -54,15 +56,17 @@ public final class Pricing {
         return true;
     }
 
-    /** Fiyatı bir adım (%5) artırır; yeni yüzde. */
+    /** Fiyatı bir sonraki %5'lik basamağa çıkarır (112 -> 115, 115 -> 120); yeni yüzde. */
     public static int raise(SaveData save, String productId) {
-        setPercent(save, productId, percent(save, productId) + STEP_PERCENT);
+        int p = percent(save, productId);
+        setPercent(save, productId, (p / STEP_PERCENT + 1) * STEP_PERCENT);
         return percent(save, productId);
     }
 
-    /** Fiyatı bir adım (%5) indirir; yeni yüzde. */
+    /** Fiyatı bir önceki %5'lik basamağa indirir (112 -> 110, 110 -> 105); yeni yüzde. */
     public static int lower(SaveData save, String productId) {
-        setPercent(save, productId, percent(save, productId) - STEP_PERCENT);
+        int p = percent(save, productId);
+        setPercent(save, productId, ((p + STEP_PERCENT - 1) / STEP_PERCENT - 1) * STEP_PERCENT);
         return percent(save, productId);
     }
 

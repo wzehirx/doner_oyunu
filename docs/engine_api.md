@@ -101,8 +101,8 @@ old.copySettingsTo(target);                     // yalnızca ayarlar
 ### B.2 Fiyat ve talep (`Pricing`)
 ```java
 int  Pricing.percent(save, productId)            // 50..150 (yoksa 100)
-boolean Pricing.setPercent(save, productId, pct) // sınırlar, %5'e yuvarlar; 100 = kayıttan çıkar
-int  Pricing.raise(save, id) / lower(save, id)   // ±%5, yeni yüzde
+boolean Pricing.setPercent(save, productId, pct) // v2.7: yalnızca 50..150'ye sınırlar (her TAM yüzde geçerli; eskiden %5'e yuvarlanırdı); 100 = kayıttan çıkar
+int  Pricing.raise(save, id) / lower(save, id)   // bir sonraki/önceki %5 basamağı (112 -> 115 / 110), yeni yüzde
 void Pricing.setAll(save, pct); boolean Pricing.allDefault(save)
 int  Pricing.priceOf(save, product)              // tam ekmek satış fiyatı (TL); referans: product.price
 double Pricing.arrivalMultiplier(save)           // tahmini müşteri çarpanı (fiyat ekranı: Narrator.demandText)
@@ -705,3 +705,16 @@ Alanlar v0.5 ile aynı (`day,bestDay,money,stars,inventory,upgradeLevels,tempo,s
 7. Yeni olayları işle (`GameListenerAdapter`): `onToppingAddStarted/Added/Removed/Finished`, `onSizeChosen`, `onStationInfo`, `onOptionRejected`; malzeme adımı `onStepStarted` göndermez (ses döngüsü kurarken dikkat).
 8. `A11yAudit`: istasyon düğmelerinin `getActionList()` içinde beklenen özel eylemler, etiketler Türkçe/boş değil, `performAccessibilityAction` panel olmadan uyguluyor, panel yolu aynı sonucu veriyor.
 9. "Durumu oku" (`narrator.statusText()`) hazırlık/kalem/hedef bilgisini içerir; eklenenleri okumak için `Narrator.addedText`.
+
+
+## D. v2.6 -> v2.7 (motor tarafındaki TEK değişiklikler; ayrıntı `docs/design_v25.md` §14)
+
+```java
+enum Importance { CRITICAL, NORMAL, VERBOSE }             // duyuru önem sınıfı (yeni)
+enum NarrationLevel { LOW("Az"), MEDIUM("Orta"), HIGH("Çok") }  // ayar; allows(Importance), effective(setting, screenReaderOn), fromId, DEFAULT = LOW
+SaveData.narrationLevel                                    // kayıt anahtarı narration=0|1|2 (yoksa/bozuksa LOW); ayar: yeni oyunda korunur (copySettingsTo)
+Narrator.Output.say(text, urgent, category, fresh, Importance)  // varsayılan yöntem: eski Output'lar bozulmaz (dört bağımsız değişkenliye düşer)
+Narrator.defaultImportance(category, urgent)               // önemi verilmeyen çağrılar için kategori tablosu
+Pricing.clamp(pct)                                          // yalnızca 50..150 (5'in katı kısıtı kalktı); STEP_PERCENT yalnızca −/+ basamağı
+```
+Kayıt biçimi/dönem değişmedi (`v=5`, `epoch=25`); eski kayıtlar olduğu gibi yüklenir (`price.<ürün>` 5'in katı olmayan değeri artık korunur). `GameListener` değişmedi; `Narrator` her olayı bir önem sınıfıyla söyler.

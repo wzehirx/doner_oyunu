@@ -10,6 +10,7 @@ import android.widget.TextView;
 import com.doner.oyunu.engine.Bank;
 import com.doner.oyunu.engine.Bill;
 import com.doner.oyunu.engine.Finance;
+import com.doner.oyunu.engine.Importance;
 import com.doner.oyunu.engine.Narrator;
 import com.doner.oyunu.engine.SaveData;
 
@@ -41,10 +42,12 @@ final class BillsBox extends LinearLayout {
         /** Ertele ve Krediyle öde gösterilsin mi (gün sonu/brifing/market; gün içinde değil). */
         boolean fullOptions();
         void tap(View v, Runnable r);
-        /** Açık okuma (odak yerinde kalır). */
+        /** Açık okuma (odak yerinde kalır; "Anlatım düzeyi"nden bağımsız her zaman söylenir). */
         void say(String text);
-        /** İşlem sonucu: odağı {@code focus}'a taşır, ardından {@code text}'i bir kez söyler. */
-        void result(View focus, String text);
+        /** İşlem sonucu/uyarısı, odak yerinde kalır; v2.7: önem sınıflı (TalkBack açıkken "Anlatım düzeyi"ne göre süzülür). */
+        void say(String text, Importance importance);
+        /** İşlem sonucu: odağı {@code focus}'a taşır, ardından {@code text}'i bir kez söyler (v2.7: önem sınıflı). */
+        void result(View focus, String text, Importance importance);
         void sound(String sfx, boolean ok);
         /** Para/fatura değişti: kaydet, diğer göstergeleri yenile. */
         void changed();
@@ -241,7 +244,7 @@ final class BillsBox extends LinearLayout {
     private void pay(int billId, int due) {
         SaveData s = host.save();
         Bill b = Finance.bill(s, billId);
-        if (b == null) { rebuild(); host.result(header, Texts.payResult(Finance.PayResult.UNKNOWN, 0)); return; }
+        if (b == null) { rebuild(); host.result(header, Texts.payResult(Finance.PayResult.UNKNOWN, 0), Importance.CRITICAL); return; }
         Finance.PayResult r = host.pay(billId);
         loanConfirm.remove(billId);
         if (r == Finance.PayResult.OK) {
@@ -249,11 +252,11 @@ final class BillsBox extends LinearLayout {
             host.changed();
             rebuild();
             // kart kalktı: odak özet satırına (kalan borç + kasa orada), sonuç bir kez ve kısa
-            host.result(header, Narrator.billPaid(b, due) + cash(s));
+            host.result(header, Narrator.billPaid(b, due) + cash(s), Importance.NORMAL);
         } else {
             host.sound("sfx_error", false);
             rebuild();
-            host.say(Texts.payResult(r, due) + (host.fullOptions() ? " Krediyle öde ya da Ertele." : ""));
+            host.say(Texts.payResult(r, due) + (host.fullOptions() ? " Krediyle öde ya da Ertele." : ""), Importance.CRITICAL);
         }
     }
 
@@ -264,10 +267,10 @@ final class BillsBox extends LinearLayout {
             host.sound("sfx_buy", true);
             host.changed();
             rebuild();
-            host.result(header, "Maaş ödendi: " + due + " lira. Çırak işe gelir." + cash(s));
+            host.result(header, "Maaş ödendi: " + due + " lira. Çırak işe gelir." + cash(s), Importance.NORMAL);
         } else {
             host.sound("sfx_error", false);
-            host.say(Texts.payResult(r, due));
+            host.say(Texts.payResult(r, due), Importance.CRITICAL);
         }
     }
 
@@ -279,7 +282,7 @@ final class BillsBox extends LinearLayout {
         deferred.add(billId);
         rebuild(); // yerinde: odak "Ertele" düğmesinde kalır
         String e = Texts.billEffect(s, b, host.day());
-        host.say("Ertelendi: " + b.type.displayName.toLowerCase(TR) + "." + (e.isEmpty() ? " Son ödemeye " + b.daysLeft(host.day()) + " gün var." : " " + e));
+        host.say("Ertelendi: " + b.type.displayName.toLowerCase(TR) + "." + (e.isEmpty() ? " Son ödemeye " + b.daysLeft(host.day()) + " gün var." : " " + e), Importance.NORMAL);
     }
 
     private void payWithLoan(int billId) {
@@ -293,7 +296,7 @@ final class BillsBox extends LinearLayout {
             loanConfirm.clear();
             loanConfirm.add(billId);
             rebuild(); // yerinde: aynı düğme "Onayla"ya döner, odak üzerinde kalır
-            host.say("Kredi: " + (q == null ? amount + " lira." : Texts.quoteShort(q)) + " Onaylamak için tekrar dokun.");
+            host.say("Kredi: " + (q == null ? amount + " lira." : Texts.quoteShort(q)) + " Onaylamak için tekrar dokun.", Importance.CRITICAL);
             return;
         }
         loanConfirm.remove(billId);
@@ -303,12 +306,12 @@ final class BillsBox extends LinearLayout {
             host.changed();
             rebuild();
             host.result(header, "Krediyle ödendi: " + b.type.displayName.toLowerCase(TR) + ", " + due + " lira. Taksit "
-                    + LOAN_TERM + " gün, gün sonunda kasadan." + cash(s));
+                    + LOAN_TERM + " gün, gün sonunda kasadan." + cash(s), Importance.NORMAL);
         } else {
             host.sound("sfx_error", false);
             rebuild();
             host.say("Kredi alınamadı. " + (b.type == com.doner.oyunu.engine.BillType.KIRA && r == Bank.Result.TOO_MANY_LOANS
-                    ? "Kira kredisi sınırı doldu." : Texts.bankResult(r)));
+                    ? "Kira kredisi sınırı doldu." : Texts.bankResult(r)), Importance.CRITICAL);
         }
     }
 

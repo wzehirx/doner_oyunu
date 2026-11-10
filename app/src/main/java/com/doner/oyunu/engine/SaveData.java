@@ -38,6 +38,8 @@ public final class SaveData {
     public boolean tutorialDone = false;
     /** Çırak duyuruları (ayar). */
     public boolean apprenticeAnnounce = true;
+    /** v2.7 Anlatım düzeyi ({@link NarrationLevel}); yalnızca TalkBack açıkken geçerli (kapalıyken her zaman Çok). */
+    public NarrationLevel narrationLevel = NarrationLevel.DEFAULT;
 
     /** Oyun akışı (v0.7): Rahat / Dengeli / Gerçekçi. Eski kayıtlarda yoksa varsayılan (Dengeli). */
     public FlowMode flowMode = FlowMode.DEFAULT;
@@ -124,6 +126,7 @@ public final class SaveData {
         s.ambienceVolume = ambienceVolume;
         s.tutorialDone = tutorialDone;
         s.apprenticeAnnounce = apprenticeAnnounce;
+        s.narrationLevel = narrationLevel;
         s.apprenticeDelivery = apprenticeDelivery;
         s.flowMode = flowMode;
         s.flowChosen = flowChosen;
@@ -176,6 +179,7 @@ public final class SaveData {
         sb.append("ambience=").append(ambienceVolume).append('\n');
         sb.append("tutorial=").append(tutorialDone ? 1 : 0).append('\n');
         sb.append("apprenticeAnnounce=").append(apprenticeAnnounce ? 1 : 0).append('\n');
+        sb.append("narration=").append(narrationLevel.id).append('\n');
         sb.append("readyDrinks=").append(readyDrinks).append('\n');
         sb.append("flow=").append(flowMode.id).append('\n');
         sb.append("flowChosen=").append(flowChosen ? 1 : 0).append('\n');
@@ -240,6 +244,7 @@ public final class SaveData {
                 else if (k.equals("ambience")) s.ambienceVolume = Math.max(0, Math.min(1, num(v)));
                 else if (k.equals("tutorial")) s.tutorialDone = v.equals("1");
                 else if (k.equals("apprenticeAnnounce")) s.apprenticeAnnounce = v.equals("1");
+                else if (k.equals("narration")) s.narrationLevel = NarrationLevel.fromId(Integer.parseInt(v));
                 else if (k.equals("flow")) { FlowMode m = FlowMode.byId(v); if (m != null) s.flowMode = m; }
                 else if (k.equals("flowChosen")) s.flowChosen = v.equals("1");
                 else if (k.equals("timer")) s.timePressure = !v.equals("0");

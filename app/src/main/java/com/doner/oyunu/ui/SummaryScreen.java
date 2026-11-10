@@ -173,7 +173,7 @@ public final class SummaryScreen extends Screen {
     /** İflas hemen (acil), ilk fatura öğreticisi gün sonu anlatımının ardından (öğretici kategorisi: geç bayatlar). */
     @Override public void onEnter() {
         if (enterSpeech == null) return;
-        if (enterUrgent) a.speaker.say(enterSpeech, true);
+        if (enterUrgent) a.speaker.say(enterSpeech, true, null, null, com.doner.oyunu.engine.Importance.CRITICAL);
         else a.speaker.say(enterSpeech, false, Narrator.CAT_TUTORIAL, null);
     }
 

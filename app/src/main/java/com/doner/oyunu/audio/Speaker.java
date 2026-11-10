@@ -13,6 +13,8 @@ import android.speech.tts.UtteranceProgressListener;
 import android.view.View;
 import android.view.accessibility.AccessibilityManager;
 
+import com.doner.oyunu.engine.Importance;
+import com.doner.oyunu.engine.NarrationLevel;
 import com.doner.oyunu.engine.Narrator;
 import com.doner.oyunu.engine.SpeechQueue;
 
@@ -40,6 +42,7 @@ public final class Speaker implements Narrator.Output {
     private View anchor;
     private boolean enabled = true;
     private float rate = 1f;
+    private NarrationLevel narration = NarrationLevel.DEFAULT;
 
     /**
      * Konuşma sırası (v0.9): bayat duyuruyu atar, aynı kategoriyi birleştirir/aralıklar, acil olanı öne alır, ipucunu
@@ -97,6 +100,17 @@ public final class Speaker implements Narrator.Output {
 
     public boolean isEnabled() { return enabled; }
 
+    /** Anlatım düzeyi ayarı (v2.7; yalnızca TalkBack açıkken geçerli). */
+    public void setNarrationLevel(NarrationLevel l) { narration = l == null ? NarrationLevel.DEFAULT : l; }
+
+    public NarrationLevel getNarrationLevel() { return narration; }
+
+    /** Etkin düzey: TalkBack açıkken ayar, kapalıyken her zaman Çok (eski davranış). */
+    public NarrationLevel effectiveLevel() { return NarrationLevel.effective(narration, isTalkBackOn()); }
+
+    /** Bu önemdeki duyuru şu an söylenir mi (açık okuma istekleri bu süzgeçten geçmez, her zaman söylenir). */
+    public boolean allows(Importance imp) { return effectiveLevel().allows(imp); }
+
     public void setRate(float r) {
         rate = Math.max(0.5f, Math.min(2f, r));
         if (tts != null && ttsReady) try { tts.setSpeechRate(rate); } catch (Exception ignored) { }
@@ -122,9 +136,18 @@ public final class Speaker implements Narrator.Output {
 
     /** Oyun anlatımı (kategorili, bayatlık denetimli): "Sesli anlatım" ayarına bağlıdır. */
     @Override public void say(String text, boolean urgent, String category, Narrator.Fresh fresh) {
+        say(text, urgent, category, fresh, Narrator.defaultImportance(category, urgent));
+    }
+
+    /**
+     * Oyun anlatımı (v2.7, önem sınıflı): TalkBack açıkken "Anlatım düzeyi"ne göre süzülür (Az: yalnızca CRITICAL, Orta:
+     * + NORMAL, Çok: hepsi); TalkBack kapalıyken süzgeç yoktur. "Hedefi oku" gibi açık okumalar ({@code CAT_INFO}) her zaman söylenir.
+     */
+    @Override public void say(String text, boolean urgent, String category, Narrator.Fresh fresh, Importance importance) {
         if (!enabled || text == null || text.isEmpty()) return;
         // "Hedefi oku" / "Eklenenleri oku" (panel okuma seçenekleri): oyuncunun açık isteği, her basışta okunur
         if (Narrator.CAT_INFO.equals(category)) { force(text); return; }
+        if (!allows(importance)) return;
         // v2.6: gerçek acil uyarı (hata/uyarı, sabır kritik) süren AÇIK OKUMAYI keser: uzun "Durumu oku" sürerken
         // "sabır kritik" beklemez. (Sıra kuralı değişmedi; kesmeyi Speaker yapar.)
         if (urgent && (Narrator.CAT_ALERT.equals(category) || Narrator.CAT_PATIENCE.equals(category))) cutExplicit();
@@ -137,9 +160,29 @@ public final class Speaker implements Narrator.Output {
      * Arayüz geri bildirimi (satın alma onayı, ekran başlığı...). TalkBack açıkken her zaman duyurulur,
      * TTS modunda "Sesli anlatım" kapalıysa susar.
      */
-    public void announce(String text, boolean urgent) {
+    public void announce(String text, boolean urgent) { announce(text, urgent, Importance.NORMAL); }
+
+    /** Arayüz geri bildirimi, önem sınıflı (v2.7): TalkBack açıkken "Anlatım düzeyi"ne göre süzülür. */
+    public void announce(String text, boolean urgent, Importance importance) {
         if (text == null || text.isEmpty()) return;
+        if (!allows(importance)) return;
         if (isTalkBackOn() || enabled) { queue.say(text, urgent); kick(); }
+    }
+
+    /**
+     * Oyuncunun eyleminin SONUCU (v2.7): açık okuma yolundan söylenir ({@link #force}: konuşanı keser, yinelenen metin
+     * yutulmaz) ama önem sınıfına göre süzülür. "Durumu oku" gibi AÇIK İSTEKLER {@link #force} kullanır ve süzülmez;
+     * "Kredi alındı", "En yüksek fiyat" gibi sonuçlar bunu kullanır: TalkBack açıkken düzey düşükse susar.
+     */
+    public void result(String text, Importance importance) {
+        if (!allows(importance)) return;
+        force(text);
+    }
+
+    /** {@link #result} ama odak taşındıktan sonra söylenir ({@link #forceAfterFocus}). */
+    public void resultAfterFocus(String text, Importance importance) {
+        if (!allows(importance)) return;
+        forceAfterFocus(text);
     }
 
     /**
@@ -181,7 +224,7 @@ public final class Speaker implements Narrator.Output {
     private final Runnable explicitRunner = new Runnable() {
         @Override public void run() {
             String t = explicitText;
-            explicitText = null;
+                explicitText = null;
             if (t == null) return;
             if (isTalkBackOn()) {
                 // aynı metin art arda: görünmez ekle farklılaştır (TalkBack yinelenen duyuruyu atmasın)

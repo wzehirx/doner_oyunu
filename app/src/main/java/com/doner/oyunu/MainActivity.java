@@ -130,6 +130,7 @@ public class MainActivity extends Activity {
         sound.setAmbienceVolume((float) save.ambienceVolume);
         speaker.setEnabled(save.speechOn);
         speaker.setRate((float) save.speechRate);
+        speaker.setNarrationLevel(save.narrationLevel);
         haptics.setEnabled(save.vibration);
     }
 
@@ -241,6 +242,12 @@ public class MainActivity extends Activity {
     public void focusThenSay(View f, String text) {
         if (f != null) { focusOn(f); speaker.forceAfterFocus(text); }
         else speaker.force(text);
+    }
+
+    /** {@link #focusThenSay} ama sonuç önem sınıflıdır (v2.7): TalkBack açıkken "Anlatım düzeyi"ne göre süzülür; odak yine taşınır. */
+    public void focusThenSay(View f, String text, com.doner.oyunu.engine.Importance importance) {
+        if (f != null) { focusOn(f); speaker.resultAfterFocus(text, importance); }
+        else speaker.result(text, importance);
     }
 
     // ------------------------------------------------------------------ yaşam döngüsü

@@ -17,7 +17,7 @@ import java.util.Map;
 
 /**
  * v2.5 Banka ekranı (brifing, market, faturalar ekranından): kredi notu, limit, alınabilir tutar, faiz ({@link
- * Narrator#bankText}); tutar (−/+ 500 lira, en az 500) ve vade (5/10/20 gün) seçimi, teklif ({@link Narrator#quoteText}),
+ * Narrator#bankText}); tutar (en az 500; {@link AdjustControl}: −/+ 500, kaydırma çubuğu, yazarak 100'lük) ve vade (5/10/20 gün; seçenekli AdjustControl) seçimi, teklif ({@link Narrator#quoteText}),
  * Kredi al; aktif krediler (kalan borç, taksit, vade) için Erken kapat ve Gecikmiş taksiti öde. Her sonuç sesli ve
  * metinle.
  *
@@ -29,9 +29,9 @@ public final class BankScreen extends Screen {
     private final int from;
     private int amount = Bank.MIN_LOAN;
     private int term = 10;
-    private TextView infoTv, amountTv, quoteTv;
+    private TextView infoTv, quoteTv;
     private Button takeBtn;
-    private final Map<Integer, Button> termButtons = new HashMap<>();
+    private AdjustControl amountCtl, termCtl;
     private LinearLayout loansBox;
 
     public BankScreen(MainActivity a, int from) {
@@ -65,34 +65,39 @@ public final class BankScreen extends Screen {
 
         // ---- kredi al
         body.addView(sectionHeading("Kredi al"));
+        // v2.7: tutar ve vade AdjustControl: − [kaydırma çubuğu] + ve değere dokununca sayısal klavye
         LinearLayout amountCard = card();
-        amountTv = Ui.label(ctx, "", 19, Theme.CREAM, true);
-        amountTv.setFocusable(true);
-        amountCard.addView(amountTv);
-        LinearLayout row = new LinearLayout(ctx);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        Button minus = Ui.button(ctx, "−  500 lira", Ui.SECONDARY);
-        Button plus = Ui.button(ctx, "+  500 lira", Ui.SECONDARY);
-        minus.setContentDescription("Tutarı azalt");
-        plus.setContentDescription("Tutarı artır");
-        tap(minus, new Runnable() { @Override public void run() { stepAmount(-1); } });
-        tap(plus, new Runnable() { @Override public void run() { stepAmount(+1); } });
-        row.addView(minus, Ui.lp(ctx, 0, Ui.WRAP, 1f, 0, 6, 4, 0));
-        row.addView(plus, Ui.lp(ctx, 0, Ui.WRAP, 1f, 4, 6, 0, 0));
-        amountCard.addView(row);
+        amountCtl = new AdjustControl(ctx, adjustHost(), "Tutar", Bank.MIN_LOAN, maxAmount(a.save), Bank.STEP, 500,
+                new AdjustControl.Format() {
+            @Override public String shown(int v) { return v + " lira"; }
+            @Override public String spoken(int v) {
+                Bank.Quote q = Bank.quote(a.save, v, term);
+                return "Tutar " + v + " lira." + (q == null ? "" : " Günlük taksit " + q.installment + " lira.");
+            }
+            @Override public String unit() { return "lira"; }
+        });
+        amountCtl.setButtonDescriptions("Tutarı azalt", "Tutarı artır");
+        amountCtl.setListener(new AdjustControl.Listener() {
+            @Override public void onChanged(int v, boolean settled) { amount = v; refresh(); }
+        });
+        amountCard.addView(amountCtl);
         body.addView(amountCard, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 4));
 
-        LinearLayout termRow = new LinearLayout(ctx);
-        termRow.setOrientation(LinearLayout.HORIZONTAL);
-        for (int i = 0; i < Bank.TERMS.length; i++) {
-            final int t = Bank.TERMS[i];
-            Button b = Ui.button(ctx, t + " gün", Ui.SECONDARY);
-            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-            tap(b, new Runnable() { @Override public void run() { chooseTerm(t); } });
-            termButtons.put(t, b);
-            termRow.addView(b, Ui.lp(ctx, 0, Ui.WRAP, 1f, i == 0 ? 0 : 3, 4, i == Bank.TERMS.length - 1 ? 0 : 3, 4));
-        }
-        body.addView(termRow);
+        LinearLayout termCard = card();
+        termCtl = AdjustControl.choices(ctx, adjustHost(), "Vade", Bank.TERMS, new AdjustControl.Format() {
+            @Override public String shown(int v) { return v + " gün"; }
+            @Override public String spoken(int v) {
+                Bank.Quote q = Bank.quote(a.save, amount, v);
+                return v + " gün vade." + (q == null ? "" : " Günlük taksit " + q.installment + " lira, toplam " + q.total + " lira.");
+            }
+            @Override public String unit() { return "gün"; }
+        });
+        termCtl.setButtonDescriptions("Vadeyi azalt", "Vadeyi artır");
+        termCtl.setListener(new AdjustControl.Listener() {
+            @Override public void onChanged(int v, boolean settled) { term = v; refresh(); }
+        });
+        termCard.addView(termCtl);
+        body.addView(termCard, Ui.lp(ctx, Ui.MATCH, Ui.WRAP, 0, 4, 0, 4));
 
         quoteTv = Ui.label(ctx, "", 17, Theme.GOLD, false);
         quoteTv.setFocusable(true);
@@ -165,11 +170,11 @@ public final class BankScreen extends Screen {
             a.saveNow();
             refresh();
             // bölüm kalktı: odak bilgi satırına, sonra tek duyuru
-            a.focusThenSay(infoTv, "Acil destek kredisi alındı: " + amt + " lira, " + Bank.EMERGENCY_TERM + " gün. Kasada " + s.money + " lira.");
+            a.focusThenSay(infoTv, "Acil destek kredisi alındı: " + amt + " lira, " + Bank.EMERGENCY_TERM + " gün. Kasada " + s.money + " lira.", com.doner.oyunu.engine.Importance.NORMAL);
         } else {
             a.sound.play("sfx_error");
             a.haptics.error();
-            a.speaker.force("Acil destek alınamadı. " + Texts.bankResult(r));
+            a.speaker.result("Acil destek alınamadı. " + Texts.bankResult(r), com.doner.oyunu.engine.Importance.CRITICAL);
         }
     }
 
@@ -178,18 +183,10 @@ public final class BankScreen extends Screen {
         String info = Texts.bankHeader(s);
         infoTv.setText(info);
         Ui.setDesc(infoTv, info);
-        String at = "Tutar: " + amount + " lira";
-        amountTv.setText(at);
-        Ui.setDesc(amountTv, at);
-        for (Map.Entry<Integer, Button> e : termButtons.entrySet()) {
-            boolean sel = e.getKey() == term;
-            Button b = e.getValue();
-            b.setSelected(sel);
-            b.setText(e.getKey() + " gün" + (sel ? " ✓" : ""));
-            b.setContentDescription(e.getKey() + " gün vade" + (sel ? ", seçili" : ""));
-            b.setBackground(Ui.buttonBg(ctx, sel ? Ui.GOLD : Ui.SECONDARY));
-            b.setTextColor(sel ? Theme.DARK : Theme.CREAM);
-        }
+        amountCtl.setRange(Bank.MIN_LOAN, maxAmount(s));
+        amountCtl.setValue(amount);
+        amount = amountCtl.getValue();
+        termCtl.setValue(term);
         Bank.Quote q = Bank.quote(s, amount, term);
         String qt = q == null ? "Teklif yok." : Texts.quoteLine(q);
         boolean can = q != null && amount <= Bank.available(s) && !Bank.blocked(s) && s.loans.size() < Bank.MAX_LOANS;
@@ -256,30 +253,6 @@ public final class BankScreen extends Screen {
         }
     }
 
-    private void stepAmount(int dir) {
-        int max = maxAmount(a.save);
-        int next = amount + dir * 500;
-        if (dir > 0 && next > max) next = max;
-        if (next < Bank.MIN_LOAN) next = Bank.MIN_LOAN;
-        if (next == amount) {
-            a.sound.play("sfx_error");
-            a.haptics.error();
-            a.speaker.force((dir > 0 ? "En yüksek tutar: " : "En düşük tutar: ") + amount + " lira.");
-            return;
-        }
-        amount = next;
-        refresh();
-        Bank.Quote q = Bank.quote(a.save, amount, term);
-        a.speaker.force("Tutar " + amount + " lira." + (q == null ? "" : " Günlük taksit " + q.installment + " lira."));
-    }
-
-    private void chooseTerm(int t) {
-        term = t;
-        refresh();
-        Bank.Quote q = Bank.quote(a.save, amount, term);
-        a.speaker.force(t + " gün vade." + (q == null ? "" : " Günlük taksit " + q.installment + " lira, toplam " + q.total + " lira."));
-    }
-
     private void takeLoan() {
         SaveData s = a.save;
         Bank.Result r = Bank.takeLoan(s, amount, term);
@@ -291,11 +264,11 @@ public final class BankScreen extends Screen {
             amount = Math.max(Bank.MIN_LOAN, Math.min(amount, maxAmount(s)));
             refresh();
             // düğme yerinde: odak taşınmaz, tek duyuru
-            a.speaker.force("Kredi alındı: " + took + " lira, " + term + " gün. Kasada " + s.money + " lira.");
+            a.speaker.result("Kredi alındı: " + took + " lira, " + term + " gün. Kasada " + s.money + " lira.", com.doner.oyunu.engine.Importance.NORMAL);
         } else {
             a.sound.play("sfx_error");
             a.haptics.error();
-            a.speaker.force("Kredi alınamadı. " + Texts.bankResult(r) + (r == Bank.Result.OVER_LIMIT ? " " + whyNot(s) : ""));
+            a.speaker.result("Kredi alınamadı. " + Texts.bankResult(r) + (r == Bank.Result.OVER_LIMIT ? " " + whyNot(s) : ""), com.doner.oyunu.engine.Importance.CRITICAL);
         }
     }
 
@@ -310,11 +283,11 @@ public final class BankScreen extends Screen {
             a.saveNow();
             refresh();
             // kart kalktı: odak listenin ilk satırına (kalan kredi ya da "Kredi borcun yok."), sonra tek duyuru
-            a.focusThenSay(firstLoanView, "Kredi kapatıldı: " + p + " lira. Kredi notu " + s.creditScore + ". Kasada " + s.money + " lira.");
+            a.focusThenSay(firstLoanView, "Kredi kapatıldı: " + p + " lira. Kredi notu " + s.creditScore + ". Kasada " + s.money + " lira.", com.doner.oyunu.engine.Importance.NORMAL);
         } else {
             a.sound.play("sfx_error");
             a.haptics.error();
-            a.speaker.force(Texts.bankResult(r) + (r == Bank.Result.NOT_ENOUGH_MONEY ? " " + p + " lira gerekli." : ""));
+            a.speaker.result(Texts.bankResult(r) + (r == Bank.Result.NOT_ENOUGH_MONEY ? " " + p + " lira gerekli." : ""), com.doner.oyunu.engine.Importance.CRITICAL);
         }
     }
 
@@ -329,11 +302,11 @@ public final class BankScreen extends Screen {
             a.saveNow();
             refresh();
             View f = loanTexts.get(loanId);
-            a.focusThenSay(f != null ? f : firstLoanView, "Gecikmiş taksit ödendi: " + p + " lira. Kasada " + s.money + " lira.");
+            a.focusThenSay(f != null ? f : firstLoanView, "Gecikmiş taksit ödendi: " + p + " lira. Kasada " + s.money + " lira.", com.doner.oyunu.engine.Importance.NORMAL);
         } else {
             a.sound.play("sfx_error");
             a.haptics.error();
-            a.speaker.force(Texts.bankResult(r) + (r == Bank.Result.NOT_ENOUGH_MONEY ? " " + p + " lira gerekli." : ""));
+            a.speaker.result(Texts.bankResult(r) + (r == Bank.Result.NOT_ENOUGH_MONEY ? " " + p + " lira gerekli." : ""), com.doner.oyunu.engine.Importance.CRITICAL);
         }
     }
 

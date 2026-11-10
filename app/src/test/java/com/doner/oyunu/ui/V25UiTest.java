@@ -178,7 +178,7 @@ public class V25UiTest {
         assertNotNull(h.findText("Tahmini müşteri: değişmez."));
         // +%5 düğmesi
         evBase = sam.getSentAccessibilityEvents().size();
-        h.click("Ayran fiyatını artır"); h.idle(200);
+        h.click("Ayran fiyatını artır"); h.idle(700); // v2.7: değişim duyurusu geri sayımlı (AdjustControl.DEBOUNCE_MS)
         assertEquals(105, Pricing.percent(s, "ayran"));
         Product ayran = Catalog.product("ayran");
         assertNotNull(h.findLabel("Ayran, " + Pricing.priceOf(s, ayran) + " lira, yüzde 105"));
@@ -229,12 +229,12 @@ public class V25UiTest {
         audit(h, "Banka");
         assertNotNull(h.findText("Kredi notu 60"));
         assertNotNull(h.findText("Kredi borcun yok."));
-        assertNotNull(h.findLabel("10 gün vade, seçili"));
+        assertNotNull("v2.7: vade AdjustControl (varsayılan 10 gün)", h.findLabel("Vade: 10 gün"));
         h.click("Tutarı azalt"); h.idle(50);
         h.click("Tutarı azalt"); h.idle(50);
         assertNotNull(h.findText("Tutar: 2000 lira"));
-        h.click("20 gün vade"); h.idle(50);
-        assertNotNull(h.findLabel("20 gün vade, seçili"));
+        h.click("Vadeyi artır"); h.idle(50); // 10 -> 20 gün (eskiden "20 gün vade" düğmesi)
+        assertNotNull(h.findLabel("Vade: 20 gün"));
         assertNotNull(h.findText("Teklif: 2000 lira, 20 gün"));
         int money = s.money;
         h.click("Kredi al: 2000 lira, 20 gün"); h.idle(150);

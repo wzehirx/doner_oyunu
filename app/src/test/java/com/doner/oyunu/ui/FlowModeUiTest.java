@@ -120,7 +120,8 @@ public class FlowModeUiTest {
         assertNotNull(h.findLabel("Rahat"));
         assertNotNull(h.findLabel("Gerçekçi"));
         audit(h, "Ayarlar (akış)");
-        assertEquals("seçili akış düğmesi denetlendi", 1, A11yAudit.run(h, "Ayarlar (seçili)").checkedSelected);
+        // v2.7: seçili durumlu iki grup var: oyun akışı (Dengeli) ve anlatım düzeyi (varsayılan düzey)
+        assertEquals("seçili akış + anlatım düzeyi düğmeleri denetlendi", 2, A11yAudit.run(h, "Ayarlar (seçili)").checkedSelected);
         h.click("Rahat");
         assertEquals(FlowMode.RAHAT, h.act.save.flowMode);
         assertTrue(h.act.save.flowChosen);

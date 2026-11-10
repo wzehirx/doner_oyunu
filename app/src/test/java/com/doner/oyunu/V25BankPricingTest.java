@@ -139,9 +139,20 @@ public class V25BankPricingTest {
         assertEquals(100, Pricing.percent(s, "ekmek_arasi"));
         assertEquals(240, Pricing.priceOf(s, Catalog.product("ekmek_arasi")));
         assertTrue(Pricing.setPercent(s, "ekmek_arasi", 112));
-        assertEquals("%5'e yuvarlanır", 110, Pricing.percent(s, "ekmek_arasi"));
-        assertEquals(264, Pricing.priceOf(s, Catalog.product("ekmek_arasi")));
-        assertEquals(115, Pricing.raise(s, "ekmek_arasi"));
+        // v2.7: her tam yüzde geçerli (eskiden %5'e yuvarlanırdı); −/+ düğmeleri bir sonraki %5 basamağına gider
+        assertEquals("tam yüzde korunur", 112, Pricing.percent(s, "ekmek_arasi"));
+        assertEquals(269, Pricing.priceOf(s, Catalog.product("ekmek_arasi")));
+        assertEquals("112 -> 115", 115, Pricing.raise(s, "ekmek_arasi"));
+        assertEquals("115 -> 120", 120, Pricing.raise(s, "ekmek_arasi"));
+        Pricing.setPercent(s, "ekmek_arasi", 112);
+        assertEquals("112 -> 110", 110, Pricing.lower(s, "ekmek_arasi"));
+        assertEquals("110 -> 105", 105, Pricing.lower(s, "ekmek_arasi"));
+        Pricing.setPercent(s, "ekmek_arasi", 149);
+        assertEquals(150, Pricing.raise(s, "ekmek_arasi"));
+        assertEquals(150, Pricing.raise(s, "ekmek_arasi"));
+        Pricing.setPercent(s, "ekmek_arasi", 51);
+        assertEquals(50, Pricing.lower(s, "ekmek_arasi"));
+        Pricing.setPercent(s, "ekmek_arasi", 115);
         Pricing.setPercent(s, "ayran", 999);
         assertEquals(150, Pricing.percent(s, "ayran"));
         Pricing.setPercent(s, "ayran", 10);

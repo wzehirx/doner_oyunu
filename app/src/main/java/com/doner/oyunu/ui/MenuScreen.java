@@ -92,7 +92,7 @@ public final class MenuScreen extends Screen {
             confirmNew = true;
             newGameBtn.setText("Emin misin? Tekrar dokun");
             newGameBtn.setContentDescription("Emin misin? Kayıt silinecek, tekrar dokun");
-            a.speaker.announce("Kayıtlı oyun silinecek. Onaylamak için tekrar dokun.", true);
+            a.speaker.announce("Kayıtlı oyun silinecek. Onaylamak için tekrar dokun.", true, com.doner.oyunu.engine.Importance.CRITICAL);
             return;
         }
         a.newGame();
@@ -104,7 +104,7 @@ public final class MenuScreen extends Screen {
             // ekran başlığından (odak/TTS) SONRA sıraya girsin: başlık bildirimi kesmesin
             final String n = resetNotice;
             new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(new Runnable() {
-                @Override public void run() { if (a.currentScreen() == MenuScreen.this) a.speaker.announce(n, false); }
+                @Override public void run() { if (a.currentScreen() == MenuScreen.this) a.speaker.announce(n, false, com.doner.oyunu.engine.Importance.CRITICAL); }
             }, 120);
         }
         if (Ui.animationsOn(ctx) && skewer != null) {

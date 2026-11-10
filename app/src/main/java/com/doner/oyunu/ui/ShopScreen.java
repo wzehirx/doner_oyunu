@@ -105,7 +105,7 @@ public final class ShopScreen extends Screen {
                 if (com.doner.oyunu.engine.UtilityStatus.of(a.save, a.save.day).evicted()) {
                     // v2.5 tahliye: dükkân açılamaz, faturalara yönlendir
                     a.sound.play("sfx_error");
-                    a.speaker.force("Tahliye kararı var: kirayı ödemeden dükkân açılamaz. Faturalar açılıyor.");
+                    a.speaker.result("Tahliye kararı var: kirayı ödemeden dükkân açılamaz. Faturalar açılıyor.", com.doner.oyunu.engine.Importance.CRITICAL);
                     a.show(new BillsScreen(a, Nav.SHOP));
                     return;
                 }
@@ -143,7 +143,7 @@ public final class ShopScreen extends Screen {
         if (idx == TAB_ING) buildIngredients(); else buildUpgrades(idx == TAB_KITCHEN ? Upgrade.Category.MUTFAK : Upgrade.Category.RESTORAN);
         refreshMoney();
         runRefreshers();
-        if (announce) a.speaker.announce(names[idx] + " sekmesi açıldı.", true);
+        if (announce) a.speaker.announce(names[idx] + " sekmesi açıldı.", true, com.doner.oyunu.engine.Importance.VERBOSE);
     }
 
     private void runRefreshers() {
@@ -208,13 +208,13 @@ public final class ShopScreen extends Screen {
             a.haptics.buy();
             runRefreshers();
             a.speaker.announce(Texts.buyResult(r, ing.name, got, moneyBefore - s.money)
-                    + " Stok " + s.inventory.get(ing.id) + ". Kasada " + s.money + " lira.", true);
+                    + " Stok " + s.inventory.get(ing.id) + ". Kasada " + s.money + " lira.", true, com.doner.oyunu.engine.Importance.NORMAL);
             a.saveNow();
         } else {
             a.sound.play("sfx_error");
             a.haptics.error();
             int real = Shop.purchasableQty(s, ing.id, q);
-            a.speaker.announce(Texts.buyResult(r, ing.name, real, Shop.ingredientCost(ing.id, real)), true);
+            a.speaker.announce(Texts.buyResult(r, ing.name, real, Shop.ingredientCost(ing.id, real)), true, com.doner.oyunu.engine.Importance.CRITICAL);
         }
     }
 
@@ -223,14 +223,14 @@ public final class ShopScreen extends Screen {
         int need = Shop.recommendedCost(s);
         if (need <= 0) {
             a.sound.play("sfx_error");
-            a.speaker.announce("Stok zaten yeterli, alınacak malzeme yok.", true);
+            a.speaker.announce("Stok zaten yeterli, alınacak malzeme yok.", true, com.doner.oyunu.engine.Importance.NORMAL);
             return;
         }
         int spent = Shop.buyRecommended(s);
         if (spent <= 0) {
             a.sound.play("sfx_error");
             a.haptics.error();
-            a.speaker.announce("Yeterli paran yok.", true);
+            a.speaker.announce("Yeterli paran yok.", true, com.doner.oyunu.engine.Importance.CRITICAL);
             return;
         }
         a.sound.play("sfx_buy");
@@ -238,7 +238,7 @@ public final class ShopScreen extends Screen {
         runRefreshers();
         int left = Shop.recommendedCost(s);
         a.speaker.announce("Önerilen malzemeler alındı, " + spent + " lira harcandı."
-                + (left > 0 ? " Paran yetmediği için bir kısmı alınamadı." : "") + " Kasada " + s.money + " lira.", true);
+                + (left > 0 ? " Paran yetmediği için bir kısmı alınamadı." : "") + " Kasada " + s.money + " lira.", true, com.doner.oyunu.engine.Importance.NORMAL);
         a.saveNow();
     }
 
@@ -291,7 +291,7 @@ public final class ShopScreen extends Screen {
             a.haptics.buy();
             runRefreshers();
             a.speaker.announce(u.name + " seviye " + s.level(u.id) + " satın alındı, " + price
-                    + " lira. Kasada " + s.money + " lira.", true);
+                    + " lira. Kasada " + s.money + " lira.", true, com.doner.oyunu.engine.Importance.NORMAL);
             a.saveNow();
         } else {
             a.sound.play("sfx_error");
@@ -299,7 +299,7 @@ public final class ShopScreen extends Screen {
             String msg = r == Shop.BuyResult.LOCKED
                     ? u.name + " kilitli: " + u.unlockDayForNext(s.level(u.id)) + ". günde açılır."
                     : Texts.buyResult(r, u.name, 0, price);
-            a.speaker.announce(msg, true);
+            a.speaker.announce(msg, true, com.doner.oyunu.engine.Importance.CRITICAL);
         }
     }
 

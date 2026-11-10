@@ -117,6 +117,19 @@ public abstract class Screen {
         });
     }
 
+    /**
+     * v2.7: {@link AdjustControl} için ekran bağları. Denetimin kendi duyurusu (değer cümlesi, uç uyarısı) açık okuma
+     * yolundan söylenir ve "Anlatım düzeyi"nden bağımsızdır (yalnızca "Sesli anlatım" kapalı ve TalkBack kapalıysa susar): odak düğmede kaldığından değeri duyurmanın başka yolu yoktur.
+     */
+    protected AdjustControl.Host adjustHost() {
+        return new AdjustControl.Host() {
+            @Override public void speak(String text) { if (a.speaker.isTalkBackOn() || a.save.speechOn) a.speaker.force(text); }
+            @Override public boolean screenReaderOn() { return a.speaker.isTalkBackOn(); }
+            @Override public void tapFeedback() { a.sound.play("sfx_tap"); a.haptics.tap(); }
+            @Override public void errorFeedback() { a.sound.play("sfx_error"); a.haptics.error(); }
+        };
+    }
+
     protected LinearLayout card() {
         LinearLayout c = column();
         c.setBackground(Ui.round(ctx, Theme.CARD, Theme.STROKE, 1.5f, 16));

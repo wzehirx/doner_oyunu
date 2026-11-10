@@ -20,6 +20,30 @@ public class Narrator implements GameListener {
          * hemen önce denetlenir, false ise duyuru bayattır ve atılır (null: denetim yok). Varsayılan: düz say.
          */
         default void say(String text, boolean urgent, String category, Fresh fresh) { say(text, urgent); }
+
+        /**
+         * v2.7: önem sınıfıyla ({@link Importance}). Konuşmayı yapan taraf (Speaker) "Anlatım düzeyi"ne göre süzer; bu
+         * varsayılan eski çıkışların bozulmaması için önemi yok sayıp dört bağımsız değişkenli biçime düşer.
+         */
+        default void say(String text, boolean urgent, String category, Fresh fresh, Importance importance) {
+            say(text, urgent, category, fresh);
+        }
+    }
+
+    /**
+     * Kategorinin varsayılan önemi (önem açıkça verilmeyen çağrılar için). Narrator olayları önemi kendisi verir; bu tablo
+     * yalnızca kategorili ama önemsiz çağrıların (eski Output uygulamaları, UI) makul bir sınıf almasını sağlar.
+     */
+    public static Importance defaultImportance(String category, boolean urgent) {
+        if (category == null) return urgent ? Importance.NORMAL : Importance.VERBOSE;
+        switch (category) {
+            case CAT_ALERT: case CAT_PATIENCE: case CAT_BILLS: case CAT_CUSTOMER: case CAT_DAY:
+                return Importance.CRITICAL;
+            case CAT_ORDER: case CAT_MONEY: case CAT_STARS: case CAT_APPRENTICE: case CAT_TOPPING: case CAT_PREP: case CAT_STEP:
+                return Importance.NORMAL;
+            default: // select, hint, tutorial, system, info...
+                return Importance.VERBOSE;
+        }
     }
 
     /** Duyurunun söylenme anında hâlâ geçerli (bayat değil) olup olmadığı. */
@@ -70,10 +94,12 @@ public class Narrator implements GameListener {
 
     private void say(String t, boolean urgent) { if (output != null) output.say(t, urgent); }
 
-    private void say(String t, boolean urgent, String category) { if (output != null) output.say(t, urgent, category, null); }
+    private void say(String t, boolean urgent, String category, Importance imp) {
+        if (output != null) output.say(t, urgent, category, null, imp);
+    }
 
-    private void say(String t, boolean urgent, String category, Fresh fresh) {
-        if (output != null) output.say(t, urgent, category, fresh);
+    private void say(String t, boolean urgent, String category, Fresh fresh, Importance imp) {
+        if (output != null) output.say(t, urgent, category, fresh, imp);
     }
 
     /**
@@ -890,41 +916,41 @@ public class Narrator implements GameListener {
     }
 
     // ------------------------------------------------------------ GameListener
-    @Override public void onPrepPhaseStarted(int day) { say(prepPhaseStarted(day), true, CAT_DAY); }
-    @Override public void onPrepPhaseEnded(int day) { say(prepPhaseEnded(day), false, CAT_DAY); }
+    @Override public void onPrepPhaseStarted(int day) { say(prepPhaseStarted(day), true, CAT_DAY, Importance.NORMAL); }
+    @Override public void onPrepPhaseEnded(int day) { say(prepPhaseEnded(day), false, CAT_DAY, Importance.VERBOSE); }
     @Override public void onDayStarted(int day, DayConfig c) {
         if (engine != null) starsTracker.reset(engine.getStars());
-        say(dayStarted(day, c), false, CAT_DAY);
+        say(dayStarted(day, c), false, CAT_DAY, Importance.CRITICAL);
     }
-    @Override public void onCustomerArrived(Order o) { say(customerArrived(o), false, CAT_CUSTOMER); }
-    @Override public void onOrderSelected(Order o) { say(orderSelected(o), true, CAT_SELECT); }
-    @Override public void onItemSelected(Order o, int i) { say(itemSelected(o, i), true, CAT_SELECT); }
+    @Override public void onCustomerArrived(Order o) { say(customerArrived(o), false, CAT_CUSTOMER, Importance.CRITICAL); }
+    @Override public void onOrderSelected(Order o) { say(orderSelected(o), true, CAT_SELECT, Importance.VERBOSE); }
+    @Override public void onItemSelected(Order o, int i) { say(itemSelected(o, i), true, CAT_SELECT, Importance.VERBOSE); }
     /** Önerilen adım: söylenmeden önce yeniden denetlenir; oyuncu adımı başlattıysa/başka eylem yaptıysa susar. */
-    @Override public void onNextStepHint(Order o, Step s) { say(nextStepHint(o, s), false, CAT_HINT, freshHint(o, s)); }
-    @Override public void onStepStarted(Order o, Step s, int slot, float sec) { say(stepStarted(o, s, slot, sec), false, CAT_STEP); }
-    @Override public void onStepFinished(Order o, Step s, boolean c) { say(stepFinished(o, s, c), false, CAT_STEP); }
-    @Override public void onWrongStation(Order o, Station t, Station e) { say(wrongStation(o, t, e), true, CAT_ALERT); }
-    @Override public void onStepLocked(Order o, Step s) { say(stepLocked(o, s), true, CAT_ALERT); }
-    @Override public void onNoFreeSlot(Order o) { say(noFreeSlot(o), true, CAT_ALERT); }
-    @Override public void onHandsBusy(Order o, ActiveStep current) { say(handsBusy(o, current), true, CAT_ALERT); }
-    @Override public void onStationFull(Order o, Station st, int used, int capacity) { say(stationFull(o, st, used, capacity), true, CAT_ALERT); }
-    @Override public void onAlreadyRunning(Order o, ActiveStep job) { say(alreadyRunning(o, job), true, CAT_ALERT); }
+    @Override public void onNextStepHint(Order o, Step s) { say(nextStepHint(o, s), false, CAT_HINT, freshHint(o, s), Importance.VERBOSE); }
+    @Override public void onStepStarted(Order o, Step s, int slot, float sec) { say(stepStarted(o, s, slot, sec), false, CAT_STEP, Importance.VERBOSE); }
+    @Override public void onStepFinished(Order o, Step s, boolean c) { say(stepFinished(o, s, c), false, CAT_STEP, Importance.CRITICAL); }
+    @Override public void onWrongStation(Order o, Station t, Station e) { say(wrongStation(o, t, e), true, CAT_ALERT, Importance.CRITICAL); }
+    @Override public void onStepLocked(Order o, Step s) { say(stepLocked(o, s), true, CAT_ALERT, Importance.CRITICAL); }
+    @Override public void onNoFreeSlot(Order o) { say(noFreeSlot(o), true, CAT_ALERT, Importance.CRITICAL); }
+    @Override public void onHandsBusy(Order o, ActiveStep current) { say(handsBusy(o, current), true, CAT_ALERT, Importance.CRITICAL); }
+    @Override public void onStationFull(Order o, Station st, int used, int capacity) { say(stationFull(o, st, used, capacity), true, CAT_ALERT, Importance.CRITICAL); }
+    @Override public void onAlreadyRunning(Order o, ActiveStep job) { say(alreadyRunning(o, job), true, CAT_ALERT, Importance.CRITICAL); }
     /** Kalem/paketleme hazır duyuruları stepFinished metnine dahildir; ayrıca konuşulmaz. */
     @Override public void onItemFinished(Order o, int i) {}
     @Override public void onOrderReadyToPack(Order o) {}
-    @Override public void onOrderReady(Order o) { say(orderReady(o), false, CAT_ORDER); }
-    @Override public void onOrderDelivered(Order o, int m, int t, boolean h) { say(orderDelivered(o, m, t, h), false, CAT_ORDER); }
-    @Override public void onToppingSelectionNeeded(Order o, int i) { say(toppingSelectionNeeded(o, i), true, CAT_ALERT); }
-    @Override public void onToppingsRejected(Order o, int i, StartResult r, Ingredient ing) { say(toppingsRejected(o, i, r, ing), true, CAT_ALERT); }
-    @Override public void onOrderMistake(Order o, ToppingCheck c, double p) { say(orderMistake(o, c, p), true, CAT_ALERT); }
-    @Override public void onOrderPerfect(Order o) { say(orderPerfect(o), false, CAT_ORDER); }
+    @Override public void onOrderReady(Order o) { say(orderReady(o), false, CAT_ORDER, Importance.CRITICAL); }
+    @Override public void onOrderDelivered(Order o, int m, int t, boolean h) { say(orderDelivered(o, m, t, h), false, CAT_ORDER, Importance.NORMAL); }
+    @Override public void onToppingSelectionNeeded(Order o, int i) { say(toppingSelectionNeeded(o, i), true, CAT_ALERT, Importance.CRITICAL); }
+    @Override public void onToppingsRejected(Order o, int i, StartResult r, Ingredient ing) { say(toppingsRejected(o, i, r, ing), true, CAT_ALERT, Importance.CRITICAL); }
+    @Override public void onOrderMistake(Order o, ToppingCheck c, double p) { say(orderMistake(o, c, p), true, CAT_ALERT, Importance.CRITICAL); }
+    @Override public void onOrderPerfect(Order o) { say(orderPerfect(o), false, CAT_ORDER, Importance.NORMAL); }
     @Override public void onPrepStarted(PrepKind k, boolean byApprentice, float sec) {
-        if (!byApprentice) say(prepStarted(k, false, sec), false, CAT_PREP);
+        if (!byApprentice) say(prepStarted(k, false, sec), false, CAT_PREP, Importance.VERBOSE);
     }
     @Override public void onPrepFinished(PrepKind k, boolean byApprentice, int amount) {
-        if (!byApprentice) say(prepFinished(k, false, amount), false, CAT_PREP);
+        if (!byApprentice) say(prepFinished(k, false, amount), false, CAT_PREP, Importance.CRITICAL);
     }
-    @Override public void onPrepRejected(PrepKind k, PrepResult r, Ingredient ing) { say(prepRejected(k, r, ing), true, CAT_ALERT); }
+    @Override public void onPrepRejected(PrepKind k, PrepResult r, Ingredient ing) { say(prepRejected(k, r, ing), true, CAT_ALERT, Importance.CRITICAL); }
     @Override public void onApprenticeAction(ApprenticeAction a) {
         if (engine != null && !engine.getSave().apprenticeAnnounce) return;
         String t = apprenticeAction(a);
@@ -935,52 +961,52 @@ public class Narrator implements GameListener {
         boolean important = !a.isPrep();
         if (!important && engine != null && engine.getState() == GameEngine.State.RUNNING && now - lastApprenticeSay < APPRENTICE_MIN_GAP) return;
         lastApprenticeSay = now;
-        say(t, false, CAT_APPRENTICE);
+        say(t, false, CAT_APPRENTICE, Importance.NORMAL);
     }
-    @Override public void onPatienceWarning(Order o, int l) { say(patienceWarning(o, l), l >= 2, CAT_PATIENCE); }
-    @Override public void onCustomerLeft(Order o) { say(customerLeft(o), true, CAT_ALERT); }
+    @Override public void onPatienceWarning(Order o, int l) { say(patienceWarning(o, l), l >= 2, CAT_PATIENCE, l >= 2 ? Importance.CRITICAL : Importance.NORMAL); }
+    @Override public void onCustomerLeft(Order o) { say(customerLeft(o), true, CAT_ALERT, Importance.CRITICAL); }
     @Override public void onStarsChanged(double a, double b) {
-        if (starsTracker.changed(a, b)) say(starsChanged(a, b), false, CAT_STARS);
+        if (starsTracker.changed(a, b)) say(starsChanged(a, b), false, CAT_STARS, Importance.NORMAL);
     }
     @Override public void onOutOfStock(Order o, Ingredient i) {
         String all = outOfStock(o);
-        say(all != null ? all : outOfStock(o, i), true, CAT_ALERT);
+        say(all != null ? all : outOfStock(o, i), true, CAT_ALERT, Importance.CRITICAL);
     }
-    @Override public void onEmergencyPurchase(Ingredient i, int q, int c) { say(emergencyPurchase(i, q, c), false, CAT_MONEY); }
-    @Override public void onNotEnoughMoney(int n) { say(notEnoughMoney(n), true, CAT_ALERT); }
-    @Override public void onDayFinished(DaySummary s) { say(dayFinished(s), true, CAT_DAY); }
-    @Override public void onDayFailed(DaySummary s) { say(dayFailed(s), true, CAT_DAY); }
+    @Override public void onEmergencyPurchase(Ingredient i, int q, int c) { say(emergencyPurchase(i, q, c), false, CAT_MONEY, Importance.NORMAL); }
+    @Override public void onNotEnoughMoney(int n) { say(notEnoughMoney(n), true, CAT_ALERT, Importance.CRITICAL); }
+    @Override public void onDayFinished(DaySummary s) { say(dayFinished(s), true, CAT_DAY, Importance.CRITICAL); }
+    @Override public void onDayFailed(DaySummary s) { say(dayFailed(s), true, CAT_DAY, Importance.CRITICAL); }
 
     // ---- v0.6
     /** Ekleme başlangıcı sessiz (kısa süre); bitiş "Domates eklendi" söyler. */
     @Override public void onToppingAddStarted(Order o, int i, Ingredient ing, int count, float sec) {}
-    @Override public void onToppingAdded(Order o, int i, Ingredient ing, int count) { say(toppingAdded(ing, count), false, CAT_TOPPING); }
-    @Override public void onToppingRemoved(Order o, int i, Ingredient ing, int remaining) { say(toppingRemoved(ing, remaining), false, CAT_TOPPING); }
+    @Override public void onToppingAdded(Order o, int i, Ingredient ing, int count) { say(toppingAdded(ing, count), false, CAT_TOPPING, Importance.NORMAL); }
+    @Override public void onToppingRemoved(Order o, int i, Ingredient ing, int remaining) { say(toppingRemoved(ing, remaining), false, CAT_TOPPING, Importance.NORMAL); }
     /** Bitiriş, onStepFinished ("Malzemeleri ekle bitti. Önerilen: ...") ile duyurulur; ayrıca konuşulmaz. */
     @Override public void onToppingsFinished(Order o, int i, java.util.Set<String> chosen) {}
     /** Boy, adım başlangıcı duyurusuna dahildir ("Döneri dilimle başladı, duble, 5 saniye"). */
     @Override public void onSizeChosen(Order o, int i, PortionSize ordered, PortionSize chosen) {}
-    @Override public void onStationInfo(Order o, int i, String optionId) { say(stationInfo(o, i, optionId), true, CAT_INFO); }
-    @Override public void onOptionRejected(Order o, String optionId, StartResult r) { say(optionRejected(o, optionId, r), true, CAT_ALERT); }
+    @Override public void onStationInfo(Order o, int i, String optionId) { say(stationInfo(o, i, optionId), true, CAT_INFO, Importance.VERBOSE); }
+    @Override public void onOptionRejected(Order o, String optionId, StartResult r) { say(optionRejected(o, optionId, r), true, CAT_ALERT, Importance.CRITICAL); }
 
     // ---- v0.7
-    @Override public void onAutoToppingsStarted(Order o, int i, List<Ingredient> adding, float sec) { say(autoToppingsStarted(o, i, adding, sec), false, CAT_TOPPING); }
+    @Override public void onAutoToppingsStarted(Order o, int i, List<Ingredient> adding, float sec) { say(autoToppingsStarted(o, i, adding, sec), false, CAT_TOPPING, Importance.VERBOSE); }
     @Override public void onToppingsAutoAdded(Order o, int i, List<Ingredient> added, List<Ingredient> removed, boolean finished) {
-        say(toppingsAutoAdded(o, i, added, removed, finished), !finished, CAT_TOPPING);
+        say(toppingsAutoAdded(o, i, added, removed, finished), !finished, CAT_TOPPING, Importance.NORMAL);
     }
-    @Override public void onFlowModeChanged(FlowMode mode) { say(flowModeChanged(mode), true, CAT_SYSTEM); }
-    @Override public void onTimePressureChanged(boolean timed) { say(timePressureChanged(timed), true, CAT_SYSTEM); }
+    @Override public void onFlowModeChanged(FlowMode mode) { say(flowModeChanged(mode), true, CAT_SYSTEM, Importance.VERBOSE); }
+    @Override public void onTimePressureChanged(boolean timed) { say(timePressureChanged(timed), true, CAT_SYSTEM, Importance.VERBOSE); }
 
     // ---- v2.5: faturalar, kesintiler
     @Override public void onFinanceNotices(List<String> notices) {
         if (notices == null || notices.isEmpty()) return;
         StringBuilder sb = new StringBuilder();
         for (String n : notices) { if (sb.length() > 0) sb.append(' '); sb.append(n); }
-        say(sb.toString(), false, CAT_BILLS);
+        say(sb.toString(), false, CAT_BILLS, Importance.CRITICAL);
     }
-    @Override public void onUtilityBlocked(Order o, Station st, BillType cause) { say(utilityBlocked(st, cause), true, CAT_ALERT); }
-    @Override public void onStockSpoiled(Ingredient ing, int amount, BillType cause) { say(stockSpoiled(ing, amount), false, CAT_BILLS); }
-    @Override public void onBillPaid(Bill b, int paid) { say(billPaid(b, paid), false, CAT_MONEY); }
+    @Override public void onUtilityBlocked(Order o, Station st, BillType cause) { say(utilityBlocked(st, cause), true, CAT_ALERT, Importance.CRITICAL); }
+    @Override public void onStockSpoiled(Ingredient ing, int amount, BillType cause) { say(stockSpoiled(ing, amount), false, CAT_BILLS, Importance.CRITICAL); }
+    @Override public void onBillPaid(Bill b, int paid) { say(billPaid(b, paid), false, CAT_MONEY, Importance.NORMAL); }
 
     /** "Ocak kapalı: doğalgaz kesik. Doğalgaz faturasını ödersen açılır." / su: tepsi. */
     public String utilityBlocked(Station st, BillType cause) {

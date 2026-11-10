@@ -103,6 +103,7 @@ public class AudioFocusTest {
     @Test public void talkBackAnnouncementRequestsDuckFocusThenReleasesIt() {
         talkBack(true);
         Speaker sp = new Speaker(ctx());
+        sp.setNarrationLevel(com.doner.oyunu.engine.NarrationLevel.HIGH); // v2.7: bu test ses odağını sınar, anlatım süzgecini değil
         sp.setAnchor(new View(ctx()));
         final List<Boolean> events = new ArrayList<>();
         sp.setSpeechListener(new Speaker.SpeechListener() {
@@ -124,6 +125,7 @@ public class AudioFocusTest {
     @Test public void stopReleasesFocusImmediately() {
         talkBack(true);
         Speaker sp = new Speaker(ctx());
+        sp.setNarrationLevel(com.doner.oyunu.engine.NarrationLevel.HIGH); // v2.7: bu test ses odağını sınar, anlatım süzgecini değil
         sp.setAnchor(new View(ctx()));
         sp.say("uzun bir duyuru metni burada okunuyor", true);
         assertTrue(sp.isSpeaking());
